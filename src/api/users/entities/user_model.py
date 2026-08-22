@@ -9,8 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from pymodular.core.clock import utcnow
-from pymodular.core.container import entity
+from fastapi_modular.core.clock import utcnow
+from fastapi_modular.core.container import entity
 
 
 @entity(unique=["email"])

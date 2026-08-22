@@ -5,12 +5,12 @@ Tại một thời điểm chỉ **một** backend được dùng, và **chỉ t
 cần được cài** — chọn Postgres thì máy không cần `aiosqlite` hay `motor`.
 
 Điều này làm được vì mọi `import sqlalchemy` / `import motor` nằm bên trong hàm
-`create_backend()` ở [`pymodular/infrastructure/database/factory.py`](../pymodular/infrastructure/database/factory.py),
+`create_backend()` ở [`fastapi_modular/infrastructure/database/factory.py`](../fastapi_modular/infrastructure/database/factory.py),
 chứ không ở đầu file. Chọn driver chưa cài thư viện sẽ nhận thông báo:
 
 ```
 Driver database 'postgres' cần thư viện 'sqlalchemy' nhưng chưa cài.
-Chạy: pym install postgres
+Chạy: fam install postgres
 ```
 
 ---
@@ -19,8 +19,8 @@ Chạy: pym install postgres
 
 | | memory | sqlite | postgres | mongodb |
 |---|---|---|---|---|
-| Lệnh cài | (không cần) | `pym install sqlite` | `pym install postgres` | `pym install mongodb` |
-| Thư viện | (không cần) | `pymodular[sqlite]` | `pymodular[postgres]` | `pymodular[mongodb]` |
+| Lệnh cài | (không cần) | `fam install sqlite` | `fam install postgres` | `fam install mongodb` |
+| Thư viện | (không cần) | `fastapi-modular[sqlite]` | `fastapi-modular[postgres]` | `fastapi-modular[mongodb]` |
 | Thư viện | – | `sqlalchemy`, `aiosqlite` | `sqlalchemy`, `asyncpg` | `motor` |
 | Cần server riêng | không | không | có | có |
 | Dữ liệu sống qua restart | **không** | có | có | có |
@@ -39,7 +39,7 @@ Mỗi lệnh `make install-*` làm hai việc: cài thư viện, **và ghi sẵn
 để bạn chỉ việc sửa giá trị. Khối này nằm giữa hai dòng mốc:
 
 ```dotenv
-# >>> database (sinh bởi pym env) >>>
+# >>> database (sinh bởi fam env) >>>
 APP_DB__DRIVER=sqlite
 APP_DB__DSN=sqlite+aiosqlite:///./data/app.db
 # <<< database <<<
@@ -52,7 +52,7 @@ bao giờ có hai driver cùng khai báo. Mọi biến khác trong `.env` (`APP_
 Xem đang dùng gì:
 
 ```bash
-pym info
+fam info
 ```
 
 ---
@@ -62,8 +62,8 @@ pym info
 Không cần cài gì, không cần cấu hình gì.
 
 ```bash
-pip install pymodular      # chỉ thư viện lõi
-pym dev
+pip install fastapi-modular      # chỉ thư viện lõi
+fam dev
 ```
 
 **Chỉ dùng cho test và demo.** Hai giới hạn phải nhớ:
@@ -79,7 +79,7 @@ pym dev
 Không cần server, dữ liệu nằm trong một file.
 
 ```bash
-pym install sqlite
+fam install sqlite
 ```
 
 Biến sinh ra trong `.env`:
@@ -95,13 +95,13 @@ APP_DB__ECHO=false
 | Biến | Bắt buộc | Mặc định | Ý nghĩa |
 |---|---|---|---|
 | `APP_DB__DRIVER` | **có** | `memory` | phải là `sqlite`, nếu không app dùng bộ nhớ tạm |
-| `APP_DB__DSN` | không | `(trống)` → `sqlite+aiosqlite:///./data/app.db` | `///./data/x.db` là tương đối, `////tmp/x.db` (4 gạch) là tuyệt đối. Thư mục phải tồn tại — `pym install sqlite` tự tạo `./data` |
+| `APP_DB__DSN` | không | `(trống)` → `sqlite+aiosqlite:///./data/app.db` | `///./data/x.db` là tương đối, `////tmp/x.db` (4 gạch) là tuyệt đối. Thư mục phải tồn tại — `fam install sqlite` tự tạo `./data` |
 | `APP_DB__SCHEMA_MODE` | không | `create` | `off` / `create` / `sync` — xem [mục schema](#tự-chỉnh-schema-thêm--xoá-trường) |
 | `APP_DB__DROP_COLUMNS` | không | `false` | `true` = cho `sync` xoá cột không còn trong entity. Mất dữ liệu |
 | `APP_DB__ECHO` | không | `false` | `true` = in mọi câu SQL ra log |
 
 ```bash
-pym dev
+fam dev
 ```
 
 Khởi động sẽ thấy:
@@ -120,7 +120,7 @@ SQLite khoá toàn bộ file khi ghi, nên không hợp với tải ghi cao nhi�
 Xoá và làm lại từ đầu:
 
 ```bash
-rm -f data/app.db && pym dev
+rm -f data/app.db && fam dev
 ```
 
 ---
@@ -128,7 +128,7 @@ rm -f data/app.db && pym dev
 ## 3. PostgreSQL
 
 ```bash
-pym install postgres
+fam install postgres
 ```
 
 Biến sinh ra trong `.env` (mỗi dòng kèm giải thích và giá trị mặc định):
@@ -167,7 +167,7 @@ Kiểm tra sẵn sàng: `docker exec ss-pg pg_isready -U postgres`
 ### Chạy
 
 ```bash
-pym dev
+fam dev
 curl localhost:8000/api/health/ready
 # {"status":"ready","driver":"postgres","database":true}
 ```
@@ -182,14 +182,14 @@ docker exec ss-pg psql -U postgres -d app -c '\dt'
 
 - Đặt `APP_DB__SCHEMA_MODE=off` và dùng Alembic để migrate. Lý do ở
   [mục schema](#tự-chỉnh-schema-thêm--xoá-trường).
-- Chạy nhiều worker được: `pym run --workers 4`.
+- Chạy nhiều worker được: `fam run --workers 4`.
 
 ---
 
 ## 4. MongoDB
 
 ```bash
-pym install mongodb
+fam install mongodb
 ```
 
 Biến sinh ra trong `.env`:
@@ -215,7 +215,7 @@ docker run -d --name ss-mongo -p 27017:27017 mongo:7
 ### Chạy
 
 ```bash
-pym dev
+fam dev
 curl localhost:8000/api/health/ready
 # {"status":"ready","driver":"mongodb","database":true}
 ```
@@ -454,8 +454,8 @@ Application startup failed. Exiting.
 ## Đổi driver khi đang chạy dở
 
 ```bash
-pym install postgres   # thay khối trong .env
-pym dev
+fam install postgres   # thay khối trong .env
+fam dev
 ```
 
 Dữ liệu **không** tự chuyển giữa các backend. Cần chuyển thì phải xuất/nhập thủ công.
@@ -670,7 +670,7 @@ transaction, do `SqlUnitOfWork` giữ (provider `Scope.REQUEST`):
 
 Commit xảy ra **trước khi** response được gửi đi, nên client ghi xong đọc lại ngay
 sẽ thấy dữ liệu mới. Chi tiết vì sao chỗ này quan trọng: xem ghi chú đầu file
-[`pymodular/middleware/request_context.py`](../pymodular/middleware/request_context.py).
+[`fastapi_modular/middleware/request_context.py`](../fastapi_modular/middleware/request_context.py).
 
 Gọi repository **ngoài** một HTTP request (script, worker, test) vẫn được — backend
 sẽ tự mở một connection tạm và commit ngay sau thao tác.
@@ -679,13 +679,13 @@ sẽ tự mở một connection tạm và commit ngay sau thao tác.
 
 ## Test trên database thật
 
-Mặc định `pym test` chạy trên backend `memory` (nhanh, không cần server). Muốn
+Mặc định `fam test` chạy trên backend `memory` (nhanh, không cần server). Muốn
 chạy đúng bộ test đó trên database thật:
 
 ```bash
-TEST_SQLITE=1 pym test
-TEST_POSTGRES_DSN='postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/app' pym test
-TEST_MONGO_DSN='mongodb://127.0.0.1:27017' pym test
+TEST_SQLITE=1 fam test
+TEST_POSTGRES_DSN='postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/app' fam test
+TEST_MONGO_DSN='mongodb://127.0.0.1:27017' fam test
 ```
 
 Driver nào chưa cài thư viện hoặc chưa có server sẽ **SKIP** chứ không FAIL, nên
@@ -696,8 +696,8 @@ bộ test chạy được trên máy chỉ cài một driver.
 ## Thêm backend mới
 
 1. Viết class cài đủ bộ method của `DatabaseBackend`
-   ([`pymodular/infrastructure/database/base.py`](../pymodular/infrastructure/database/base.py)).
+   ([`fastapi_modular/infrastructure/database/base.py`](../fastapi_modular/infrastructure/database/base.py)).
 2. Thêm một nhánh trong `create_backend()`, **import bên trong hàm**.
-3. Thêm một extra `<tên>` trong `pyproject.toml` và một khối trong `pym env`.
+3. Thêm một extra `<tên>` trong `pyproject.toml` và một khối trong `fam env`.
 4. Thêm một `pytest.param` vào `tests/test_drivers.py` — bộ test CRUD dùng chung
    sẽ tự chạy cho backend mới.

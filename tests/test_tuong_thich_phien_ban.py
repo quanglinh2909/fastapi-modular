@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from pymodular.core.compat import UTC, StrEnum, TimeoutErrors
-from pymodular.infrastructure.database.base import is_transient_error
+from fastapi_modular.core.compat import UTC, StrEnum, TimeoutErrors
+from fastapi_modular.infrastructure.database.base import is_transient_error
 
 
 def test_bat_duoc_timeout_cua_wait_for_o_moi_phien_ban():
@@ -57,7 +57,7 @@ def test_utc_la_mui_gio_that():
 
 def test_khong_dung_tinh_nang_chi_co_tu_311():
     """Quét nguồn: `asyncio.timeout` và `enum.StrEnum` nhập thẳng sẽ vỡ trên 3.10."""
-    goc = Path(__file__).resolve().parent.parent / "pymodular"
+    goc = Path(__file__).resolve().parent.parent / "fastapi_modular"
     pham: list[str] = []
     for file in goc.rglob("*.py"):
         if file.name == "compat.py":

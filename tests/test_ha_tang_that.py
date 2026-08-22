@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pymodular.core.config import Settings, get_settings
+from fastapi_modular.core.config import Settings, get_settings
 
 
 def test_khong_bao_gio_cham_ha_tang_that():

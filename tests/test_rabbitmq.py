@@ -17,10 +17,10 @@ import anyio
 import pytest
 from fastapi.testclient import TestClient
 
-from pymodular.core.config import DatabaseSettings, RabbitSettings, Settings
-from pymodular.core.container import injectable
-from pymodular.factory import create_app
-from pymodular.infrastructure.rabbitmq import (
+from fastapi_modular.core.config import DatabaseSettings, RabbitSettings, Settings
+from fastapi_modular.core.container import injectable
+from fastapi_modular.factory import create_app
+from fastapi_modular.infrastructure.rabbitmq import (
     PermanentMessageError,
     RabbitBroker,
     rabbitmq_subscriber,

@@ -13,10 +13,10 @@ from typing import Any
 
 import pytest
 
-from pymodular.core.config import DatabaseSettings, RabbitSettings, Settings
-from pymodular.core.container import injectable
-from pymodular.core.exceptions import BadRequestError, ComponentNotEnabledError
-from pymodular.infrastructure.rabbitmq import (
+from fastapi_modular.core.config import DatabaseSettings, RabbitSettings, Settings
+from fastapi_modular.core.container import injectable
+from fastapi_modular.core.exceptions import BadRequestError, ComponentNotEnabledError
+from fastapi_modular.infrastructure.rabbitmq import (
     RabbitBroker,
     discover_rabbitmq_subscribers,
     rabbitmq_subscriber,
@@ -107,7 +107,7 @@ async def test_noi_hong_giua_chung_thi_khong_de_lai_ket_noi_nua_voi(monkeypatch)
 
 
 def test_che_mat_khau_trong_log():
-    from pymodular.infrastructure.rabbitmq.broker import safe_url
+    from fastapi_modular.infrastructure.rabbitmq.broker import safe_url
 
     assert safe_url("amqp://admin:sieubimat@rabbit:5672/") == "amqp://admin:***@rabbit:5672/"
     assert safe_url("amqp://localhost:5672/") == "amqp://localhost:5672/"
@@ -214,8 +214,8 @@ class _HangDoiGia:
 
 
 async def _tat_runner(broker, spec):
-    from pymodular.core.config import Settings
-    from pymodular.infrastructure.rabbitmq.consumers import RabbitmqRunner
+    from fastapi_modular.core.config import Settings
+    from fastapi_modular.infrastructure.rabbitmq.consumers import RabbitmqRunner
 
     runner = RabbitmqRunner(broker, Settings())
     runner._started[spec.queue] = (_HangDoiGia(), "tag", spec)

@@ -11,7 +11,7 @@ nghĩa phần của khung; **ứng dụng kế thừa để thêm phần của m
 biến môi trường  >  file .env  >  giá trị mặc định trong model
 ```
 
-Nghĩa là `APP_DB__DRIVER=postgres pym dev` thắng dòng `APP_DB__DRIVER=sqlite`
+Nghĩa là `APP_DB__DRIVER=postgres fam dev` thắng dòng `APP_DB__DRIVER=sqlite`
 trong `.env`. Đây cũng là cách bộ test tự cắt mọi đường ra hạ tầng thật.
 
 Quy tắc đặt tên:
@@ -36,7 +36,7 @@ Ba bước, không cần đăng ký ở đâu cả:
 ```python
 # src/core/config.py
 from pydantic import BaseModel, Field
-from pymodular import Settings
+from fastapi_modular import Settings
 
 
 class JwtSettings(BaseModel):          # nhóm lồng nhau -> APP_JWT__*
@@ -52,7 +52,7 @@ class AppSettings(Settings):           # Settings của khung + phần của b�
 ```python
 # src/main.py
 from src.core.config import AppSettings
-from pymodular import create_app
+from fastapi_modular import create_app
 
 app = create_app(AppSettings())
 ```
@@ -97,7 +97,7 @@ của bạn:
 ```python
 # migrations/env.py
 from src.core.config import AppSettings
-from pymodular import use_settings
+from fastapi_modular import use_settings
 
 use_settings(AppSettings)
 settings = get_settings()          # giờ trả về AppSettings
@@ -113,27 +113,27 @@ vào độc lập mới phải gọi tay.
 | `get_settings()` | instance dùng chung, dựng từ lớp đã khai (có cache) |
 | `settings_class()` | lớp đang được dùng |
 
-Ba hàm đầu import thẳng từ `pymodular`. Riêng `settings_class()` chưa được
+Ba hàm đầu import thẳng từ `fastapi-modular`. Riêng `settings_class()` chưa được
 xuất ở gốc, phải lấy từ module con:
 
 ```python
-from pymodular import create_app, get_settings, use_settings
-from pymodular.core.config import settings_class
+from fastapi_modular import create_app, get_settings, use_settings
+from fastapi_modular.core.config import settings_class
 ```
 
 ---
 
-## `.env` do `pym env` sinh ra
+## `.env` do `fam env` sinh ra
 
 Mỗi thành phần chiếm một **khối** có mốc đầu/cuối:
 
 ```
-# >>> rabbitmq (sinh bởi pym env) >>>
+# >>> rabbitmq (sinh bởi fam env) >>>
 ...
 # <<< rabbitmq <<<
 ```
 
-Chạy lại `pym env rabbitmq` chỉ **thay khối đó**. Mọi dòng nằm ngoài các
+Chạy lại `fam env rabbitmq` chỉ **thay khối đó**. Mọi dòng nằm ngoài các
 mốc — kể cả biến của riêng bạn — được giữ nguyên, nên cứ để `APP_JWT__SECRET`
 cạnh chúng cũng không sao.
 
@@ -183,11 +183,11 @@ còn tệ hơn. Muốn chặn thì đọc `settings.check_production_safety()` r
 
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
-| `APP_NAME` | `pymodular` | Tên hiện trong trang `/docs` và trong log |
+| `APP_NAME` | `fastapi-modular` | Tên hiện trong trang `/docs` và trong log |
 | `APP_VERSION` | `0.1.0` | Phiên bản hiện trong OpenAPI. Của **ứng dụng bạn**, không phải của khung |
 | `APP_ENV` | `local` | `local` / `dev` / `staging` / `prod`. `prod` tắt `/docs`, `/redoc`, `/openapi.json` và bật kiểm tra an toàn |
 | `APP_DEBUG` | `true` | `true` = trả chi tiết lỗi ra client. Đặt `false` ở prod |
-| `APP_HOST` | `0.0.0.0` | `pym dev` / `pym run` lấy từ đây, không cần truyền tham số |
+| `APP_HOST` | `0.0.0.0` | `fam dev` / `fam run` lấy từ đây, không cần truyền tham số |
 | `APP_PORT` | `8000` | nt |
 | `APP_API_PREFIX` | `/api` | Tiền tố của **mọi** route REST. Đổi thành `/v1` thì health là `/v1/health`. Không ảnh hưởng đường dẫn WebSocket |
 

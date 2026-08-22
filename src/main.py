@@ -1,4 +1,4 @@
-"""Điểm vào — chạy bằng `pym dev`.
+"""Điểm vào — chạy bằng `fam dev`.
 
 FILE NÀY LÀ CỦA BẠN. Khung cố ý không giấu phần lắp ráp: mỗi dòng dưới đây làm
 đúng một việc, xoá được, đổi thứ tự được, chèn thêm được.
@@ -9,13 +9,13 @@ bọc lifespan... thì sửa ngay tại đây.
 
 Chưa cần sửa gì thì cả khối dưới rút lại còn hai dòng:
 
-    from pymodular import create_app
+    from fastapi_modular import create_app
     app = create_app(AppSettings())
 """
 
 from __future__ import annotations
 
-from pymodular import (
+from fastapi_modular import (
     add_middleware,
     bind_settings,
     configure_logging,

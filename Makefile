@@ -16,85 +16,85 @@ help: ## Danh sách lệnh
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
-# Makefile này chỉ là lối tắt cho `pym` khi làm việc TRONG repo. Người dùng thư
-# viện không có nó, nên mọi lệnh đều phải chạy được qua `pym` — và cách chắc
+# Makefile này chỉ là lối tắt cho `fam` khi làm việc TRONG repo. Người dùng thư
+# viện không có nó, nên mọi lệnh đều phải chạy được qua `fam` — và cách chắc
 # chắn nhất để giữ điều đó đúng là ở đây không tự viết gì cả, chỉ gọi lại.
-PYM := $(PY) -m pymodular.cli.main
+FAM := $(PY) -m fastapi_modular.cli.main
 
 dev: ## Chạy API kèm autoreload
-	$(PYM) dev
+	$(FAM) dev
 
 run: ## Chạy API chế độ production (nhiều worker — cần driver DB thật)
-	$(PYM) run --workers $(or $(WORKERS),4)
+	$(FAM) run --workers $(or $(WORKERS),4)
 
 module: ## Sinh khung module mới — dùng: make module name=alerts [entity=alert] [ws=1] [mq=1]
 	@test -n "$(name)" || { echo 'Thiếu tên. Dùng: make module name=alerts'; exit 1; }
-	$(PYM) module $(name) $(if $(entity),--entity $(entity),) $(if $(ws),--gateway,) $(if $(mq),--consumer,)
+	$(FAM) module $(name) $(if $(entity),--entity $(entity),) $(if $(ws),--gateway,) $(if $(mq),--consumer,)
 
 gateway: ## Thêm gateway WebSocket vào module đã có — dùng: make gateway name=alerts
 	@test -n "$(name)" || { echo 'Thiếu tên. Dùng: make gateway name=alerts'; exit 1; }
-	$(PYM) module $(name) --gateway-only $(if $(entity),--entity $(entity),)
+	$(FAM) module $(name) --gateway-only $(if $(entity),--entity $(entity),)
 
 consumer: ## Thêm consumer RabbitMQ vào module đã có — dùng: make consumer name=alerts
 	@test -n "$(name)" || { echo 'Thiếu tên. Dùng: make consumer name=alerts'; exit 1; }
-	$(PYM) module $(name) --consumer-only $(if $(entity),--entity $(entity),)
+	$(FAM) module $(name) --consumer-only $(if $(entity),--entity $(entity),)
 
 migrate: ## Chạy migration lên bản mới nhất
-	$(PYM) migrate up
+	$(FAM) migrate up
 
 migrate-create: ## Sinh migration từ thay đổi entity — dùng: make migrate-create m="them cot phone"
 	@test -n "$(m)" || { echo 'Thiếu tên. Dùng: make migrate-create m="mô tả thay đổi"'; exit 1; }
-	$(PYM) migrate create -m "$(m)"
+	$(FAM) migrate create -m "$(m)"
 
 migrate-down: ## Lùi lại một bản
-	$(PYM) migrate down
+	$(FAM) migrate down
 
 migrate-history: ## Lịch sử migration và bản đang áp dụng
-	@$(PYM) migrate history
+	@$(FAM) migrate history
 
 migrate-sql: ## In câu SQL thay vì chạy (để DBA duyệt trước)
-	$(PYM) migrate sql
+	$(FAM) migrate sql
 
 lint: ## Soi lỗi tĩnh
-	$(PYM) lint pymodular src tests
+	$(FAM) lint fastapi_modular src tests
 
 lint-fix: ## Soi và tự sửa những lỗi sửa được
-	$(PYM) lint --fix pymodular src tests
+	$(FAM) lint --fix fastapi_modular src tests
 
 test: ## Chạy test
-	$(PYM) test
+	$(FAM) test
 
 install: ## Cài khung ở chế độ chỉnh sửa được (chưa có driver database)
 	$(PIP) install -e .
 
 install-dev: ## Cài kèm công cụ phát triển (pytest, httpx, ruff, build, twine)
 	$(PIP) install -e .
-	$(PYM) install dev
+	$(FAM) install dev
 	$(PIP) install build twine
 
 install-sqlite: ## Cài driver SQLite + ghi biến vào .env
-	$(PYM) install sqlite
+	$(FAM) install sqlite
 
 install-postgres: ## Cài driver PostgreSQL + ghi biến vào .env
-	$(PYM) install postgres
+	$(FAM) install postgres
 
 install-mongo: ## Cài driver MongoDB + ghi biến vào .env
-	$(PYM) install mongodb
+	$(FAM) install mongodb
 
 install-redis: ## Cài Redis (cache, đếm, pub/sub) + ghi biến vào .env
-	$(PYM) install redis
+	$(FAM) install redis
 
 install-ws-redis: ## Bật adapter Redis cho WebSocket nhiều worker + ghi biến vào .env
-	$(PYM) install ws-redis
+	$(FAM) install ws-redis
 
 install-rabbitmq: ## Cài client RabbitMQ + ghi biến vào .env
-	$(PYM) install rabbitmq
+	$(FAM) install rabbitmq
 
 install-mqtt: ## Cài client MQTT + ghi biến vào .env
-	$(PYM) install mqtt
+	$(FAM) install mqtt
 
 install-kafka: ## Cài client Kafka + ghi biến vào .env
-	$(PYM) install kafka
+	$(FAM) install kafka
 
 
 
@@ -103,16 +103,16 @@ install-kafka: ## Cài client Kafka + ghi biến vào .env
 
 
 info: ## Đang nối vào đâu, thư viện nào đã cài
-	@$(PYM) info
+	@$(FAM) info
 
 build: ## Dựng wheel + sdist vào dist/
-	$(PYM) build
+	$(FAM) build
 
 publish-test: build ## Đẩy lên TestPyPI (thử trước khi đẩy thật)
-	$(PYM) publish --test
+	$(FAM) publish --test
 
 publish: build ## Đẩy lên PyPI
-	$(PYM) publish
+	$(FAM) publish
 
 clean: ## Xoá cache và bản dựng
-	$(PYM) clean
+	$(FAM) clean

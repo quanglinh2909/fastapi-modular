@@ -1,4 +1,4 @@
-"""Test cho lệnh `pym` / `pymodular`.
+"""Test cho lệnh `fam` / `fastapi-modular`.
 
 `init` là lệnh nguy hiểm nhất trong ba lệnh: nó ghi vào thư mục người dùng đang
 đứng, nơi có thể đã có code. Nên phần lớn test ở đây là về chuyện KHÔNG ghi đè.
@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from pymodular.cli.main import main
-from pymodular.cli.new_project import lam_sach_ten
+from fastapi_modular.cli.main import main
+from fastapi_modular.cli.new_project import lam_sach_ten
 
 
 def _da_co(goc: Path) -> set[str]:
@@ -68,7 +68,7 @@ def test_new_tu_choi_thu_muc_khong_rong(tmp_path: Path, capsys: pytest.CaptureFi
     (tmp_path / "blog" / "co-san.txt").write_text("x", encoding="utf-8")
 
     assert main(["new", "blog", "--root", str(tmp_path)]) == 1
-    assert "pym init" in capsys.readouterr().out, "phải chỉ đường sang init"
+    assert "fam init" in capsys.readouterr().out, "phải chỉ đường sang init"
 
 
 def test_module_sinh_dung_ten_file(tmp_path: Path):
@@ -183,12 +183,12 @@ def test_gitignore_sinh_ra_che_duoc_thu_can_che(tmp_path: Path):
     assert "*.py" not in mau
 
 
-# --------------------------------------------------------- pym install
+# --------------------------------------------------------- fam install
 def test_extras_khop_pyproject():
     """Bảng gói trong CLI phải khớp `[project.optional-dependencies]`.
 
-    `pym install` cài THẲNG các gói phụ thuộc chứ không chạy
-    `pip install "pymodular[x]"` — nếu không thì pip đi tìm chính pymodular trên
+    `fam install` cài THẲNG các gói phụ thuộc chứ không chạy
+    `pip install "fastapi_modular[x]"` — nếu không thì pip đi tìm chính fastapi_modular trên
     PyPI và hỏng với bản cài từ .whl hoặc `pip install -e .`. Cái giá của lựa
     chọn đó là danh sách gói nằm hai nơi; test này giữ chúng bằng nhau.
     """
@@ -198,7 +198,7 @@ def test_extras_khop_pyproject():
         pytest.skip("tomllib có từ 3.11; CI đã chạy test này ở các bản mới hơn")
     import tomllib
 
-    from pymodular.cli.install import GOI
+    from fastapi_modular.cli.install import GOI
 
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     extras = pyproject["project"]["optional-dependencies"]
@@ -211,8 +211,8 @@ def test_extras_khop_pyproject():
 
 
 def test_moi_thanh_phan_deu_biet_ghi_env_hoac_noi_ro_la_khong():
-    from pymodular.cli.configure_env import BLOCKS
-    from pymodular.cli.install import KHOI_ENV, THANH_PHAN
+    from fastapi_modular.cli.configure_env import BLOCKS
+    from fastapi_modular.cli.install import KHOI_ENV, THANH_PHAN
 
     for ten, khoi in KHOI_ENV.items():
         assert khoi in BLOCKS, f"'{ten}' trỏ vào khối .env không tồn tại: {khoi}"
@@ -222,14 +222,14 @@ def test_moi_thanh_phan_deu_biet_ghi_env_hoac_noi_ro_la_khong():
 
 
 def test_install_tu_choi_thanh_phan_la(capsys: pytest.CaptureFixture):
-    from pymodular.cli.install import install
+    from fastapi_modular.cli.install import install
 
     assert install("khong-co-that") == 1
     assert "Không biết thành phần" in capsys.readouterr().out
 
 
 def test_clean_xoa_cache_nhung_giu_du_lieu(tmp_path: Path):
-    from pymodular.cli.clean import clean
+    from fastapi_modular.cli.clean import clean
 
     (tmp_path / "src" / "__pycache__").mkdir(parents=True)
     (tmp_path / "src" / "__pycache__" / "a.pyc").write_text("x")
@@ -251,8 +251,8 @@ def test_clean_xoa_cache_nhung_giu_du_lieu(tmp_path: Path):
 
 # ------------------------------------------------- Makefile chỉ là lối tắt
 # Người dùng thư viện KHÔNG có Makefile. Nên mọi việc `make` làm được đều phải
-# gõ được bằng `pym`, không thì tài liệu và trải nghiệm bị chia đôi.
-_MAKE_SANG_PYM = {
+# gõ được bằng `fam`, không thì tài liệu và trải nghiệm bị chia đôi.
+_MAKE_SANG_FAM = {
     "help": "--help",
     "dev": "dev",
     "run": "run",
@@ -268,7 +268,7 @@ _MAKE_SANG_PYM = {
     "lint-fix": "lint",               # --fix
     "test": "test",
     # `make install` cài chính khung ở chế độ chỉnh sửa — chỉ có nghĩa khi bạn
-    # đang phát triển pymodular. Người dùng thư viện dùng `pip install pymodular`.
+    # đang phát triển fastapi_modular. Người dùng thư viện dùng `pip install fastapi-modular`.
     "install": "install",
     "install-dev": "install",
     "install-sqlite": "install",
@@ -287,7 +287,7 @@ _MAKE_SANG_PYM = {
 }
 
 
-def test_moi_target_makefile_deu_co_lenh_pym():
+def test_moi_target_makefile_deu_co_lenh_fam():
     import re
 
     makefile = Path("Makefile")
@@ -295,19 +295,19 @@ def test_moi_target_makefile_deu_co_lenh_pym():
         pytest.skip("chạy ngoài repo")
 
     targets = set(re.findall(r"^([a-z-]+):.*##", makefile.read_text(encoding="utf-8"), re.M))
-    thieu = targets - set(_MAKE_SANG_PYM)
-    assert not thieu, f"target Makefile chưa có lệnh pym tương ứng: {sorted(thieu)}"
+    thieu = targets - set(_MAKE_SANG_FAM)
+    assert not thieu, f"target Makefile chưa có lệnh fam tương ứng: {sorted(thieu)}"
 
     # Và mọi lệnh trong bảng phải thật sự tồn tại trong CLI.
-    lenh = {v.split()[0] for v in _MAKE_SANG_PYM.values() if not v.startswith("-")}
+    lenh = {v.split()[0] for v in _MAKE_SANG_FAM.values() if not v.startswith("-")}
     for ten in sorted(lenh):
         with pytest.raises(SystemExit) as thoat:
             main([ten, "--help"])
-        assert thoat.value.code == 0, f"pym {ten} không chạy"
+        assert thoat.value.code == 0, f"fam {ten} không chạy"
 
 
-def test_makefile_khong_tu_viet_lai_viec_cua_pym():
-    """Mỗi target chỉ gọi lại `pym`, để hai đường không bao giờ lệch nhau."""
+def test_makefile_khong_tu_viet_lai_viec_cua_fam():
+    """Mỗi target chỉ gọi lại `fam`, để hai đường không bao giờ lệch nhau."""
     import re
 
     makefile = Path("Makefile")
@@ -324,12 +324,12 @@ def test_makefile_khong_tu_viet_lai_viec_cua_pym():
         tiep_dong = dong.rstrip().endswith("\\")
         if truoc_do or noi_dung.startswith(("@", "#")):
             continue                       # dòng nối tiếp, hoặc lệnh im lặng
-        if "$(PYM)" in dong or "$(PIP)" in dong:
-            continue                       # gọi lại pym, hoặc cài chính khung
+        if "$(FAM)" in dong or "$(PIP)" in dong:
+            continue                       # gọi lại fam, hoặc cài chính khung
         if re.match(r"(test|echo) ", noi_dung):
             continue                       # kiểm tham số trước khi gọi
         tu_viet.append(noi_dung)
-    assert not tu_viet, "target tự viết lại việc của pym: " + " | ".join(tu_viet)
+    assert not tu_viet, "target tự viết lại việc của fam: " + " | ".join(tu_viet)
 
 
 # ------------------------------------------ README sinh ra phải nói đúng sự thật
@@ -340,16 +340,16 @@ def test_readme_sinh_ra_chi_nhac_lenh_co_that(tmp_path: Path):
     assert main(["init", "--root", str(tmp_path)]) == 0
     readme = (tmp_path / "README.md").read_text(encoding="utf-8")
 
-    from pymodular.cli.main import giai_nghia
+    from fastapi_modular.cli.main import giai_nghia
 
-    lenh_co_that = sorted(set(_MAKE_SANG_PYM.values()) | {"module", "env", "install"})
+    lenh_co_that = sorted(set(_MAKE_SANG_FAM.values()) | {"module", "env", "install"})
     la: list[str] = []
-    for m in re.finditer(r"`?pym (\w[\w-]*)", readme):
+    for m in re.finditer(r"`?fam (\w[\w-]*)", readme):
         tu = m.group(1)
         if tu == "-help":
             continue
         # Giải nghĩa đúng như CLI thật: README được phép dùng viết tắt
-        # (`pym mo alerts`), nhưng viết tắt đó phải ra một lệnh CÓ THẬT.
+        # (`fam mo alerts`), nhưng viết tắt đó phải ra một lệnh CÓ THẬT.
         if giai_nghia(tu, lenh_co_that, "lệnh") not in lenh_co_that:
             la.append(tu)
     assert not la, f"README nhắc lệnh không có: {sorted(set(la))}"
@@ -414,7 +414,7 @@ def test_vi_du_code_trong_readme_sinh_ra_chay_duoc(tmp_path: Path):
     ],
 )
 def test_viet_tat_lenh(go: str, that_ra_la: str):
-    from pymodular.cli.main import _mo_rong_vietat, main
+    from fastapi_modular.cli.main import _mo_rong_vietat, main
 
     with pytest.raises(SystemExit) as thoat:
         main([go, "--help"])
@@ -428,7 +428,7 @@ def test_viet_tat_lenh(go: str, that_ra_la: str):
                                               ("i", "info, init, install")])
 def test_viet_tat_nhap_nhang_thi_hoi_lai(go: str, khop_voi: str):
     """Đoán bừa ở đây nghĩa là chạy nhầm lệnh — thà báo lỗi."""
-    from pymodular.cli.main import main
+    from fastapi_modular.cli.main import main
 
     with pytest.raises(SystemExit) as thoat:
         main([go])
@@ -436,7 +436,7 @@ def test_viet_tat_nhap_nhang_thi_hoi_lai(go: str, khop_voi: str):
 
 
 def test_viet_tat_ca_tham_so_dang_danh_sach(tmp_path: Path):
-    from pymodular.cli.main import main
+    from fastapi_modular.cli.main import main
 
     assert main(["e", "sq", "--file", str(tmp_path / ".env")]) == 0
     assert "APP_DB__DRIVER=sqlite" in (tmp_path / ".env").read_text(encoding="utf-8")
@@ -448,7 +448,7 @@ def test_viet_tat_ca_tham_so_dang_danh_sach(tmp_path: Path):
 
 def test_viet_tat_khong_dung_cham_gia_tri_cua_nguoi_dung(tmp_path: Path):
     """Chỉ mở rộng ở vị trí LỆNH và tham số danh sách — tên module thì không."""
-    from pymodular.cli.main import main
+    from fastapi_modular.cli.main import main
 
     assert main(["init", "--root", str(tmp_path)]) == 0
     # "ins" ở đây là TÊN MODULE, không phải viết tắt của "install".
@@ -458,12 +458,12 @@ def test_viet_tat_khong_dung_cham_gia_tri_cua_nguoi_dung(tmp_path: Path):
 
 # ------------------------------------------- bảng "Rút gọn" phải rút gọn thật
 def _lenh_that() -> list[str]:
-    """Danh sách lệnh lấy từ chính `pym --help`, không chép tay lại."""
+    """Danh sách lệnh lấy từ chính `fam --help`, không chép tay lại."""
     import contextlib
     import io
     import re
 
-    from pymodular.cli.main import main
+    from fastapi_modular.cli.main import main
 
     ra = io.StringIO()
     with contextlib.redirect_stdout(ra), pytest.raises(SystemExit):
@@ -484,8 +484,8 @@ def _cap_rut_gon(readme: str) -> list[tuple[str, str]]:
         o = [c.strip() for c in dong.strip("|").split("|")]
         if len(o) != 3 or not o[1]:
             continue
-        day_du = re.findall(r"`pym ([^`]+)`", o[0])
-        ngan = re.findall(r"`pym ([^`]+)`", o[1])
+        day_du = re.findall(r"`fam ([^`]+)`", o[0])
+        ngan = re.findall(r"`fam ([^`]+)`", o[1])
         if len(day_du) != len(ngan):           # hai ô phải khớp nhau từng cặp
             cap.append((o[0], o[1]))           # để assert bên dưới báo đúng chỗ
             continue
@@ -497,11 +497,11 @@ def _cap_rut_gon(readme: str) -> list[tuple[str, str]]:
 def test_moi_lenh_rut_gon_trong_readme_deu_giai_ra_dung_lenh_do(nguon: str, tmp_path: Path):
     """Cột "Rút gọn" là lời hứa với người đọc — thêm lệnh mới có thể phá nó.
 
-    Ví dụ: thêm lệnh `down` thì `pym d` hết trỏ về `dev`, README lặng lẽ sai.
+    Ví dụ: thêm lệnh `down` thì `fam d` hết trỏ về `dev`, README lặng lẽ sai.
     Test này bắt ngay, vì nó giải nghĩa bằng chính hàm CLI dùng lúc chạy thật.
     """
-    from pymodular.cli.install import THANH_PHAN
-    from pymodular.cli.main import giai_nghia
+    from fastapi_modular.cli.install import THANH_PHAN
+    from fastapi_modular.cli.main import giai_nghia
 
     if nguon == "repo":
         readme = Path("README.md").read_text(encoding="utf-8")
@@ -520,11 +520,11 @@ def test_moi_lenh_rut_gon_trong_readme_deu_giai_ra_dung_lenh_do(nguon: str, tmp_
         assert len(tu_ngan) <= len(tu_day), f"{ngan!r} nhiều từ hơn {day_du!r}"
 
         assert giai_nghia(tu_ngan[0], lenh, "lệnh") == tu_day[0], (
-            f"`pym {ngan}` không ra `pym {day_du}`"
+            f"`fam {ngan}` không ra `fam {day_du}`"
         )
         # Ô đầy đủ có thể ghi chỗ trống (`<tên>`) hay cờ (`--workers 4`); chỉ đối
         # chiếu khi đó là một giá trị có thật trong danh sách chọn.
         if len(tu_ngan) > 1 and tu_day[0] in danh_sach and tu_day[1] in danh_sach[tu_day[0]]:
             assert giai_nghia(tu_ngan[1], danh_sach[tu_day[0]], "thành phần") == tu_day[1], (
-                f"`pym {ngan}` không ra `pym {day_du}`"
+                f"`fam {ngan}` không ra `fam {day_du}`"
             )

@@ -4,12 +4,12 @@
 
 Hai khối, ranh giới là điều quan trọng nhất:
 
-- **`pymodular/`** — THƯ VIỆN, thứ được đóng gói và cài bằng pip. **Không import
+- **`fastapi_modular/`** — THƯ VIỆN, thứ được đóng gói và cài bằng pip. **Không import
   bất cứ thứ gì từ `src/`.** Nó chỉ biết "có một package tên `src.api`, quét nó đi"
   (`DEFAULT_PACKAGE = "src.api"` trong `discovery.py`).
 - **`src/`** — ỨNG DỤNG MẪU của repo này, không nằm trong gói cài. Xoá được.
 
-Trong `pymodular/`: `core/` (DI, controller, config, guard, WebSocket) ·
+Trong `fastapi_modular/`: `core/` (DI, controller, config, guard, WebSocket) ·
 `infrastructure/` (database, rabbitmq, redis, mqtt, kafka — **mỗi hạ tầng một
 package, không biết nhau**) · `cli/` · `factory.py` · `discovery.py`.
 
@@ -29,7 +29,7 @@ chỗ là họ gõ theo rồi lỗi.
 | trường trong `core/config.py` (`Settings` và các lớp con) | `docs/config.md` (bảng biến), và doc của nhóm đó: `database.md` / `websocket.md` / `rabbitmq.md` / `redis.md` / `mqtt.md` / `kafka.md` |
 | lệnh hoặc cờ trong `cli/` | bảng lệnh ở `README.md`, cây `cli/` ở `README.md` **và** `docs/architecture.md` |
 | tên file / lớp mà `cli/new_module.py` sinh ra | mục "Thêm module mới" ở `docs/architecture.md` |
-| API công khai (`pymodular/__init__.py`, decorator, method) | doc của phần đó, và `docs/README.md` nếu đổi bảng đối chiếu |
+| API công khai (`fastapi_modular/__init__.py`, decorator, method) | doc của phần đó, và `docs/README.md` nếu đổi bảng đối chiếu |
 | thêm/bớt test | con số test ở `README.md` (cây thư mục) và `docs/architecture.md` (mục Chất lượng mã) |
 
 Hai cái bẫy đã từng làm docs sai:
@@ -43,7 +43,7 @@ Hai cái bẫy đã từng làm docs sai:
 
 ```bash
 pytest -q                       # 341 passed, 40 skipped (40 skip cần hạ tầng thật)
-pym lint pymodular src tests    # `pym lint` trần chỉ soi `src`, thiếu thư viện và test
+fam lint fastapi_modular src tests    # `fam lint` trần chỉ soi `src`, thiếu thư viện và test
 ```
 
 `tests/test_configure_env.py::test_bien_nhac_trong_docs_deu_con_that` đối chiếu
@@ -52,6 +52,34 @@ mọi biến `APP_*` trong docs với `Settings` thật. Thêm một **nhóm** b
 không biến có thật vẫn bị báo là "không thuộc nhóm nào".
 
 Số test ở đây cũng là con số viết tay — sửa khi nó đổi.
+
+## Phát hành
+
+Mỗi lần đẩy lên PyPI **bắt buộc** tạo một nhánh git mang đúng số phiên bản đó
+(`v0.2.0`), đẩy nhánh lên remote, rồi mới quay lại `main`. Nhánh là ảnh chụp
+đúng thứ đã lên PyPI — bản trên PyPI không sửa lại được, nên phải có một chỗ
+trong git tương ứng một-đối-một với nó.
+
+```bash
+# sau khi đã commit mọi thay đổi trên main
+python -m build && python -m twine check dist/*
+python -m twine upload dist/*
+git branch v0.2.0 && git push -u origin v0.2.0
+```
+
+Số phiên bản chỉ nằm ở MỘT chỗ: `__version__` trong
+`fastapi_modular/__init__.py` (pyproject khai `dynamic = ["version"]`).
+
+Hai điều đã cắn một lần:
+
+- **PyPI chặn tên "quá giống" project đã có**, không chỉ tên trùng khít. Nó so
+  sau khi bỏ hết `-`, `_`, `.` — vì vậy `pymodular` bị từ chối do đụng
+  `py-modular`. HTTP 404 ở `/pypi/<tên>/json` KHÔNG đủ để kết luận tên dùng
+  được; phải kiểm cả các biến thể dấu ngăn.
+- **README là trang hiển thị trên PyPI**, nên mọi link trong đó phải là URL
+  tuyệt đối. Link tương đối kiểu `docs/x.md` phân giải thành
+  `pypi.org/project/.../docs/x.md` và trả 404. Link giữa các file trong `docs/`
+  thì cứ để tương đối.
 
 ## Ngôn ngữ
 

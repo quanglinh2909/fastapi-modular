@@ -12,7 +12,7 @@ from datetime import datetime
 
 from pydantic import Field, field_validator
 
-from pymodular.core.schemas import InputSchema, OutputSchema, partial_of
+from fastapi_modular.core.schemas import InputSchema, OutputSchema, partial_of
 
 # Dùng regex thay cho EmailStr để không phải thêm dependency `email-validator`.
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"

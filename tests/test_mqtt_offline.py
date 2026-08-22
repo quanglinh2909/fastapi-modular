@@ -4,19 +4,19 @@ from __future__ import annotations
 
 import pytest
 
-from pymodular.core.config import MqttSettings, Settings
-from pymodular.core.container import injectable
-from pymodular.core.exceptions import BadRequestError, ComponentNotEnabledError
-from pymodular.infrastructure.mqtt import (
+from fastapi_modular.core.config import MqttSettings, Settings
+from fastapi_modular.core.container import injectable
+from fastapi_modular.core.exceptions import BadRequestError, ComponentNotEnabledError
+from fastapi_modular.infrastructure.mqtt import (
     MqttClient,
     covers,
     matches,
     mqtt_subscriber,
     narrow_filters,
 )
-from pymodular.infrastructure.mqtt.client import parse_url, safe_url
-from pymodular.infrastructure.mqtt.consumers import discover_mqtt_subscribers
-from pymodular.infrastructure.mqtt.patterns import validate_topic, validate_topic_filter
+from fastapi_modular.infrastructure.mqtt.client import parse_url, safe_url
+from fastapi_modular.infrastructure.mqtt.consumers import discover_mqtt_subscribers
+from fastapi_modular.infrastructure.mqtt.patterns import validate_topic, validate_topic_filter
 
 
 def test_mac_dinh_la_tat():

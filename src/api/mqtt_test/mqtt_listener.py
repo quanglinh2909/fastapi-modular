@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from pymodular.core.container import injectable
-from pymodular.core.logging import get_logger
-from pymodular.infrastructure.mqtt import mqtt_subscriber
+from fastapi_modular.core.container import injectable
+from fastapi_modular.core.logging import get_logger
+from fastapi_modular.infrastructure.mqtt import mqtt_subscriber
 
 log = get_logger(__name__)
 

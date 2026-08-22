@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from pymodular.infrastructure.database.base import DuplicateKeyViolation, mapping_for
+from fastapi_modular.infrastructure.database.base import DuplicateKeyViolation, mapping_for
 
 
 def test_entity_khai_bao_unique_va_index():
@@ -37,7 +37,7 @@ def test_ten_index_theo_cum_cot():
 
 def test_ten_index_qua_dai_thi_rut_gon():
     """PostgreSQL cắt định danh ở 63 ký tự — tên phải tự rút gọn mà vẫn ổn định."""
-    from pymodular.infrastructure.database.base import MAX_INDEX_NAME, index_name
+    from fastapi_modular.infrastructure.database.base import MAX_INDEX_NAME, index_name
 
     columns = ("cot_thu_nhat", "cot_thu_hai", "cot_thu_ba", "cot_thu_tu", "cot_thu_nam")
     name = index_name("ix", "mot_cai_bang_ten_rat_dai_de_thu", columns)
@@ -75,8 +75,8 @@ def test_backend_chan_trung_ke_ca_khi_service_bo_qua(client, user):
     """Đi thẳng xuống repository, bỏ qua lớp kiểm tra của service."""
     import anyio
 
-    from pymodular.core.container import container
-    from pymodular.infrastructure.database.repository import Database, Repository
+    from fastapi_modular.core.container import container
+    from fastapi_modular.infrastructure.database.repository import Database, Repository
     from src.api.users.entities.user_model import User
 
     repo = Repository(User, container.resolve(Database))

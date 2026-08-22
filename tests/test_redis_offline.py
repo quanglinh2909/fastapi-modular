@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import pytest
 
-from pymodular.core.config import RedisSettings, Settings
-from pymodular.core.container import injectable
-from pymodular.core.exceptions import ComponentNotEnabledError
-from pymodular.infrastructure.redis import RedisClient, redis_subscriber
-from pymodular.infrastructure.redis.client import safe_url
-from pymodular.infrastructure.redis.pubsub import discover_redis_subscribers
+from fastapi_modular.core.config import RedisSettings, Settings
+from fastapi_modular.core.container import injectable
+from fastapi_modular.core.exceptions import ComponentNotEnabledError
+from fastapi_modular.infrastructure.redis import RedisClient, redis_subscriber
+from fastapi_modular.infrastructure.redis.client import safe_url
+from fastapi_modular.infrastructure.redis.pubsub import discover_redis_subscribers
 
 
 def test_mac_dinh_la_tat():

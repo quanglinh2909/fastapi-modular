@@ -10,9 +10,9 @@ import asyncio
 
 from pydantic import BaseModel
 
-from pymodular.core.container import injectable
-from pymodular.core.logging import get_logger
-from pymodular.infrastructure.redis import RedisClient, redis_subscriber
+from fastapi_modular.core.container import injectable
+from fastapi_modular.core.logging import get_logger
+from fastapi_modular.infrastructure.redis import RedisClient, redis_subscriber
 
 log = get_logger(__name__)
 

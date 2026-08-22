@@ -1,0 +1,520 @@
+"""Backend SQL cho SQLite và PostgreSQL, dùng SQLAlchemy Core (không ORM).
+
+File này CHỈ được import khi settings chọn driver sqlite/postgres — xem
+`factory.py`. Nhờ vậy máy không cài SQLAlchemy vẫn chạy được template.
+
+Bảng được suy ra từ dataclass entity, nên entity không phải kế thừa Base hay
+khai báo Column. Đổi lại, `create_all()` chỉ tạo bảng còn thiếu và không biết
+migrate — production nên dùng Alembic thay cho `auto_create`.
+
+Transaction: mỗi request dùng chung một connection do `SqlUnitOfWork` giữ
+(provider request-scoped), commit khi handler chạy xong, rollback nếu có lỗi.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import datetime
+from enum import Enum
+from typing import Any, TypeVar
+
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    func,
+    select,
+)
+from sqlalchemy import (
+    delete as sql_delete,
+)
+from sqlalchemy import (
+    insert as sql_insert,
+)
+from sqlalchemy import (
+    update as sql_update,
+)
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
+
+from fastapi_modular.core.container import Scope, injectable
+from fastapi_modular.core.logging import get_logger
+from fastapi_modular.infrastructure.database.base import (
+    DatabaseBackend,
+    Filters,
+    Match,
+    active_filters,
+    from_document,
+    mapping_for,
+    to_document,
+)
+
+log = get_logger(__name__)
+
+E = TypeVar("E")
+
+_COLUMN_TYPES: dict[type, Any] = {
+    str: String,
+    bool: Boolean,
+    int: Integer,
+    float: Float,
+    datetime: DateTime(timezone=True),
+}
+
+
+def _type_name(type_: Any, dialect: Any) -> str:
+    """Tên kiểu đã chuẩn hoá, bỏ phần độ dài, để so hai bên cho công bằng."""
+    try:
+        rendered = type_.compile(dialect=dialect)
+    except Exception:  # noqa: BLE001 - kiểu lạ không compile được thì lấy repr
+        rendered = str(type_)
+    return rendered.split("(")[0].strip().upper()
+
+
+def _column_type(declared: type) -> Any:
+    if isinstance(declared, type) and issubclass(declared, Enum):
+        return String(64)  # Enum lưu bằng .value cho dễ đọc và dễ migrate
+    return _COLUMN_TYPES.get(declared, String)
+
+
+@injectable(scope=Scope.REQUEST)
+class SqlUnitOfWork:
+    """Một connection + một transaction cho mỗi request.
+
+    Container tạo nó khi backend cần lần đầu trong request, và gọi
+    `on_request_end` lúc đóng request scope — commit nếu handler thành công,
+    rollback nếu có exception. Vì việc này chạy TRƯỚC khi response được gửi
+    (xem controller.py), client đọc lại ngay sau khi ghi sẽ thấy dữ liệu mới.
+    """
+
+    def __init__(self) -> None:
+        self._connection: AsyncConnection | None = None
+
+    async def connection(self, engine: AsyncEngine) -> AsyncConnection:
+        if self._connection is None:
+            self._connection = await engine.connect()
+            await self._connection.begin()
+        return self._connection
+
+    async def on_request_end(self, error: BaseException | None) -> None:
+        if self._connection is None:
+            return
+        try:
+            if error is None:
+                await self._connection.commit()
+            else:
+                await self._connection.rollback()
+        finally:
+            await self._connection.close()
+            self._connection = None
+
+
+def build_metadata(*entities: type) -> MetaData:
+    """Dựng MetaData từ các entity — dùng cho Alembic autogenerate.
+
+    Không cần engine, không cần kết nối: chỉ đọc dataclass và suy ra bảng.
+    """
+    metadata = MetaData()
+    for entity in entities:
+        mapping = mapping_for(entity)
+        Table(
+            mapping.storage,
+            metadata,
+            *(
+                Column(
+                    name,
+                    _column_type(declared),
+                    primary_key=(name == "id"),
+                    nullable=(name != "id"),
+                )
+                for name, declared in mapping.fields.items()
+            ),
+            *(
+                Index(name, *columns, unique=is_unique)
+                for name, columns, is_unique in mapping.index_specs()
+            ),
+        )
+    return metadata
+
+
+class SqlBackend(DatabaseBackend):
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        echo: bool = False,
+        schema_mode: str = "create",
+        drop_columns: bool = False,
+        pool_pre_ping: bool = True,
+        pool_size: int = 5,
+        max_overflow: int = 10,
+        pool_recycle_seconds: int = 1800,
+        connect_timeout_seconds: float = 10.0,
+        query_timeout_seconds: float = 15.0,
+    ) -> None:
+        self.name = "postgres" if dsn.startswith("postgresql") else "sqlite"
+        self._dsn = dsn
+        self._echo = echo
+        self._schema_mode = schema_mode
+        self._drop_columns = drop_columns
+        self._pool_pre_ping = pool_pre_ping
+        self._pool_size = pool_size
+        self._max_overflow = max_overflow
+        self._pool_recycle = pool_recycle_seconds
+        self._connect_timeout = connect_timeout_seconds
+        self._query_timeout = query_timeout_seconds
+        self._engine: AsyncEngine | None = None
+        self._metadata = MetaData()
+        self._tables: dict[str, Table] = {}
+
+    # ------------------------------------------------------------------ vòng đời
+    def _engine_kwargs(self) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "echo": self._echo,
+            "future": True,
+            # Kiểm tra connection còn sống trước khi giao cho request. Đây là
+            # thứ khiến database restart trở nên vô hình với client.
+            "pool_pre_ping": self._pool_pre_ping,
+        }
+        if self.name == "postgres":
+            # SQLite dùng NullPool nên không nhận các tham số pool này.
+            kwargs.update(
+                pool_size=self._pool_size,
+                max_overflow=self._max_overflow,
+                pool_recycle=self._pool_recycle,
+                connect_args={
+                    "timeout": self._connect_timeout,
+                    # Chặn cả câu lệnh đã gửi đi, không chỉ lúc mở kết nối.
+                    "command_timeout": self._query_timeout,
+                },
+            )
+        return kwargs
+
+    async def startup(self) -> None:
+        self._engine = create_async_engine(self._dsn, **self._engine_kwargs())
+        log.info("db.connected", backend=self.name, pre_ping=self._pool_pre_ping)
+
+    async def shutdown(self) -> None:
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None
+
+    async def ping(self) -> bool:
+        from sqlalchemy import text
+
+        async with self._engine.connect() as conn:  # type: ignore[union-attr]
+            await conn.execute(text("SELECT 1"))
+        return True
+
+    # ------------------------------------------------------------------ ánh xạ
+    def _table(self, entity: type) -> Table:
+        mapping = mapping_for(entity)
+        table = self._tables.get(mapping.storage)
+        if table is not None:
+            return table
+
+        columns = [
+            Column(
+                name,
+                _column_type(declared),
+                primary_key=(name == "id"),
+                nullable=(name != "id"),
+            )
+            for name, declared in mapping.fields.items()
+        ]
+        table = Table(mapping.storage, self._metadata, *columns)
+        self._tables[mapping.storage] = table
+        return table
+
+    async def create_schema(self, *entities: type) -> None:
+        """Đưa schema về khớp entity, theo mức đã cấu hình.
+
+        - "off"    : không làm gì.
+        - "create" : chỉ CREATE TABLE cho bảng còn thiếu.
+        - "sync"   : thêm cột mới bằng ALTER TABLE ADD COLUMN; cột thừa thì xoá
+                     (nếu drop_columns=True) hoặc chỉ cảnh báo; cột lệch kiểu
+                     chỉ cảnh báo, không tự đổi.
+
+        Vì sao không tự đổi kiểu cột: mỗi database một cú pháp, và phép đổi có
+        thể mất dữ liệu (VARCHAR -> INTEGER) hoặc khoá bảng rất lâu. Đó là việc
+        của một migration có review, không phải của lúc khởi động.
+        """
+        if self._engine is None:
+            return
+
+        for entity in entities:
+            self._table(entity)
+
+        if self._schema_mode == "off":
+            # Không đụng schema, nhưng vẫn phải soi: thiếu unique index thì
+            # ràng buộc duy nhất không tồn tại, và hai request đồng thời sẽ
+            # cùng ghi được bản trùng.
+            await self._audit_indexes(*entities)
+            return
+
+        async with self._engine.begin() as conn:
+            await conn.run_sync(self._metadata.create_all)
+
+        await self._ensure_indexes(*entities)
+
+        if self._schema_mode != "sync":
+            log.info("db.schema_ready", mode=self._schema_mode, tables=sorted(self._tables))
+            return
+
+        added, dropped, mismatched, kept = [], [], [], []
+        async with self._engine.begin() as conn:
+            for table in self._tables.values():
+                a, d, m, k = await self._sync_table(conn, table)
+                added += a
+                dropped += d
+                mismatched += m
+                kept += k
+
+        log.info(
+            "db.schema_ready",
+            mode="sync",
+            tables=sorted(self._tables),
+            added=added or None,
+            dropped=dropped or None,
+        )
+        for column in mismatched:
+            log.warning("db.column_type_mismatch", column=column,
+                        hint="đổi kiểu cột phải làm bằng migration, không tự động")
+        for column in kept:
+            log.warning("db.extra_column_kept", column=column,
+                        hint="đặt APP_DB__DROP_COLUMNS=true nếu muốn xoá (mất dữ liệu)")
+
+    async def _audit_indexes(self, *entities: type) -> None:
+        """Chỉ kiểm tra, không tạo — dùng khi schema_mode="off"."""
+        from sqlalchemy import inspect as sa_inspect
+
+        assert self._engine is not None
+        missing: list[str] = []
+
+        async with self._engine.connect() as conn:
+            for entity in entities:
+                mapping = mapping_for(entity)
+                if not (mapping.unique or mapping.indexes):
+                    continue
+                try:
+                    existing = await conn.run_sync(
+                        lambda c, name=mapping.storage: {
+                            i["name"] for i in sa_inspect(c).get_indexes(name)
+                        }
+                    )
+                except Exception:  # noqa: BLE001 - bảng chưa tồn tại
+                    continue
+                for name, columns, is_unique in mapping.index_specs():
+                    if name in existing:
+                        continue
+                    label = f"{mapping.storage}({', '.join(columns)})"
+                    missing.append(f"{label} (UNIQUE)" if is_unique else label)
+
+        if missing:
+            log.warning(
+                "db.indexes_missing",
+                indexes=missing,
+                hint="schema_mode='off' nên index không được tạo tự động — "
+                     "hãy thêm chúng vào migration, nếu không ràng buộc duy nhất "
+                     "sẽ không có hiệu lực",
+            )
+
+    async def _ensure_indexes(self, *entities: type) -> None:
+        """Tạo index và unique index đã khai báo ở @entity.
+
+        `CREATE [UNIQUE] INDEX IF NOT EXISTS` chạy được trên cả SQLite lẫn
+        PostgreSQL và lặp lại vô hại, nên gọi mỗi lần khởi động cũng không sao.
+        """
+        from sqlalchemy import text
+
+        assert self._engine is not None
+        for entity in entities:
+            mapping = mapping_for(entity)
+            for name, columns, is_unique in mapping.index_specs():
+                kind = "UNIQUE INDEX" if is_unique else "INDEX"
+                statement = (
+                    f"CREATE {kind} IF NOT EXISTS {name} "
+                    f"ON {mapping.storage} ({', '.join(columns)})"
+                )
+                try:
+                    async with self._engine.begin() as conn:
+                        await conn.execute(text(statement))
+                except Exception as exc:  # noqa: BLE001 - index hỏng không được làm chết app
+                    # Hay gặp nhất: dữ liệu cũ đã có bản trùng nên không tạo
+                    # được unique index. Không làm app chết, nhưng phải kêu to
+                    # vì lúc này ràng buộc KHÔNG có hiệu lực.
+                    log.error(
+                        "db.index_failed",
+                        index=name,
+                        columns=list(columns),
+                        unique=is_unique,
+                        error=str(exc).splitlines()[0],
+                        hint="dọn bản ghi trùng rồi khởi động lại",
+                    )
+
+    async def _sync_table(self, conn: AsyncConnection, table: Table):
+        from sqlalchemy import inspect as sa_inspect
+        from sqlalchemy import text
+
+        existing = await conn.run_sync(
+            lambda sync_conn: {c["name"]: c for c in sa_inspect(sync_conn).get_columns(table.name)}
+        )
+        dialect = conn.engine.dialect
+        added, dropped, mismatched, kept = [], [], [], []
+
+        # cột có trong entity nhưng chưa có dưới database -> thêm
+        for column in table.columns:
+            if column.name in existing:
+                # Phải compile CẢ HAI bằng cùng dialect. Dùng str() cho kiểu do
+                # inspector trả về sẽ mất thông tin (TIMESTAMP WITH TIME ZONE
+                # in ra thành "TIMESTAMP") và sinh cảnh báo sai.
+                want = _type_name(column.type, dialect)
+                have = _type_name(existing[column.name]["type"], dialect)
+                if want != have:
+                    mismatched.append(f"{table.name}.{column.name}: {have} -> {want}")
+                continue
+
+            ddl = f"{column.name} {column.type.compile(dialect=dialect)}"
+            await conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {ddl}"))
+            added.append(f"{table.name}.{column.name}")
+
+        # cột còn dưới database nhưng entity đã bỏ
+        for name in existing:
+            if name in table.c:
+                continue
+            if not self._drop_columns:
+                kept.append(f"{table.name}.{name}")
+                continue
+            try:
+                await conn.execute(text(f"ALTER TABLE {table.name} DROP COLUMN {name}"))
+                dropped.append(f"{table.name}.{name}")
+            except Exception as exc:  # noqa: BLE001 - SQLite cũ không DROP COLUMN được
+                kept.append(f"{table.name}.{name}")
+                log.warning("db.drop_column_failed", column=f"{table.name}.{name}", error=str(exc))
+
+        return added, dropped, mismatched, kept
+
+    # ------------------------------------------------------------------ kết nối
+    @asynccontextmanager
+    async def _conn(self) -> AsyncIterator[AsyncConnection]:
+        """Dùng connection của request nếu có; ngoài request thì mở tạm một cái."""
+        from fastapi_modular.core.container import container
+
+        assert self._engine is not None, "backend chưa startup()"
+        try:
+            uow = container.resolve(SqlUnitOfWork)
+        except RuntimeError:
+            async with self._engine.begin() as conn:  # ngoài request: tự commit
+                yield conn
+            return
+        yield await uow.connection(self._engine)
+
+    def _where(self, table: Table, filters: Filters) -> list[Any]:
+        return [table.c[k] == v for k, v in active_filters(filters).items() if k in table.c]
+
+    def _row_to_entity(self, entity: type[E], row: Any) -> E:
+        return from_document(entity, dict(row._mapping))
+
+    # ------------------------------------------------------------------ truy vấn
+    async def get(self, entity: type[E], id_: str) -> E | None:
+        table = self._table(entity)
+        async with self._conn() as conn:
+            row = (await conn.execute(select(table).where(table.c.id == id_))).first()
+        return self._row_to_entity(entity, row) if row is not None else None
+
+    async def find(
+        self,
+        entity: type[E],
+        *,
+        filters: Filters,
+        match: Match = None,
+        order_by: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[E]:
+        table = self._table(entity)
+        stmt = select(table).where(*self._where(table, filters))
+        if order_by and order_by in table.c:
+            stmt = stmt.order_by(table.c[order_by])
+
+        # `match=` là predicate Python nên KHÔNG đẩy xuống SQL được: phải lấy
+        # về rồi lọc. Chỉ phân trang ở SQL khi không có match.
+        if match is None:
+            if offset:
+                stmt = stmt.offset(offset)
+            if limit is not None:
+                stmt = stmt.limit(limit)
+
+        async with self._conn() as conn:
+            rows = (await conn.execute(stmt)).fetchall()
+
+        items = [self._row_to_entity(entity, r) for r in rows]
+        if match is not None:
+            items = [o for o in items if match(o)][offset:]
+            if limit is not None:
+                items = items[:limit]
+        return items
+
+    async def find_one(
+        self, entity: type[E], *, filters: Filters, match: Match = None
+    ) -> E | None:
+        items = await self.find(entity, filters=filters, match=match, limit=1)
+        return items[0] if items else None
+
+    async def count(
+        self, entity: type[E], *, filters: Filters, match: Match = None
+    ) -> int:
+        if match is not None:
+            return len(await self.find(entity, filters=filters, match=match))
+        table = self._table(entity)
+        stmt = select(func.count()).select_from(table).where(*self._where(table, filters))
+        async with self._conn() as conn:
+            return int((await conn.execute(stmt)).scalar_one())
+
+    # ------------------------------------------------------------------ ghi
+    async def save(self, entity: type[E], obj: E) -> E:
+        import uuid
+
+        table = self._table(entity)
+        is_new = not getattr(obj, "id", None)
+        if is_new:
+            obj.id = uuid.uuid4().hex  # type: ignore[attr-defined]
+
+        values = to_document(obj)
+        async with self._conn() as conn:
+            if is_new:
+                await conn.execute(sql_insert(table).values(**values))
+            else:
+                result = await conn.execute(
+                    sql_update(table).where(table.c.id == obj.id).values(**values)  # type: ignore[attr-defined]
+                )
+                if result.rowcount == 0:
+                    await conn.execute(sql_insert(table).values(**values))
+        return obj
+
+    async def delete(self, entity: type[E], id_: str) -> bool:
+        table = self._table(entity)
+        async with self._conn() as conn:
+            result = await conn.execute(sql_delete(table).where(table.c.id == id_))
+        return result.rowcount > 0
+
+    async def delete_where(
+        self, entity: type[E], *, filters: Filters, match: Match = None
+    ) -> int:
+        if match is not None:
+            victims = await self.find(entity, filters=filters, match=match)
+            removed = 0
+            for obj in victims:
+                removed += int(await self.delete(entity, obj.id))  # type: ignore[attr-defined]
+            return removed
+
+        table = self._table(entity)
+        async with self._conn() as conn:
+            result = await conn.execute(sql_delete(table).where(*self._where(table, filters)))
+        return int(result.rowcount)

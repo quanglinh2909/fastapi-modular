@@ -36,7 +36,7 @@ os.environ.update(_NGAT_HA_TANG_THAT)
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from pymodular.core.config import (  # noqa: E402
+from fastapi_modular.core.config import (  # noqa: E402
     DatabaseSettings,
     KafkaSettings,
     MqttSettings,
@@ -45,8 +45,8 @@ from pymodular.core.config import (  # noqa: E402
     Settings,
     WebSocketSettings,
 )
-from pymodular.core.container import container  # noqa: E402
-from pymodular.factory import create_app  # noqa: E402
+from fastapi_modular.core.container import container  # noqa: E402
+from fastapi_modular.factory import create_app  # noqa: E402
 
 
 @pytest.fixture

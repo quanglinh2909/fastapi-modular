@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from pymodular.core.config import DatabaseSettings, Settings
-from pymodular.infrastructure.database.factory import create_backend
-from pymodular.infrastructure.database.repository import Database, Repository
+from fastapi_modular.core.config import DatabaseSettings, Settings
+from fastapi_modular.infrastructure.database.factory import create_backend
+from fastapi_modular.infrastructure.database.repository import Database, Repository
 
 
 @pytest.mark.parametrize(

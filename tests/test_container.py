@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pymodular.core.container import Container, Lazy, Scope, injectable, request_scope
+from fastapi_modular.core.container import Container, Lazy, Scope, injectable, request_scope
 
 
 def test_singleton_tra_ve_cung_instance():

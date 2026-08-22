@@ -3,7 +3,7 @@
 Tuỳ chọn. Không cài, không bật thì không ảnh hưởng gì tới phần còn lại.
 
 ```bash
-pym install rabbitmq     # cài thư viện + ghi APP_RABBITMQ__* vào .env
+fam install rabbitmq     # cài thư viện + ghi APP_RABBITMQ__* vào .env
 ```
 
 Hai việc làm được: **đăng tin** (`RabbitBroker.publish`) và **xử lý tin nền**
@@ -32,7 +32,7 @@ Xoá dòng nào thì biến đó quay về mặc định — trừ `URL`, thứ 
 | `APP_RABBITMQ__RECONNECT_DELAY_SECONDS` | không | `2.0` | chờ trước lần nối lại đầu tiên |
 | `APP_RABBITMQ__MAX_RECONNECT_DELAY_SECONDS` | không | `30.0` | trần thời gian chờ (tăng gấp đôi mỗi lần) |
 
-`pym env rabbitmq` ghi sẵn cả bảy dòng này vào `.env`, mỗi dòng kèm giải
+`fam env rabbitmq` ghi sẵn cả bảy dòng này vào `.env`, mỗi dòng kèm giải
 thích và mặc định ngay phía trên.
 
 Mật khẩu chứa `@` viết thẳng được (`amqp://admin:Pass@123@host:5672/`); parser
@@ -43,8 +43,8 @@ lấy dấu `@` cuối cùng làm ranh giới.
 ## Đăng tin
 
 ```python
-from pymodular.core.container import injectable
-from pymodular.infrastructure.rabbitmq import RabbitBroker
+from fastapi_modular.core.container import injectable
+from fastapi_modular.infrastructure.rabbitmq import RabbitBroker
 
 
 @injectable
@@ -126,8 +126,8 @@ ALERT_CREATED = "alert.created"
 ## Consumer nền
 
 ```python
-from pymodular.core.container import injectable
-from pymodular.infrastructure.rabbitmq import rabbitmq_subscriber
+from fastapi_modular.core.container import injectable
+from fastapi_modular.infrastructure.rabbitmq import rabbitmq_subscriber
 
 
 @injectable
@@ -141,7 +141,7 @@ class AlertConsumer:
 ```
 
 Không cần decorator ở cấp class — bất kỳ class `@injectable` nào cũng chứa
-consumer được. `pym module alerts --consumer` hoặc `pym module alerts` --consumer-only
+consumer được. `fam module alerts --consumer` hoặc `fam module alerts` --consumer-only
 sinh sẵn khung này.
 
 ### `@rabbitmq_subscriber(...)`
@@ -275,7 +275,7 @@ Khi đã bật thử lại và hàng đợi chết:
 | payload sai khuôn model | như `PermanentMessageError` |
 
 ```python
-from pymodular.infrastructure.rabbitmq import PermanentMessageError
+from fastapi_modular.infrastructure.rabbitmq import PermanentMessageError
 
 @rabbitmq_subscriber("events", "order.paid", queue="order-ship",
             max_retries=5, retry_delay=30, dead_letter=True)
@@ -539,10 +539,10 @@ curl -s localhost:8000/api/metrics | grep rabbitmq_
 ## Lệnh hay dùng
 
 ```bash
-pym install rabbitmq
-pym info                        # cấu hình đang dùng
-pym module alerts --consumer              # module mới kèm consumer
-pym module alerts --consumer-only                 # thêm consumer vào module có sẵn
+fam install rabbitmq
+fam info                        # cấu hình đang dùng
+fam module alerts --consumer              # module mới kèm consumer
+fam module alerts --consumer-only                 # thêm consumer vào module có sẵn
 
 docker exec rabbit rabbitmqctl list_queues name messages consumers durable
 docker exec rabbit rabbitmqctl list_consumers queue_name prefetch_count
@@ -554,5 +554,5 @@ Chạy test cần broker thật:
 
 ```bash
 docker run -d --name rabbit-test -p 5673:5672 rabbitmq:3.13-management-alpine
-TEST_RABBITMQ_URL=amqp://guest:guest@localhost:5673/ pym test
+TEST_RABBITMQ_URL=amqp://guest:guest@localhost:5673/ fam test
 ```

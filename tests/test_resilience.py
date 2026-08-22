@@ -9,9 +9,9 @@ from contextlib import contextmanager
 
 import pytest
 
-from pymodular.core.config import DatabaseSettings, Settings
-from pymodular.core.container import container
-from pymodular.infrastructure.database.repository import Database
+from fastapi_modular.core.config import DatabaseSettings, Settings
+from fastapi_modular.core.container import container
+from fastapi_modular.infrastructure.database.repository import Database
 
 
 class _BrokenBackend:
@@ -44,7 +44,7 @@ class _FlakyBackend:
     name = "flaky"
 
     def __init__(self) -> None:
-        from pymodular.infrastructure.database.memory import MemoryBackend
+        from fastapi_modular.infrastructure.database.memory import MemoryBackend
 
         self._real = MemoryBackend()
         self.error: Exception | None = None
@@ -79,7 +79,7 @@ def client_that_loses_db(error: Exception):
     """Mở app khoẻ mạnh, rồi ngắt database ngay trước khi gọi request."""
     from fastapi.testclient import TestClient
 
-    from pymodular.factory import create_app
+    from fastapi_modular.factory import create_app
 
     settings = Settings(
         APP_DEBUG=False,
@@ -196,14 +196,14 @@ class ServerSelectionTimeoutError(Exception):
     ],
 )
 def test_phan_loai_loi_tam_thoi(exc, retryable):
-    from pymodular.infrastructure.database.base import is_transient_error
+    from fastapi_modular.infrastructure.database.base import is_transient_error
 
     assert is_transient_error(exc) is retryable
 
 
 def test_loi_bi_boc_van_nhan_ra_duoc():
     """Driver hay bọc lỗi gốc lại; phải duyệt cả chuỗi __cause__."""
-    from pymodular.infrastructure.database.base import is_transient_error
+    from fastapi_modular.infrastructure.database.base import is_transient_error
 
     wrapped = RuntimeError("bọc ngoài")
     wrapped.__cause__ = ConnectionRefusedError(111, "refused")

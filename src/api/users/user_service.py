@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pymodular.core.container import Lazy, injectable
-from pymodular.core.exceptions import ConflictError, NotFoundError
-from pymodular.core.logging import get_logger
-from pymodular.core.schemas import apply_changes
-from pymodular.infrastructure.database import Repository
+from fastapi_modular.core.container import Lazy, injectable
+from fastapi_modular.core.exceptions import ConflictError, NotFoundError
+from fastapi_modular.core.logging import get_logger
+from fastapi_modular.core.schemas import apply_changes
+from fastapi_modular.infrastructure.database import Repository
 from src.api.users.dto.user_dto import UserCreate, UserUpdate
 from src.api.users.entities.user_model import User
 

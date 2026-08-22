@@ -6,11 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-from pymodular.core.config import DatabaseSettings, Settings
-from pymodular.core.container import Scope, container, injectable, request_scope
-from pymodular.core.controller import build_router, controller, get
-from pymodular.core.exceptions import ForbiddenError, UnauthorizedError
-from pymodular.core.guards import Principal, RequireHeader, current_principal
+from fastapi_modular.core.config import DatabaseSettings, Settings
+from fastapi_modular.core.container import Scope, container, injectable, request_scope
+from fastapi_modular.core.controller import build_router, controller, get
+from fastapi_modular.core.exceptions import ForbiddenError, UnauthorizedError
+from fastapi_modular.core.guards import Principal, RequireHeader, current_principal
 
 CHAY: list[str] = []
 
@@ -57,7 +57,7 @@ class ThuController:
 def guard_client():
     from fastapi import FastAPI
 
-    from pymodular.core.error_handlers import register_error_handlers
+    from fastapi_modular.core.error_handlers import register_error_handlers
 
     app = FastAPI()
     register_error_handlers(app, debug=False)
@@ -129,7 +129,7 @@ async def test_require_role():
 
 def test_container_chan_singleton_om_principal():
     """Principal theo request; service singleton giữ nó là rò dữ liệu."""
-    from pymodular.core.container import Container
+    from fastapi_modular.core.container import Container
 
     @injectable
     class ServiceRoRi:

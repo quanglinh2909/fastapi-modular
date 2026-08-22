@@ -3,14 +3,14 @@
 Tuỳ chọn. Không cài, không bật thì không ảnh hưởng gì tới phần còn lại.
 
 ```bash
-pym install redis     # cài thư viện + ghi APP_REDIS__* vào .env
+fam install redis     # cài thư viện + ghi APP_REDIS__* vào .env
 ```
 
 Hai việc làm được: **cache/khoá-giá trị/đếm** (`RedisClient`) và **phát tin tới
 mọi worker** (`publish` + `@redis_subscriber`).
 
 > Lớp này **không phải** adapter WebSocket. `APP_WS__ADAPTER=redis` là một thứ
-> khác, cấu hình riêng, bật bằng `pym env ws-redis`, và chạy được kể cả khi
+> khác, cấu hình riêng, bật bằng `fam env ws-redis`, và chạy được kể cả khi
 > `APP_REDIS__ENABLED=false`. Trỏ cả hai vào cùng một server thì hoàn toàn bình
 > thường.
 
@@ -217,6 +217,6 @@ Không có lựa chọn nào để tắt hành vi này — một dịch vụ ph�
 
 ```bash
 docker run -d --name redis-test -p 6389:6379 redis:7-alpine
-pym install redis
-TEST_REDIS_URL=redis://localhost:6389/0 pym test    # bật nhóm test cần Redis thật
+fam install redis
+TEST_REDIS_URL=redis://localhost:6389/0 fam test    # bật nhóm test cần Redis thật
 ```

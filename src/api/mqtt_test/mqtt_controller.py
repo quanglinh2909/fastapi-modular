@@ -7,8 +7,8 @@ from typing import Annotated
 from fastapi import Query
 from pydantic import BaseModel, Field
 
-from pymodular.core.controller import controller, get, post
-from pymodular.infrastructure.mqtt import MqttClient
+from fastapi_modular.core.controller import controller, get, post
+from fastapi_modular.infrastructure.mqtt import MqttClient
 from src.api.mqtt_test.mqtt_listener import DA_NHAN
 
 

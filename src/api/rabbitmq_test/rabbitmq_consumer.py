@@ -19,9 +19,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from pymodular.core.container import injectable
-from pymodular.core.logging import get_logger
-from pymodular.infrastructure.rabbitmq import (
+from fastapi_modular.core.container import injectable
+from fastapi_modular.core.logging import get_logger
+from fastapi_modular.infrastructure.rabbitmq import (
     PermanentMessageError,
     RabbitBroker,
     rabbitmq_subscriber,

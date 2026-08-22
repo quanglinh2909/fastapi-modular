@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from pymodular.core.config import KafkaSettings, Settings
-from pymodular.core.container import injectable
-from pymodular.core.exceptions import ComponentNotEnabledError
-from pymodular.infrastructure.kafka import KafkaBroker, kafka_subscriber
-from pymodular.infrastructure.kafka.consumers import discover_kafka_subscribers
+from fastapi_modular.core.config import KafkaSettings, Settings
+from fastapi_modular.core.container import injectable
+from fastapi_modular.core.exceptions import ComponentNotEnabledError
+from fastapi_modular.infrastructure.kafka import KafkaBroker, kafka_subscriber
+from fastapi_modular.infrastructure.kafka.consumers import discover_kafka_subscribers
 
 
 def test_mac_dinh_la_tat():

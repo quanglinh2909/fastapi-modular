@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import Field, ValidationError, field_validator
 
-from pymodular.core.schemas import InputSchema, OutputSchema, apply_changes, partial_of
+from fastapi_modular.core.schemas import InputSchema, OutputSchema, apply_changes, partial_of
 
 
 class Sample(InputSchema):

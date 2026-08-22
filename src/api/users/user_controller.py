@@ -12,8 +12,8 @@ from typing import Annotated
 
 from fastapi import Path, Query, status
 
-from pymodular.core.controller import controller, delete, get, patch, post
-from pymodular.core.schemas import Page
+from fastapi_modular.core.controller import controller, delete, get, patch, post
+from fastapi_modular.core.schemas import Page
 from src.api.users.dto.user_dto import UserCreate, UserOut, UserUpdate
 from src.api.users.user_service import UserService
 

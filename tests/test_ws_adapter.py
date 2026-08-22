@@ -19,11 +19,11 @@ import os
 import pytest
 from starlette.websockets import WebSocketState
 
-from pymodular.core.config import DatabaseSettings, Settings, WebSocketSettings
-from pymodular.core.exceptions import ComponentNotEnabledError
-from pymodular.core.websocket import WebSocketServer
-from pymodular.core.websocket.adapter import RedisAdapter
-from pymodular.core.websocket.socket import Socket
+from fastapi_modular.core.config import DatabaseSettings, Settings, WebSocketSettings
+from fastapi_modular.core.exceptions import ComponentNotEnabledError
+from fastapi_modular.core.websocket import WebSocketServer
+from fastapi_modular.core.websocket.adapter import RedisAdapter
+from fastapi_modular.core.websocket.socket import Socket
 
 CO_REDIS = importlib.util.find_spec("redis") is not None
 REDIS_URL = os.getenv("TEST_REDIS_URL")

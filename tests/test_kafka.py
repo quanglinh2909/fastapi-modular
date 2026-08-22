@@ -29,9 +29,9 @@ import uuid
 import anyio
 import pytest
 
-from pymodular.core.config import KafkaSettings, Settings
-from pymodular.core.container import injectable
-from pymodular.infrastructure.kafka import (
+from fastapi_modular.core.config import KafkaSettings, Settings
+from fastapi_modular.core.container import injectable
+from fastapi_modular.infrastructure.kafka import (
     KafkaBroker,
     KafkaRunner,
     PermanentMessageError,

@@ -3,10 +3,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pymodular"
-# Số phiên bản chỉ có MỘT chỗ: `__version__` trong pymodular/__init__.py.
+name = "fastapi-modular"
+# Số phiên bản chỉ có MỘT chỗ: `__version__` trong fastapi_modular/__init__.py.
 # Khai ở cả đây nữa thì sớm muộn cũng lệch, và bản đẩy lên PyPI mang một số còn
-# `pym --version` in ra một số khác.
+# `fam --version` in ra một số khác.
 dynamic = ["version"]
 description = "FastAPI theo kiến trúc module kiểu NestJS: DI container, controller dạng class, WebSocket, RabbitMQ/Redis/MQTT/Kafka"
 readme = "README.md"
@@ -47,30 +47,30 @@ redis    = ["redis>=5.0.0,<7.0.0"]
 mqtt     = ["aiomqtt>=2.0.0,<3.0.0"]
 kafka    = ["aiokafka>=0.10.0,<0.13.0"]
 all = [
-    "pymodular[postgres]", "pymodular[sqlite]", "pymodular[mongodb]",
-    "pymodular[rabbitmq]", "pymodular[redis]", "pymodular[mqtt]", "pymodular[kafka]",
+    "fastapi-modular[postgres]", "fastapi-modular[sqlite]", "fastapi-modular[mongodb]",
+    "fastapi-modular[rabbitmq]", "fastapi-modular[redis]", "fastapi-modular[mqtt]", "fastapi-modular[kafka]",
 ]
 dev = ["pytest>=8.3.0", "pytest-asyncio>=0.24.0", "httpx>=0.27.0", "ruff>=0.6.0"]
 
 [project.scripts]
-pymodular = "pymodular.cli.main:main"
-pym = "pymodular.cli.main:main"      # gõ tắt, cùng một chương trình
+fastapi-modular = "fastapi_modular.cli.main:main"
+fam = "fastapi_modular.cli.main:main"          # gõ tắt, cùng một chương trình
 
 [project.urls]
-Homepage = "https://github.com/quanglinh2909/pymodular"
-Documentation = "https://github.com/quanglinh2909/pymodular/tree/main/docs"
-Source = "https://github.com/quanglinh2909/pymodular"
-Issues = "https://github.com/quanglinh2909/pymodular/issues"
-Changelog = "https://github.com/quanglinh2909/pymodular/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/quanglinh2909/fastapi-modular"
+Documentation = "https://github.com/quanglinh2909/fastapi-modular/tree/main/docs"
+Source = "https://github.com/quanglinh2909/fastapi-modular"
+Issues = "https://github.com/quanglinh2909/fastapi-modular/issues"
+Changelog = "https://github.com/quanglinh2909/fastapi-modular/blob/main/CHANGELOG.md"
 
 # Chỉ đóng gói thư viện. `src/` là ứng dụng mẫu của repo này, không phải thứ
 # người dùng cài về.
 [tool.hatch.version]
-path = "pymodular/__init__.py"
+path = "fastapi_modular/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["pymodular"]
+packages = ["fastapi_modular"]
 
 [tool.hatch.build.targets.sdist]
-include = ["pymodular", "src", "tests", "docs", "migrations", "README.md",
+include = ["fastapi_modular", "src", "tests", "docs", "migrations", "README.md",
            "LICENSE", "CHANGELOG.md", "Makefile", "alembic.ini", "pytest.ini", "ruff.toml"]

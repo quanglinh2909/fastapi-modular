@@ -3,7 +3,7 @@
 Tuỳ chọn. Không cài, không bật thì không ảnh hưởng gì tới phần còn lại.
 
 ```bash
-pym install kafka     # cài thư viện + ghi APP_KAFKA__* vào .env
+fam install kafka     # cài thư viện + ghi APP_KAFKA__* vào .env
 ```
 
 Hai việc làm được: **gửi tin** (`KafkaBroker.publish`) và **đọc nhật ký**
@@ -231,6 +231,6 @@ docker run -d --name kafka-test -p 9094:9094 \
   -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
   -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
   apache/kafka:3.9.0
-pym install kafka
-TEST_KAFKA_SERVERS=localhost:9094 pym test    # bật nhóm test cần cụm thật
+fam install kafka
+TEST_KAFKA_SERVERS=localhost:9094 fam test    # bật nhóm test cần cụm thật
 ```

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from pymodular.cli.configure_env import (
+from fastapi_modular.cli.configure_env import (
     BLOCKS,
     Bien,
     _mac_dinh,
@@ -114,7 +114,7 @@ def test_bien_nhac_trong_docs_deu_con_that(  ):
     """
     import re
 
-    from pymodular.core.config import (
+    from fastapi_modular.core.config import (
         CorsSettings,
         DatabaseSettings,
         KafkaSettings,

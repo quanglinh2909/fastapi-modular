@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from pymodular.core.schemas import InputSchema, OutputSchema
+from fastapi_modular.core.schemas import InputSchema, OutputSchema
 
 
 class RoomMessage(InputSchema):

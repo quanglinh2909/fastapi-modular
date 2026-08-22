@@ -18,10 +18,10 @@ from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from src.core.config import AppSettings
-from pymodular.core.config import get_settings, use_settings
-from pymodular.core.container import _ENTITIES
-from pymodular.discovery import load_all_modules
-from pymodular.infrastructure.database.sql import build_metadata
+from fastapi_modular.core.config import get_settings, use_settings
+from fastapi_modular.core.container import _ENTITIES
+from fastapi_modular.discovery import load_all_modules
+from fastapi_modular.infrastructure.database.sql import build_metadata
 
 config = context.config
 if config.config_file_name is not None:

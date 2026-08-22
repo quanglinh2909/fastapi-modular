@@ -7,8 +7,8 @@ from typing import Annotated
 
 from fastapi import Query
 
-from pymodular.core.controller import controller, delete, get, post
-from pymodular.infrastructure.redis import RedisClient
+from fastapi_modular.core.controller import controller, delete, get, post
+from fastapi_modular.infrastructure.redis import RedisClient
 from src.api.redis_test.redis_listener import DA_NHAN, KENH, BaoCaoService, GiaMoi
 
 

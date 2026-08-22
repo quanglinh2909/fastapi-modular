@@ -10,12 +10,18 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
-from pymodular.core.config import DatabaseSettings, Settings, WebSocketSettings
-from pymodular.core.container import container
-from pymodular.core.websocket import Socket, WebSocketServer, build_ws_router, gateway, subscribe
-from pymodular.core.websocket.namespace import Namespace
-from pymodular.core.websocket.protocol import CloseCode, parse_frame
-from pymodular.factory import create_app
+from fastapi_modular.core.config import DatabaseSettings, Settings, WebSocketSettings
+from fastapi_modular.core.container import container
+from fastapi_modular.core.websocket import (
+    Socket,
+    WebSocketServer,
+    build_ws_router,
+    gateway,
+    subscribe,
+)
+from fastapi_modular.core.websocket.namespace import Namespace
+from fastapi_modular.core.websocket.protocol import CloseCode, parse_frame
+from fastapi_modular.factory import create_app
 
 CHAT = "/ws/chat"
 
@@ -493,8 +499,8 @@ async def test_tin_tu_worker_khac_duoc_gui_tiep():
 def test_frame_json_giu_tieng_viet_va_datetime():
     from datetime import datetime
 
-    from pymodular.core.compat import UTC
-    from pymodular.core.websocket.protocol import Frame
+    from fastapi_modular.core.compat import UTC
+    from fastapi_modular.core.websocket.protocol import Frame
 
     text = Frame("e", {"ten": "Nguyễn", "at": datetime(2026, 1, 1, tzinfo=UTC)}).to_json()
     assert "Nguyễn" in text                      # không bị escape thành ạ...

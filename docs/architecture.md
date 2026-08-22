@@ -4,7 +4,7 @@ Cấu trúc theo module giống NestJS: mỗi thư mục con của `src/api/` l�
 tự chứa, tự khai báo route/service/repository/DTO của mình.
 
 ```
-pymodular/                     THƯ VIỆN — thứ được đóng gói, cài bằng pip
+fastapi_modular/                     THƯ VIỆN — thứ được đóng gói, cài bằng pip
 ├── factory.py                 create_app() — không biết module nào cụ thể
 ├── discovery.py               tự quét package ứng dụng, dựng router
 ├── core/                      hạ tầng dùng chung
@@ -48,16 +48,16 @@ src/                           ỨNG DỤNG — code của bạn, KHÔNG nằm t
         └── chat_controller.py @controller — REST đẩy tin xuống WebSocket
 ```
 
-Ranh giới giữa hai khối là điều quan trọng nhất trong sơ đồ trên: `pymodular/`
+Ranh giới giữa hai khối là điều quan trọng nhất trong sơ đồ trên: `fastapi_modular/`
 không import bất cứ thứ gì từ `src/`. Nó chỉ biết "có một package tên `src.api`,
 quét nó đi". Xếp khác thì nói ra một lần trong `src/main.py`:
 `register_routes(app, package="cong_ty.dich_vu")`.
 
 ## Đối chiếu với NestJS
 
-| NestJS | pymodular |
+| NestJS | fastapi-modular |
 |---|---|
-| `@Module()` + module scanning | thư mục dưới `src/api/`, tự quét ở `pymodular/discovery.py` |
+| `@Module()` + module scanning | thư mục dưới `src/api/`, tự quét ở `fastapi_modular/discovery.py` |
 | `@UseGuards()` | `guards=[...]` ở `@controller` hoặc từng route |
 | `@Controller('users')` | `@controller(prefix="/users", tags=["users"])` |
 | `@Get()` `@Post()` `@Patch()` `@Delete()` | `@get()` `@post()` `@patch()` `@delete()` |
@@ -97,7 +97,7 @@ tái dùng được ngoài HTTP (worker, CLI, gRPC).
 
 **4. Mỗi hạ tầng một package, không có ô chung.** `database/`, `rabbitmq/`,
 `redis/`, `mqtt/`, `kafka/` — mỗi thứ một thư mục, một nhóm biến `APP_<TÊN>__*`,
-một `pym env <tên>`, và thư viện chỉ được import khi bật. Không nhét chung
+một `fam env <tên>`, và thư viện chỉ được import khi bật. Không nhét chung
 vào một gói "messaging". Chúng không biết nhau, và `core/` không biết
 chúng: `core/websocket/` không có một chữ nào là `exchange`, `queue` hay
 `broker`. Muốn nối hai cơ chế thì viết ở tầng ứng dụng, đúng cách NestJS bắt
@@ -145,12 +145,12 @@ thể thêm trường nội bộ (mật khẩu băm, cờ hệ thống) mà khô
 ## Thêm module mới
 
 ```bash
-pym module alerts            # entity đoán là Alert
-pym module people --entity person   # đè khi đoán sai
-pym module alerts --gateway       # kèm gateway WebSocket
-pym module alerts --consumer       # kèm consumer RabbitMQ
-pym module alerts --gateway-only           # thêm gateway vào module đã có
-pym module alerts --consumer-only          # thêm consumer vào module đã có
+fam module alerts            # entity đoán là Alert
+fam module people --entity person   # đè khi đoán sai
+fam module alerts --gateway       # kèm gateway WebSocket
+fam module alerts --consumer       # kèm consumer RabbitMQ
+fam module alerts --gateway-only           # thêm gateway vào module đã có
+fam module alerts --consumer-only          # thêm consumer vào module đã có
 ```
 
 Sinh ra đúng cấu trúc của các module có sẵn:
@@ -242,10 +242,10 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 ## Chất lượng mã
 
 ```bash
-pym lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
-pym lint pymodular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
-pym lint --fix                # tự sửa phần sửa được
-pym test       # 341 test trên backend memory (40 test nữa cần hạ tầng thật)
+fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
+fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
+fam lint --fix                # tự sửa phần sửa được
+fam test       # 341 test trên backend memory (40 test nữa cần hạ tầng thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

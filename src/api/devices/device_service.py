@@ -7,11 +7,11 @@ bằng Lazy[...]; phía này khai báo phụ thuộc bình thường.
 
 from __future__ import annotations
 
-from pymodular.core.container import injectable
-from pymodular.core.exceptions import ConflictError, NotFoundError
-from pymodular.core.logging import get_logger
-from pymodular.core.schemas import apply_changes
-from pymodular.infrastructure.database import Repository
+from fastapi_modular.core.container import injectable
+from fastapi_modular.core.exceptions import ConflictError, NotFoundError
+from fastapi_modular.core.logging import get_logger
+from fastapi_modular.core.schemas import apply_changes
+from fastapi_modular.infrastructure.database import Repository
 from src.api.devices.dto.device_dto import DeviceCreate, DeviceUpdate
 from src.api.devices.entities.device_model import Device
 from src.api.users.user_service import UserService

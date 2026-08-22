@@ -17,9 +17,9 @@ import uuid
 
 import pytest
 
-from pymodular.core.compat import UTC
-from pymodular.core.config import DatabaseSettings, Settings
-from pymodular.infrastructure.database.repository import Database, Repository
+from fastapi_modular.core.compat import UTC
+from fastapi_modular.core.config import DatabaseSettings, Settings
+from fastapi_modular.infrastructure.database.repository import Database, Repository
 from src.api.users.entities.user_model import User
 
 

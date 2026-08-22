@@ -14,11 +14,11 @@ from datetime import datetime
 
 import pytest
 
-from pymodular.core.clock import utcnow
-from pymodular.core.config import DatabaseSettings
-from pymodular.core.container import entity
-from pymodular.infrastructure.database.factory import create_backend
-from pymodular.infrastructure.database.repository import Repository
+from fastapi_modular.core.clock import utcnow
+from fastapi_modular.core.config import DatabaseSettings
+from fastapi_modular.core.container import entity
+from fastapi_modular.infrastructure.database.factory import create_backend
+from fastapi_modular.infrastructure.database.repository import Repository
 
 pytestmark = pytest.mark.skipif(
     not (os.getenv("TEST_SQLITE") and importlib.util.find_spec("aiosqlite"))

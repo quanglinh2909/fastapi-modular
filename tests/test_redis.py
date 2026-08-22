@@ -17,9 +17,9 @@ import time
 import anyio
 import pytest
 
-from pymodular.core.config import RedisSettings, Settings
-from pymodular.core.container import injectable
-from pymodular.infrastructure.redis import RedisClient, RedisRunner, redis_subscriber
+from fastapi_modular.core.config import RedisSettings, Settings
+from fastapi_modular.core.container import injectable
+from fastapi_modular.infrastructure.redis import RedisClient, RedisRunner, redis_subscriber
 
 CO_REDIS = importlib.util.find_spec("redis") is not None
 REDIS_URL = os.getenv("TEST_REDIS_URL")

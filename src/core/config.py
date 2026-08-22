@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from pymodular import Settings
+from fastapi_modular import Settings
 
 
 class JwtSettings(BaseModel):

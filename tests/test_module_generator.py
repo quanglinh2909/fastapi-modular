@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from pymodular.cli.new_module import (
+from fastapi_modular.cli.new_module import (
     main,
     pascal,
     render,
@@ -145,7 +145,7 @@ def test_them_gateway_vao_module_da_co(tmp_path: Path):
 
 def test_gateway_only_doi_module_phai_ton_tai(tmp_path: Path, capsys):
     assert main(["chua_co", "--root", str(tmp_path), "--gateway-only"]) == 1
-    assert "pym module" in capsys.readouterr().out
+    assert "fam module" in capsys.readouterr().out
 
 
 def test_gateway_co_du_moc_can_thiet():

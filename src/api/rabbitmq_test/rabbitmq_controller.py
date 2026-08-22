@@ -6,8 +6,8 @@ from typing import Annotated
 
 from fastapi import Query
 
-from pymodular.core.controller import controller, get, post
-from pymodular.infrastructure.rabbitmq import RabbitBroker
+from fastapi_modular.core.controller import controller, get, post
+from fastapi_modular.infrastructure.rabbitmq import RabbitBroker
 from src.api.rabbitmq_test.rabbitmq_consumer import (
     EXCHANGE,
     QUEUE,

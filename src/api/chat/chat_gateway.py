@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from pymodular.core.clock import utcnow
-from pymodular.core.exceptions import NotFoundError
-from pymodular.core.guards import RequireHeader
-from pymodular.core.logging import get_logger
-from pymodular.core.websocket import Socket, WebSocketServer, gateway, subscribe
+from fastapi_modular.core.clock import utcnow
+from fastapi_modular.core.exceptions import NotFoundError
+from fastapi_modular.core.guards import RequireHeader
+from fastapi_modular.core.logging import get_logger
+from fastapi_modular.core.websocket import Socket, WebSocketServer, gateway, subscribe
 from src.api.chat.dto.chat_dto import DirectMessage, RoomMessage, RoomQuery
 
 log = get_logger(__name__)

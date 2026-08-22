@@ -24,7 +24,7 @@ ignore = [
 "tests/*" = ["B008", "BLE"]
 
 [lint.isort]
-# Nói rõ `pymodular` và `src` là code của dự án, đừng để ruff tự đoán theo thư mục đang lint:
+# Nói rõ `fastapi_modular` và `src` là code của dự án, đừng để ruff tự đoán theo thư mục đang lint:
 # lint file sinh ra ở thư mục tạm sẽ đoán nhầm thành thư viện ngoài và đòi gộp
 # khối import lại — đúng ở đó nhưng sai khi file nằm trong dự án.
-known-first-party = ["pymodular", "src"]
+known-first-party = ["fastapi_modular", "src"]

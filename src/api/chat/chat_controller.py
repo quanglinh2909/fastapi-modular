@@ -8,9 +8,9 @@ biết client nào đang nối vào đâu.
 
 from __future__ import annotations
 
-from pymodular.core.controller import controller, get, post
-from pymodular.core.websocket import WebSocketServer
-from pymodular.infrastructure.rabbitmq import RabbitBroker, validate_routing_key
+from fastapi_modular.core.controller import controller, get, post
+from fastapi_modular.core.websocket import WebSocketServer
+from fastapi_modular.infrastructure.rabbitmq import RabbitBroker, validate_routing_key
 from src.api.chat.dto.chat_dto import BroadcastIn, BroadcastOut, PublishIn, PublishOut
 
 

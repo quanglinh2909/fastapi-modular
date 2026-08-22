@@ -6,7 +6,7 @@ from datetime import datetime
 
 from pydantic import Field
 
-from pymodular.core.schemas import InputSchema, OutputSchema, partial_of
+from fastapi_modular.core.schemas import InputSchema, OutputSchema, partial_of
 from src.api.devices.entities.device_model import DeviceStatus
 
 

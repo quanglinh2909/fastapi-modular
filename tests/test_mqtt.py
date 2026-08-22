@@ -18,9 +18,9 @@ import anyio
 import pytest
 from pydantic import BaseModel
 
-from pymodular.core.config import MqttSettings, Settings
-from pymodular.core.container import injectable
-from pymodular.infrastructure.mqtt import MqttClient, MqttRunner, mqtt_subscriber
+from fastapi_modular.core.config import MqttSettings, Settings
+from fastapi_modular.core.container import injectable
+from fastapi_modular.infrastructure.mqtt import MqttClient, MqttRunner, mqtt_subscriber
 
 CO_AIOMQTT = importlib.util.find_spec("aiomqtt") is not None
 MQTT_URL = os.getenv("TEST_MQTT_URL")
@@ -117,7 +117,7 @@ async def test_payload_sai_khuon_khong_lam_dut_vong_doc(mqtt: MqttClient):
 
 
 async def test_khong_gui_duoc_khi_chua_ket_noi(mqtt_settings: Settings):
-    from pymodular.core.exceptions import ServiceUnavailableError
+    from fastapi_modular.core.exceptions import ServiceUnavailableError
 
     client = MqttClient(
         Settings(APP_MQTT=MqttSettings(enabled=True, url="mqtt://localhost:1",

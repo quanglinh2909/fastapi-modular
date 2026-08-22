@@ -26,7 +26,7 @@ Service/Controller HTTP ─────▶ WebSocketServer ─▶ to_room / to_u
 ## 1. Chạy thử trong 30 giây
 
 ```bash
-pym dev
+fam dev
 ```
 
 Module `chat` có sẵn trong template là ví dụ chạy được ngay:
@@ -110,14 +110,14 @@ của cái nào, trừ khi tự đánh số.
 ## 3. Viết một gateway
 
 ```bash
-pym module alerts --gateway     # module mới, có sẵn gateway
-pym module alerts --gateway-only         # thêm gateway vào module đã có
+fam module alerts --gateway     # module mới, có sẵn gateway
+fam module alerts --gateway-only         # thêm gateway vào module đã có
 ```
 
 Không phải đăng ký ở đâu cả — `register_routes` trong `src/main.py` tự quét và gắn.
 
 ```python
-from pymodular.core.websocket import Socket, WebSocketServer, gateway, subscribe
+from fastapi_modular.core.websocket import Socket, WebSocketServer, gateway, subscribe
 
 
 @gateway(path="/ws/alerts", guards=[WsJwt], client_rooms=True)
@@ -375,7 +375,7 @@ cho một tài khoản (chặn cảnh một client lỗi mở kết nối vô h�
 Tất cả đặt trong `.env`, tiền tố `APP_WS__`. Xem đang chạy với gì:
 
 ```bash
-pym info
+fam info
 ```
 
 **Không biến nào bắt buộc** — WebSocket chạy được mà không cần đặt gì trong
@@ -397,7 +397,7 @@ pym info
 | `APP_WS__MAX_CONNECTIONS_PER_USER` | không | `10` | `0` để tắt |
 | `APP_WS__MAX_ROOMS_PER_SOCKET` | không | `64` | trần số phòng một kết nối được vào |
 
-`pym install ws-redis` ghi sẵn nhóm biến này vào `.env` kèm giải thích từng dòng.
+`fam install ws-redis` ghi sẵn nhóm biến này vào `.env` kèm giải thích từng dòng.
 
 ---
 
@@ -405,7 +405,7 @@ pym info
 
 Đây là cái bẫy lớn nhất của realtime, và chỉ lộ ra khi lên production.
 
-Sổ kết nối nằm trong **RAM của một tiến trình**. `pym run --workers 4` là bốn
+Sổ kết nối nằm trong **RAM của một tiến trình**. `fam run --workers 4` là bốn
 tiến trình riêng: client A nối vào worker 1, client B nối vào worker 3. A gửi
 tin cho phòng thì worker 1 chỉ thấy kết nối của chính nó — **B không nhận được
 gì**. Trên máy dev một worker thì mọi thứ chạy hoàn hảo, lên staging mới hỏng.
@@ -413,7 +413,7 @@ gì**. Trên máy dev một worker thì mọi thứ chạy hoàn hảo, lên sta
 Cách chữa (đúng vai trò của Redis adapter trong NestJS):
 
 ```bash
-pym install ws-redis     # cài redis + ghi sẵn APP_WS__* vào .env
+fam install ws-redis     # cài redis + ghi sẵn APP_WS__* vào .env
 ```
 
 ```dotenv
@@ -743,7 +743,7 @@ def test_gui_theo_phong(client):
 ```
 
 ```bash
-pym test
+fam test
 ```
 
 Phần xuyên worker (`tests/test_ws_adapter.py`) mặc định được bỏ qua vì cần
@@ -751,8 +751,8 @@ Redis thật. Chạy đầy đủ:
 
 ```bash
 docker run -d --name redis-test -p 6380:6379 redis:7-alpine
-pym install ws-redis
-TEST_REDIS_URL=redis://localhost:6380/0 pym test
+fam install ws-redis
+TEST_REDIS_URL=redis://localhost:6380/0 fam test
 ```
 
 Muốn tự mắt thấy cái bẫy nhiều worker: chạy 6 client vào cùng một phòng trên
@@ -764,9 +764,9 @@ khác nhau mỗi lần, tuỳ client rơi vào worker nào); với `redis` là 6
 ## 14. Bảng lệnh
 
 ```bash
-pym module alerts --gateway   # module mới kèm gateway
-pym module alerts --gateway-only       # thêm gateway vào module có sẵn
-pym install ws-redis                       # adapter cho nhiều worker
-pym info                   # đang chạy với cấu hình gì
-pym dev
+fam module alerts --gateway   # module mới kèm gateway
+fam module alerts --gateway-only       # thêm gateway vào module có sẵn
+fam install ws-redis                       # adapter cho nhiều worker
+fam info                   # đang chạy với cấu hình gì
+fam dev
 ```

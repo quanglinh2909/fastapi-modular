@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from pymodular.infrastructure.database.circuit import (
+from fastapi_modular.infrastructure.database.circuit import (
     CircuitBreakerBackend,
     CircuitOpenError,
     CircuitState,
@@ -154,8 +154,8 @@ async def test_qua_han_nhieu_lan_cung_lam_ngat_mach():
 
 def test_memory_khong_bi_boc():
     """Backend memory không đi qua mạng nên không cần ngắt mạch."""
-    from pymodular.core.config import DatabaseSettings
-    from pymodular.infrastructure.database.factory import create_backend
+    from fastapi_modular.core.config import DatabaseSettings
+    from fastapi_modular.infrastructure.database.factory import create_backend
 
     backend = create_backend(DatabaseSettings(driver="memory"))
     assert not isinstance(backend, CircuitBreakerBackend)

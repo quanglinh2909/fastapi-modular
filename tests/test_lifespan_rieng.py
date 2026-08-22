@@ -14,10 +14,10 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from pymodular import bind_settings, new_fastapi, register_routes
-from pymodular import lifespan as framework_lifespan
-from pymodular.core.config import DatabaseSettings, Settings
-from pymodular.infrastructure.database import Database
+from fastapi_modular import bind_settings, new_fastapi, register_routes
+from fastapi_modular import lifespan as framework_lifespan
+from fastapi_modular.core.config import DatabaseSettings, Settings
+from fastapi_modular.infrastructure.database import Database
 
 NHAT_KY: list[str] = []
 

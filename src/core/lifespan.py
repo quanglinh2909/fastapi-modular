@@ -20,8 +20,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from pymodular import get_logger
-from pymodular import lifespan as framework_lifespan
+from fastapi_modular import get_logger
+from fastapi_modular import lifespan as framework_lifespan
 
 log = get_logger(__name__)
 

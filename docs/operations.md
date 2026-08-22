@@ -38,7 +38,7 @@ tin nhắn; và trình duyệt không đặt được header trên WebSocket nê
 `Principal` là "ai đang gọi request này", vòng đời theo request:
 
 ```python
-from pymodular.core.guards import current_principal
+from fastapi_modular.core.guards import current_principal
 
 principal = current_principal()
 principal.require_role("admin")          # ném ForbiddenError nếu thiếu vai trò
@@ -126,13 +126,13 @@ chặn triệt để phải đặt hạn ở tầng cao hơn (ingress/gateway).
 ## Metrics
 
 `GET /api/metrics` trả định dạng Prometheus. Không thêm thư viện nào — registry
-viết tay trong [`pymodular/core/metrics.py`](../pymodular/core/metrics.py).
+viết tay trong [`fastapi_modular/core/metrics.py`](../fastapi_modular/core/metrics.py).
 
 ```
 http_requests_total{method="GET",path="/api/users/{user_id}",status="200"} 3
 http_request_duration_seconds_bucket{method="GET",path="/api/users",le="0.05"} 12
 http_requests_in_flight 1
-app_info{driver="sqlite",env="local",service="pymodular",version="0.1.0"} 1
+app_info{driver="sqlite",env="local",service="fastapi-modular",version="0.1.0"} 1
 db_circuit_state{backend="sqlite"} 0
 ws_connections{namespace="/ws/chat"} 42
 rabbitmq_published_total{exchange="events",routing_key="alert.created"} 71
@@ -152,7 +152,7 @@ chung vào `path="unmatched"`.
 
 ```yaml
 scrape_configs:
-  - job_name: pymodular
+  - job_name: fastapi-modular
     metrics_path: /api/metrics
     static_configs:
       - targets: ["localhost:8000"]
@@ -188,12 +188,12 @@ Hướng dẫn đầy đủ ở [websocket.md](websocket.md). Hai điều **bắ
 lên production:
 
 **1. Nhiều worker thì phải có adapter.** Sổ kết nối nằm trong RAM của một tiến
-trình; `pym run --workers 4` là bốn sổ riêng biệt, nên broadcast chỉ tới được
+trình; `fam run --workers 4` là bốn sổ riêng biệt, nên broadcast chỉ tới được
 client đang nối vào đúng worker đó. Máy dev một worker chạy hoàn hảo, lên
 staging mới lộ.
 
 ```bash
-pym install ws-redis     # cài redis + ghi APP_WS__* vào .env
+fam install ws-redis     # cài redis + ghi APP_WS__* vào .env
 ```
 
 Khung tự cảnh báo lúc khởi động nếu `env=prod` mà `ws.adapter` vẫn là `local`.
@@ -214,7 +214,7 @@ location /ws/ {
 Soi nhanh khi có sự cố:
 
 ```bash
-pym info                                  # adapter, nhịp tim, các trần
+fam info                                  # adapter, nhịp tim, các trần
 curl localhost:8000/api/chat/stats            # kết nối/phòng của worker đang trả lời
 curl -s localhost:8000/api/metrics | grep ws_
 ```
@@ -247,7 +247,7 @@ docker exec rabbit rabbitmqctl list_queues name messages consumers | grep dlq
 đợi đã tồn tại với tham số khác; khung sẽ báo lỗi kèm đúng lệnh cần chạy.
 
 ```bash
-pym info                                    # cấu hình đang dùng
+fam info                                    # cấu hình đang dùng
 curl -s localhost:8000/api/health/ready | jq .mq
 curl -s localhost:8000/api/metrics | grep mq_
 ```

@@ -16,15 +16,15 @@
 ## Bắt đầu nhanh
 
 ```bash
-pip install pymodular
+pip install fastapi-modular
 
-pym init                     # đổ file vào THƯ MỤC HIỆN TẠI
-pym dev                      # mặc định backend memory
+fam init                     # đổ file vào THƯ MỤC HIỆN TẠI
+fam dev                      # mặc định backend memory
 
-pym install sqlite    # dữ liệu sống qua restart
+fam install sqlite    # dữ liệu sống qua restart
 ```
 
-Một chương trình, hai tên: `pymodular` (đầy đủ) và `pym` (gõ tắt). `pym --help`
+Một chương trình, hai tên: `fastapi-modular` (đầy đủ) và `fam` (gõ tắt). `fam --help`
 cho danh sách lệnh; bảng đầy đủ ở [README gốc](../README.md#lệnh).
 
 Realtime chạy sẵn, không phải cài gì thêm:
@@ -33,11 +33,11 @@ Realtime chạy sẵn, không phải cài gì thêm:
 Thành phần tuỳ chọn, cài khi cần, không cài thì không ảnh hưởng gì:
 
 ```bash
-pym install rabbitmq  # hàng đợi bền, thử lại + DLQ
-pym install redis     # cache, đếm, pub/sub
-pym install mqtt      # thiết bị IoT
-pym install kafka     # nhật ký đọc lại được
-pym install ws-redis  # WebSocket xuyên worker
+fam install rabbitmq  # hàng đợi bền, thử lại + DLQ
+fam install redis     # cache, đếm, pub/sub
+fam install mqtt      # thiết bị IoT
+fam install kafka     # nhật ký đọc lại được
+fam install ws-redis  # WebSocket xuyên worker
 ```
 
 Chọn cái nào:
@@ -62,7 +62,7 @@ Handler ở cả bốn đều nhận `(self, payload)` hoặc `(self, payload, m
 validate bằng pydantic nếu `payload` có kiểu là model, và đều chạy trong một
 request scope riêng.
 
-Mỗi lệnh `pym env` ghi biến vào `.env` kèm giải thích, cho biết biến đó
+Mỗi lệnh `fam env` ghi biến vào `.env` kèm giải thích, cho biết biến đó
 **tuỳ chọn hay bắt buộc** và **mặc định là gì** nếu xoá dòng đi.
 
-`pym --help` để xem toàn bộ lệnh.
+`fam --help` để xem toàn bộ lệnh.

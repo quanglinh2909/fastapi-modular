@@ -19,22 +19,22 @@ Nên: `sync` cho lúc đang phát triển, Alembic cho production.
 Alembic nằm sẵn trong extra `sqlite` và `postgres`:
 
 ```bash
-pym install postgres     # hoặc: pym install sqlite
+fam install postgres     # hoặc: fam install sqlite
 ```
 
 ## Ba lệnh dùng hằng ngày
 
 ```bash
-pym migrate create -m "them cot phone cho user"   # sinh migration từ thay đổi entity
-pym migrate                                       # chạy lên bản mới nhất
-pym migrate down                                  # lùi lại một bản
+fam migrate create -m "them cot phone cho user"   # sinh migration từ thay đổi entity
+fam migrate                                       # chạy lên bản mới nhất
+fam migrate down                                  # lùi lại một bản
 ```
 
 Thêm:
 
 ```bash
-pym migrate history      # lịch sử và bản đang áp dụng
-pym migrate sql          # in câu SQL thay vì chạy, để DBA duyệt trước
+fam migrate history      # lịch sử và bản đang áp dụng
+fam migrate sql          # in câu SQL thay vì chạy, để DBA duyệt trước
 ```
 
 ## Luồng làm việc
@@ -52,7 +52,7 @@ class User:
 **2. Sinh migration**
 
 ```bash
-$ pym migrate create -m "them cot phone cho user"
+$ fam migrate create -m "them cot phone cho user"
 INFO  [alembic.autogenerate.compare.tables] Detected added column 'users.phone'
 Generating migrations/versions/20260821_1020_them_cot_phone_cho_user.py ... done
 ```
@@ -64,7 +64,7 @@ liệu. Đổi tên thì sửa tay thành `op.alter_column(..., new_column_name=
 **4. Chạy**
 
 ```bash
-$ pym migrate
+$ fam migrate
 INFO  [alembic.runtime.migration] Running upgrade cda85f1da43c -> 17f5a351aa07, them cot phone cho user
 ```
 
@@ -110,4 +110,4 @@ Nếu bảng đã tồn tại (do `schema_mode=create` tạo trước đó), đ�
 .venv/bin/python -m alembic stamp head
 ```
 
-Từ đó trở đi dùng `pym migrate-create` như bình thường.
+Từ đó trở đi dùng `fam migrate create` như bình thường.

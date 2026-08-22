@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from pymodular.core.context import new_trace_id, parse_traceparent
-from pymodular.core.metrics import Counter, Gauge, Histogram, Registry
+from fastapi_modular.core.context import new_trace_id, parse_traceparent
+from fastapi_modular.core.metrics import Counter, Gauge, Histogram, Registry
 
 
 def test_counter_gom_theo_nhan():

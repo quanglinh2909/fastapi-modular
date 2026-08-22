@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from fastapi import Response, status
 
-from pymodular.core.config import Settings
-from pymodular.core.controller import controller, get
-from pymodular.core.logging import get_logger
-from pymodular.infrastructure.database import Database
-from pymodular.infrastructure.kafka import KafkaBroker
-from pymodular.infrastructure.mqtt import MqttClient
-from pymodular.infrastructure.rabbitmq import RabbitBroker
-from pymodular.infrastructure.redis import RedisClient
+from fastapi_modular.core.config import Settings
+from fastapi_modular.core.controller import controller, get
+from fastapi_modular.core.logging import get_logger
+from fastapi_modular.infrastructure.database import Database
+from fastapi_modular.infrastructure.kafka import KafkaBroker
+from fastapi_modular.infrastructure.mqtt import MqttClient
+from fastapi_modular.infrastructure.rabbitmq import RabbitBroker
+from fastapi_modular.infrastructure.redis import RedisClient
 
 log = get_logger(__name__)
 

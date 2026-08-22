@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from fastapi import Response
 
-from pymodular.core.config import Settings
-from pymodular.core.controller import controller, get
-from pymodular.core.metrics import app_info, db_circuit_state, registry
-from pymodular.infrastructure.database import Database
+from fastapi_modular.core.config import Settings
+from fastapi_modular.core.controller import controller, get
+from fastapi_modular.core.metrics import app_info, db_circuit_state, registry
+from fastapi_modular.infrastructure.database import Database
 
 PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 

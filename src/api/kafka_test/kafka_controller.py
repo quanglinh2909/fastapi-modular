@@ -6,8 +6,8 @@ from typing import Annotated
 
 from fastapi import Query
 
-from pymodular.core.controller import controller, get, post
-from pymodular.infrastructure.kafka import KafkaBroker
+from fastapi_modular.core.controller import controller, get, post
+from fastapi_modular.infrastructure.kafka import KafkaBroker
 from src.api.kafka_test.kafka_consumer import DA_NHAN, TOPIC, DonHang
 
 

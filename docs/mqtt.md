@@ -3,7 +3,7 @@
 Tuỳ chọn. Không cài, không bật thì không ảnh hưởng gì tới phần còn lại.
 
 ```bash
-pym install mqtt     # cài thư viện + ghi APP_MQTT__* vào .env
+fam install mqtt     # cài thư viện + ghi APP_MQTT__* vào .env
 ```
 
 Dùng cho thiết bị IoT: giao thức nhẹ, giữ kết nối lâu, chịu được mạng chập chờn.
@@ -220,6 +220,6 @@ với phiên persistent.
 ```bash
 docker run -d --name mqtt-test -p 1893:1883 eclipse-mosquitto:2 \
   sh -c "printf 'listener 1883\nallow_anonymous true\n' > /m.conf && mosquitto -c /m.conf"
-pym install mqtt
-TEST_MQTT_URL=mqtt://localhost:1893 pym test    # bật nhóm test cần broker thật
+fam install mqtt
+TEST_MQTT_URL=mqtt://localhost:1893 fam test    # bật nhóm test cần broker thật
 ```

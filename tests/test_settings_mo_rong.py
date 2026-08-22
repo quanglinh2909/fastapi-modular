@@ -1,7 +1,7 @@
 """Ứng dụng phải thêm được biến cấu hình của riêng mình.
 
 Khung định nghĩa `Settings` bên trong thư viện; nếu không kế thừa được thì mọi
-dự án dùng pymodular đều bị kẹt với đúng những biến khung nghĩ ra sẵn.
+dự án dùng fastapi-modular đều bị kẹt với đúng những biến khung nghĩ ra sẵn.
 """
 
 from __future__ import annotations
@@ -9,8 +9,8 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel, Field
 
-from pymodular import Settings, container, create_app, injectable
-from pymodular.core.config import get_settings, settings_class, use_settings
+from fastapi_modular import Settings, container, create_app, injectable
+from fastapi_modular.core.config import get_settings, settings_class, use_settings
 from src.core.config import AppSettings
 
 
@@ -100,7 +100,7 @@ def test_lap_rap_tay_ra_ket_qua_y_het_create_app():
     Nếu không thì tài liệu đang dạy một đường còn khung chạy một nẻo — và người
     sửa main.py sẽ âm thầm mất một lớp middleware nào đó.
     """
-    from pymodular import (
+    from fastapi_modular import (
         add_middleware,
         bind_settings,
         configure_logging,
