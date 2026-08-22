@@ -60,6 +60,8 @@ pym: lệnh 'm' chưa rõ — khớp với migrate, module. Gõ thêm vài chữ
 | `pym run --workers 4` | `pym r` | chạy chế độ production |
 | `pym module <tên>` | `pym mo` | sinh module: controller + service + dto + entity |
 | `pym module <tên> --gateway` | | kèm gateway WebSocket (`--consumer` cho RabbitMQ) |
+| `pym module <tên> --gateway-only` | | chỉ thêm gateway vào module **đã có** (`--consumer-only` cho RabbitMQ) |
+| `pym module <tên> --entity <Tên>` | | đặt tên lớp entity; mặc định đoán từ tên module |
 | `pym env <thành-phần>` | `pym e` | chỉ ghi biến cấu hình vào `.env` (không cài gì) |
 | `pym clean` | `pym c` | xoá cache và bản dựng (không đụng `data/`) |
 | `pym build` · `pym publish [--test]` | `pym b` · `pym p` | dựng wheel/sdist · đẩy lên PyPI |
@@ -76,7 +78,8 @@ pym: lệnh 'm' chưa rõ — khớp với migrate, module. Gõ thêm vài chữ
 | `pym install mqtt` | `pym ins mq` | thiết bị IoT |
 | `pym install kafka` | `pym ins k` | nhật ký sự kiện đọc lại được |
 | `pym install ws-redis` | `pym ins w` | phát tin WebSocket xuyên nhiều worker |
-| `pym install all` | `pym ins a` | tất cả những thứ trên |
+| `pym install dev` | `pym ins d` | pytest · pytest-asyncio · httpx · ruff — cần cho `pym test` / `pym lint` |
+| `pym install all` | `pym ins a` | tất cả những thứ trên, **trừ** `dev` |
 
 Tham số dạng danh sách cũng rút gọn theo cùng luật đó: `pym ins sq`,
 `pym e post`, `pym mi h`. Còn giá trị bạn tự đặt thì không bị đụng tới —
@@ -256,7 +259,8 @@ Chi tiết: [docs/operations.md](docs/operations.md).
 pymodular/          THƯ VIỆN — thứ được đóng gói và cài về
   core/             DI, controller, config, WebSocket, guard, số đo
   infrastructure/   database, rabbitmq, redis, mqtt, kafka (mỗi thứ một package)
-  cli/              init · new · dev · run · module · env · info · migrate · test · lint
+  cli/              init · new · module · dev · run · install · env · info
+                    migrate · test · lint · clean · build · publish
   factory.py        create_app()
   discovery.py      tự quét package ứng dụng, dựng router
 src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá thoải mái
@@ -264,7 +268,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              299 test chạy không cần hạ tầng, 40 test nữa bật khi có server thật
+tests/              341 test chạy không cần hạ tầng, 40 test nữa bật khi có server thật
 docs/               tài liệu tra cứu
 ```
 
@@ -279,7 +283,7 @@ git clone <repo> && cd pymodular
 pip install -e ".[all,dev]"
 pym dev                        # chạy ứng dụng mẫu trong src/
 pym test
-pym lint pymodular app tests
+pym lint pymodular src tests
 ```
 
 Nhóm test cần hạ tầng thật chỉ chạy khi có biến môi trường tương ứng:

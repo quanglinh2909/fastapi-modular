@@ -142,7 +142,7 @@ Biến sinh ra trong `.env` (mỗi dòng kèm giải thích và giá trị mặc
 | `APP_DB__ECHO` | không | `false` | in câu SQL ra log |
 
 Kèm theo 11 biến về pool, timeout và ngắt mạch — tất cả đều **tuỳ chọn**, xem
-[bảng đầy đủ](#cấu-hình-kết-nối).
+[bảng đầy đủ](#các-biến-điều-chỉnh).
 
 Cấu trúc DSN:
 
@@ -371,8 +371,12 @@ Không biến nào dưới đây bắt buộc — xoá dòng là quay về mặc
 | `APP_DB__MAX_OVERFLOW` | `10` | Connection mở thêm khi quá tải, **mỗi worker** | nt |
 | `APP_DB__POOL_RECYCLE_SECONDS` | `1800` | Mở lại connection cũ hơn ngưỡng này | Giảm xuống nếu proxy/firewall của bạn cắt kết nối nhàn rỗi sớm hơn 30 phút |
 | `APP_DB__CONNECT_TIMEOUT_SECONDS` | `10` | Chờ tối đa khi mở kết nối. Với MongoDB đây cũng là hạn chọn server | Giữ ≥10s nếu Mongo chạy replica set — lúc bầu primary mới cần chừng đó thời gian. Giảm xuống 3–5s nếu muốn request thất bại nhanh |
+| `APP_DB__QUERY_TIMEOUT_SECONDS` | `15` | Chờ tối đa cho **một câu truy vấn đã gửi đi** | Khác `CONNECT_TIMEOUT`: database treo giữa lúc đang chạy câu lệnh thì connection vẫn "mở", chỉ biến này cứu được. Tăng nếu có báo cáo chạy lâu |
 | `APP_DB__STARTUP_RETRIES` | `10` | Số lần thử lại lúc khởi động | Tăng nếu database của bạn khởi động chậm hơn 10 giây |
 | `APP_DB__STARTUP_RETRY_DELAY_SECONDS` | `1` | Nghỉ giữa hai lần thử | nt |
+| `APP_DB__CIRCUIT_BREAKER` | `true` | Ngắt mạch khi database hỏng liên tiếp, thay vì để mọi request cùng chờ hết timeout. Không áp dụng cho driver `memory` | Hầu như không bao giờ tắt — xem [operations.md](operations.md#circuit-breaker-và-hạn-thời-gian) |
+| `APP_DB__CIRCUIT_FAILURE_THRESHOLD` | `5` | Bao nhiêu lỗi **kết nối** liên tiếp thì ngắt | Giảm để chặn nhanh hơn, tăng nếu mạng hay chớp |
+| `APP_DB__CIRCUIT_RESET_SECONDS` | `10` | Ngắt bao lâu rồi thử lại một request để dò | Tăng nếu database cần lâu hơn để hồi |
 
 ### Ngân sách connection
 

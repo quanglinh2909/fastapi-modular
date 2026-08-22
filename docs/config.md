@@ -113,6 +113,14 @@ vào độc lập mới phải gọi tay.
 | `get_settings()` | instance dùng chung, dựng từ lớp đã khai (có cache) |
 | `settings_class()` | lớp đang được dùng |
 
+Ba hàm đầu import thẳng từ `pymodular`. Riêng `settings_class()` chưa được
+xuất ở gốc, phải lấy từ module con:
+
+```python
+from pymodular import create_app, get_settings, use_settings
+from pymodular.core.config import settings_class
+```
+
 ---
 
 ## `.env` do `pym env` sinh ra
@@ -161,12 +169,55 @@ còn tệ hơn. Muốn chặn thì đọc `settings.check_production_safety()` r
 
 | Nhóm | Tiền tố | Tài liệu |
 |---|---|---|
-| ứng dụng | `APP_NAME`, `APP_ENV`, `APP_DEBUG`, `APP_HOST`, `APP_PORT` | — |
-| log | `APP_LOG__*` | [operations.md](operations.md) |
-| CORS | `APP_CORS__*` | [operations.md](operations.md) |
+| ứng dụng | `APP_NAME`, `APP_VERSION`, `APP_ENV`, `APP_DEBUG`, `APP_HOST`, `APP_PORT`, `APP_API_PREFIX` | [bên dưới](#ứng-dụng) |
+| log | `APP_LOG__*` | [bên dưới](#log) |
+| CORS | `APP_CORS__*` | [bên dưới](#cors) |
 | database | `APP_DB__*` | [database.md](database.md) |
 | WebSocket | `APP_WS__*` | [websocket.md](websocket.md) |
 | RabbitMQ | `APP_RABBITMQ__*` | [rabbitmq.md](rabbitmq.md) |
 | Redis | `APP_REDIS__*` | [redis.md](redis.md) |
 | MQTT | `APP_MQTT__*` | [mqtt.md](mqtt.md) |
 | Kafka | `APP_KAFKA__*` | [kafka.md](kafka.md) |
+
+### ứng dụng
+
+| Biến | Mặc định | Ý nghĩa |
+|---|---|---|
+| `APP_NAME` | `pymodular` | Tên hiện trong trang `/docs` và trong log |
+| `APP_VERSION` | `0.1.0` | Phiên bản hiện trong OpenAPI. Của **ứng dụng bạn**, không phải của khung |
+| `APP_ENV` | `local` | `local` / `dev` / `staging` / `prod`. `prod` tắt `/docs`, `/redoc`, `/openapi.json` và bật kiểm tra an toàn |
+| `APP_DEBUG` | `true` | `true` = trả chi tiết lỗi ra client. Đặt `false` ở prod |
+| `APP_HOST` | `0.0.0.0` | `pym dev` / `pym run` lấy từ đây, không cần truyền tham số |
+| `APP_PORT` | `8000` | nt |
+| `APP_API_PREFIX` | `/api` | Tiền tố của **mọi** route REST. Đổi thành `/v1` thì health là `/v1/health`. Không ảnh hưởng đường dẫn WebSocket |
+
+### log
+
+| Biến | Mặc định | Ý nghĩa |
+|---|---|---|
+| `APP_LOG__LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `APP_LOG__JSON_FORMAT` | `false` | `true` = mỗi dòng log là một JSON, cho hệ thống gom log. `false` = log màu, dễ đọc khi chạy local |
+
+Áp dụng khi `src/main.py` gọi `configure_logging(settings.log)` — `create_app()`
+đã gọi sẵn.
+
+### CORS
+
+| Biến | Mặc định | Ý nghĩa |
+|---|---|---|
+| `APP_CORS__ALLOW_ORIGINS` | `["*"]` | Danh sách origin được gọi API |
+| `APP_CORS__ALLOW_METHODS` | `["*"]` | Method được phép |
+| `APP_CORS__ALLOW_HEADERS` | `["*"]` | Header được phép |
+| `APP_CORS__ALLOW_CREDENTIALS` | `true` | Cho phép gửi kèm cookie / `Authorization` |
+
+Ba biến đầu là **danh sách**, phải viết dạng JSON trong `.env`. Dạng ngăn bằng
+dấu phẩy KHÔNG chạy — nó ném `SettingsError` ngay lúc khởi động:
+
+```dotenv
+APP_CORS__ALLOW_ORIGINS=["https://app.cua-toi.vn","https://admin.cua-toi.vn"]
+```
+
+`["*"]` đi cùng `allow_credentials=true` khiến Starlette phản chiếu lại mọi
+`Origin` — tức **bất kỳ website nào** cũng gọi được API kèm cookie của người
+dùng. Vì vậy ở `APP_ENV=prod` nó bị `check_production_safety()` cảnh báo; hãy
+liệt kê domain cụ thể.

@@ -115,6 +115,7 @@ def test_bien_nhac_trong_docs_deu_con_that(  ):
     import re
 
     from pymodular.core.config import (
+        CorsSettings,
         DatabaseSettings,
         KafkaSettings,
         LogSettings,
@@ -133,6 +134,7 @@ def test_bien_nhac_trong_docs_deu_con_that(  ):
         "APP_MQTT__": MqttSettings,
         "APP_KAFKA__": KafkaSettings,
         "APP_LOG__": LogSettings,
+        "APP_CORS__": CorsSettings,
         "APP_JWT__": JwtSettings,
     }
     cap_app = {f.alias for f in AppSettings.model_fields.values() if f.alias}
