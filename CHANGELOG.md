@@ -5,6 +5,13 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 
 ## [Chưa phát hành]
 
+### Tài liệu
+
+- Viết lại `docs/websocket.md` theo hướng làm-theo thay vì tra-cứu: đưa "bốn
+  việc client bắt buộc phải làm" lên đầu trang, thêm client tối thiểu 30 dòng
+  chạy được ngay, giải thích cơ chế nhịp tim bằng sơ đồ thời gian, và thêm mục
+  tra sự cố theo triệu chứng.
+
 ## [0.2.0] — 2026-08-22
 
 **Đổi tên toàn bộ.** Tên `pymodular` bị PyPI từ chối vì trùng với project

@@ -15,7 +15,7 @@ hạ tầng tuỳ chọn: RabbitMQ, Redis, MQTT, Kafka.
 Cần **Python 3.10+**.
 
 ```bash
-python -m venv .venv && . .venv/bin/activate
+python3 -m venv .venv && . .venv/bin/activate
 pip install fastapi-modular
 
 fam init          # đổ file vào THƯ MỤC HIỆN TẠI, không tạo thêm cấp

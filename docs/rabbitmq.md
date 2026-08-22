@@ -487,7 +487,7 @@ class AlertPush:
 
 Hàng đợi có tên nên chỉ **một** worker nhận mỗi tin, mà worker đó chỉ giữ một
 phần số kết nối. Muốn mọi client đều nhận thì bật
-[adapter Redis](websocket.md#9-chạy-nhiều-worker) cho WebSocket.
+[adapter Redis](websocket.md#8-chạy-nhiều-worker) cho WebSocket.
 
 ---
 

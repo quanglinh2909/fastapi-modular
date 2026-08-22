@@ -31,7 +31,7 @@ class AlertGateway: ...
 
 Khác biệt duy nhất: guard WebSocket chạy **một lần lúc bắt tay**, không phải mỗi
 tin nhắn; và trình duyệt không đặt được header trên WebSocket nên token thường
-đi qua query. Xem [websocket.md](websocket.md#5-xác-thực).
+đi qua query. Xem [websocket.md](websocket.md#6-xác-thực).
 
 ### Principal
 
@@ -184,7 +184,7 @@ rate(rabbitmq_dead_lettered_total[15m]) > 0
 
 ## WebSocket
 
-Hướng dẫn đầy đủ ở [websocket.md](websocket.md). Hai điều **bắt buộc** khi đưa
+Hướng dẫn đầy đủ ở [5-xác-thực](websocket.md). Hai điều **bắt buộc** khi đưa
 lên production:
 
 **1. Nhiều worker thì phải có adapter.** Sổ kết nối nằm trong RAM của một tiến
