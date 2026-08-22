@@ -15,6 +15,7 @@ hạ tầng tuỳ chọn: RabbitMQ, Redis, MQTT, Kafka.
 Cần **Python 3.10+**.
 
 ```bash
+python -m venv .venv && . .venv/bin/activate
 pip install pymodular
 
 pym init          # đổ file vào THƯ MỤC HIỆN TẠI, không tạo thêm cấp
