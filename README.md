@@ -17,15 +17,15 @@ Cần **Python 3.10+**.
 ```bash
 pip install pymodular
 
-mkdir du-an-cua-toi && cd du-an-cua-toi
-pym init          # đổ file vào ĐÚNG thư mục này, không tạo thêm cấp
+pym init          # đổ file vào THƯ MỤC HIỆN TẠI, không tạo thêm cấp
 pym dev
 ```
 
 Mở http://localhost:8000/docs — đã có sẵn một module `health` chạy được.
 
-`pym init` không ghi đè file nào đã có, nên chạy được cả trong thư mục đang có
-code. Muốn tạo hẳn thư mục mới thì `pym new du-an-cua-toi`.
+`pym init` lấy tên dự án theo **tên thư mục hiện tại**; đặt tên khác bằng
+`pym init --name ten-khac`. Nó không ghi đè file nào đã có, nên chạy được cả
+trong thư mục đang có sẵn code. Muốn nó tự tạo thư mục thì `pym new <tên>`.
 
 Lõi **không kéo theo** driver database hay client hàng đợi nào. Cần cái gì thì
 thêm cái đó:
@@ -54,7 +54,7 @@ pym: lệnh 'm' chưa rõ — khớp với migrate, module. Gõ thêm vài chữ
 
 | Lệnh | Rút gọn | Làm gì |
 |---|---|---|
-| `pym init` | `pym ini` | dựng dự án **trong thư mục hiện tại**, không ghi đè file nào đã có |
+| `pym init [--name <tên>]` | `pym ini` | dựng dự án **trong thư mục hiện tại**, không ghi đè file nào đã có; tên dự án mặc định lấy theo tên thư mục |
 | `pym new <tên>` | `pym n` | dựng dự án trong một thư mục mới |
 | `pym dev` | `pym d` | chạy kèm autoreload |
 | `pym run --workers 4` | `pym r` | chạy chế độ production |

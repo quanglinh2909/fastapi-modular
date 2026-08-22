@@ -18,8 +18,7 @@
 ```bash
 pip install pymodular
 
-mkdir du-an-cua-toi && cd du-an-cua-toi
-pym init                     # đổ file vào đúng thư mục này
+pym init                     # đổ file vào THƯ MỤC HIỆN TẠI
 pym dev                      # mặc định backend memory
 
 pym install sqlite    # dữ liệu sống qua restart

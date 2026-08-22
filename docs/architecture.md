@@ -27,7 +27,8 @@ pymodular/                     THƯ VIỆN — thứ được đóng gói, cài 
 │   ├── mqtt/                  (tuỳ chọn) client · consumers · patterns (+ và #)
 │   └── kafka/                 (tuỳ chọn) broker · consumers
 ├── middleware/                request-id, access log (ASGI thuần)
-└── cli/                       init · new · dev · run · module · env · info · migrate
+└── cli/                       init · new · module · dev · run · install · env · info
+                               migrate · test · lint · clean · build · publish
 
 src/                           ỨNG DỤNG — code của bạn, KHÔNG nằm trong gói cài
 ├── main.py                    lắp ráp app: settings, middleware, route — sửa thoải mái
@@ -159,7 +160,9 @@ src/api/alerts/
 ├── __init__.py
 ├── alert_controller.py  @controller + 5 route CRUD, đã nối DI
 ├── alert_service.py     @injectable + 5 method, thân để trống kèm TODO
-├── dto/alert_schema.py  AlertBase / AlertCreate / AlertUpdate / AlertOut
+├── dto/__init__.py
+├── dto/alert_dto.py     AlertBase / AlertCreate / AlertUpdate / AlertOut
+├── entities/__init__.py
 └── entities/alert_model.py   @entity dataclass: id, created_at, updated_at
 ```
 
@@ -180,7 +183,7 @@ Ba việc còn lại của bạn:
 
 Không phải đăng ký ở đâu cả: không sửa `main.py`, không sửa `api/app.py`.
 
-Thêm `ws=1` thì có thêm `<tên>_gateway.py` và `dto/<tên>_ws_schema.py`: gateway
+Thêm `--gateway` thì có thêm `<tên>_gateway.py` và `dto/<tên>_ws_dto.py`: gateway
 WebSocket đã nối DI, có hook vòng đời và hai handler mẫu — cũng để trống thân,
 gọi vào trả khung `error` mang code `not_implemented`. Xem
 [websocket.md](websocket.md).
@@ -241,7 +244,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 ```bash
 pym lint       # ruff: F, E, W, I, B, UP, SIM, RUF, BLE
 pym lint --fix   # tự sửa phần sửa được
-pym test       # 78 test trên backend memory
+pym test       # 341 test trên backend memory (40 test nữa cần hạ tầng thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi
