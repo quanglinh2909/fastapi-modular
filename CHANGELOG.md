@@ -5,6 +5,11 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 
 ## [Chưa phát hành]
 
+### Sửa
+
+- `pym lint` không tham số trỏ vào thư mục `app` không tồn tại nên lỗi ngay;
+  mặc định đổi thành `src`, đúng thứ `pym init` sinh ra.
+
 ## [0.1.0] — 2026-08-21
 
 Bản đầu tiên. Cần **Python 3.10 trở lên**.

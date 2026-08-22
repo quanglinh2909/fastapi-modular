@@ -242,8 +242,9 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 ## Chất lượng mã
 
 ```bash
-pym lint       # ruff: F, E, W, I, B, UP, SIM, RUF, BLE
-pym lint --fix   # tự sửa phần sửa được
+pym lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
+pym lint pymodular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
+pym lint --fix                # tự sửa phần sửa được
 pym test       # 341 test trên backend memory (40 test nữa cần hạ tầng thật)
 ```
 

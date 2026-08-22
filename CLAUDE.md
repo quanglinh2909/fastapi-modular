@@ -42,9 +42,8 @@ Hai cái bẫy đã từng làm docs sai:
 ## Kiểm chứng trước khi nói là xong
 
 ```bash
-pytest -q                              # 341 passed, 40 skipped (40 skip cần hạ tầng thật)
-ruff check pymodular src tests         # KHÔNG dùng `pym lint` trần: mặc định của nó
-                                       # trỏ vào thư mục `app` không tồn tại
+pytest -q                       # 341 passed, 40 skipped (40 skip cần hạ tầng thật)
+pym lint pymodular src tests    # `pym lint` trần chỉ soi `src`, thiếu thư viện và test
 ```
 
 `tests/test_configure_env.py::test_bien_nhac_trong_docs_deu_con_that` đối chiếu

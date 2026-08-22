@@ -67,7 +67,7 @@ pym: lệnh 'm' chưa rõ — khớp với migrate, module. Gõ thêm vài chữ
 | `pym build` · `pym publish [--test]` | `pym b` · `pym p` | dựng wheel/sdist · đẩy lên PyPI |
 | `pym info` | `pym inf` | đang nối vào đâu, thư viện nào đã cài, cảnh báo cấu hình prod |
 | `pym migrate [up\|down\|history\|sql\|create]` | `pym mi` | Alembic |
-| `pym test` · `pym lint [--fix]` | `pym t` · `pym l` | pytest · ruff |
+| `pym test` · `pym lint [--fix]` | `pym t` · `pym l` | pytest · ruff. `pym lint` không tham số soi `src`; truyền đường dẫn để soi chỗ khác |
 | **Thêm database** | | *cài thư viện **rồi** ghi biến vào `.env`* |
 | `pym install sqlite` | `pym ins s` | file `.db`, không cần server |
 | `pym install postgres` | `pym ins p` | PostgreSQL |

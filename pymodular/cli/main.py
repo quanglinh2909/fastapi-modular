@@ -140,7 +140,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     p_lint = lenh.add_parser("lint", help="soi lỗi tĩnh bằng ruff")
     p_lint.add_argument("--fix", action="store_true", help="tự sửa những lỗi sửa được")
-    p_lint.add_argument("duong_dan", nargs="*", default=["app"], help="mặc định: app")
+    p_lint.add_argument("duong_dan", nargs="*", default=["src"], help="mặc định: src")
 
     p_mig = lenh.add_parser("migrate", help="chạy migration (Alembic)")
     p_mig.add_argument(
