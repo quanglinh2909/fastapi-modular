@@ -1,0 +1,30 @@
+# Cấu hình lint dùng chung. Chạy: make lint  (hoặc make lint-fix)
+line-length = 100
+target-version = "py310"
+
+[lint]
+select = [
+    "F",    # lỗi thật: biến/import không dùng, tên chưa định nghĩa
+    "E", "W",
+    "I",    # thứ tự import
+    "B",    # bẫy thường gặp (mutable default, biến vòng lặp trong closure...)
+    "UP",   # cú pháp cũ so với phiên bản Python đích
+    "SIM",  # rút gọn được
+    "RUF",
+    "BLE",  # except Exception trần — bắt buộc phải có noqa kèm lý do
+]
+ignore = [
+    "E501",     # độ dài dòng đã có formatter lo
+    "RUF001",   # ký tự "giống nhau" — tiếng Việt có dấu hay dính oan
+    "RUF002",
+    "RUF003",
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["B008", "BLE"]
+
+[lint.isort]
+# Nói rõ `pymodular` và `src` là code của dự án, đừng để ruff tự đoán theo thư mục đang lint:
+# lint file sinh ra ở thư mục tạm sẽ đoán nhầm thành thư viện ngoài và đòi gộp
+# khối import lại — đúng ở đó nhưng sai khi file nằm trong dự án.
+known-first-party = ["pymodular", "src"]

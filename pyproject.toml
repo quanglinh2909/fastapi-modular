@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pymodular"
+# Số phiên bản chỉ có MỘT chỗ: `__version__` trong pymodular/__init__.py.
+# Khai ở cả đây nữa thì sớm muộn cũng lệch, và bản đẩy lên PyPI mang một số còn
+# `pym --version` in ra một số khác.
+dynamic = ["version"]
+description = "FastAPI theo kiến trúc module kiểu NestJS: DI container, controller dạng class, WebSocket, RabbitMQ/Redis/MQTT/Kafka"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Oryza", email = "developer@oryza.vn" }]
+keywords = ["fastapi", "nestjs", "module", "dependency-injection", "websocket",
+            "rabbitmq", "redis", "mqtt", "kafka"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Typing :: Typed",
+]
+
+# Lõi KHÔNG kéo theo driver database hay client hàng đợi nào. Đó là cả điểm
+# chính của khung: không dùng thì không tồn tại trong máy bạn.
+dependencies = [
+    "fastapi>=0.115.0,<1.0.0",
+    "uvicorn[standard]>=0.32.0,<1.0.0",
+    "pydantic>=2.9.0,<3.0.0",
+    "pydantic-settings>=2.6.0,<3.0.0",
+    "structlog>=24.4.0",
+]
+
+[project.optional-dependencies]
+sqlite   = ["sqlalchemy[asyncio]>=2.0.30,<3.0.0", "aiosqlite>=0.20.0", "alembic>=1.13.0"]
+postgres = ["sqlalchemy[asyncio]>=2.0.30,<3.0.0", "asyncpg>=0.29.0", "alembic>=1.13.0"]
+mongodb  = ["motor>=3.6.0,<4.0.0"]
+rabbitmq = ["aio-pika>=9.4.0,<10.0.0"]
+redis    = ["redis>=5.0.0,<7.0.0"]
+mqtt     = ["aiomqtt>=2.0.0,<3.0.0"]
+kafka    = ["aiokafka>=0.10.0,<0.13.0"]
+all = [
+    "pymodular[postgres]", "pymodular[sqlite]", "pymodular[mongodb]",
+    "pymodular[rabbitmq]", "pymodular[redis]", "pymodular[mqtt]", "pymodular[kafka]",
+]
+dev = ["pytest>=8.3.0", "pytest-asyncio>=0.24.0", "httpx>=0.27.0", "ruff>=0.6.0"]
+
+[project.scripts]
+pymodular = "pymodular.cli.main:main"
+pym = "pymodular.cli.main:main"      # gõ tắt, cùng một chương trình
+
+[project.urls]
+Homepage = "https://github.com/oryza-vn/pymodular"
+Documentation = "https://github.com/oryza-vn/pymodular/tree/main/docs"
+Source = "https://github.com/oryza-vn/pymodular"
+Issues = "https://github.com/oryza-vn/pymodular/issues"
+Changelog = "https://github.com/oryza-vn/pymodular/blob/main/CHANGELOG.md"
+
+# Chỉ đóng gói thư viện. `src/` là ứng dụng mẫu của repo này, không phải thứ
+# người dùng cài về.
+[tool.hatch.version]
+path = "pymodular/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pymodular"]
+
+[tool.hatch.build.targets.sdist]
+include = ["pymodular", "src", "tests", "docs", "migrations", "README.md",
+           "LICENSE", "CHANGELOG.md", "Makefile", "alembic.ini", "pytest.ini", "ruff.toml"]

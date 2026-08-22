@@ -1,0 +1,88 @@
+# ---------------------------------------------------------------- Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Gói và bản dựng
+build/
+dist/
+sdist/
+wheels/
+*.egg
+*.egg-info
+.eggs/
+MANIFEST
+pip-wheel-metadata/
+
+# Môi trường ảo
+.venv/
+venv/
+ENV/
+env/
+.python-version
+
+# Test, độ phủ, kiểm kiểu, lint
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+.pytype/
+.pyre/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.cover
+.hypothesis/
+.cache/
+
+# Jupyter
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+
+# ------------------------------------------------------------- Dự án này
+# .env chứa DSN và mật khẩu thật — KHÔNG BAO GIỜ commit.
+.env
+.env.*
+!.env.example
+
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# ------------------------------------------------------------------- IDE
+.idea/
+.vscode/
+# Muốn chia sẻ cấu hình cho cả nhóm thì bỏ dòng .vscode/ ở trên và ignore
+# từng file: .vscode/* rồi !.vscode/settings.json, !.vscode/extensions.json
+.fleet/
+.zed/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+.\#*
+\#*\#
+
+# --------------------------------------------------------- Hệ điều hành
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# --------------------------------------------------------------- Công cụ
+.direnv/
+node_modules/

@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  # Vòng nhanh: không cần hạ tầng nào. Đây cũng là bằng chứng cho lời hứa
+  # "không cài thì không tồn tại" — không driver, không client hàng đợi.
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: ruff check pymodular src tests
+      - run: pytest -q
+
+  # Vòng đầy đủ: dựng thật RabbitMQ, Redis, mosquitto, Kafka rồi chạy nhóm test
+  # chỉ bật khi có biến TEST_*. Không có bước này thì mọi khẳng định về "tự nối
+  # lại", "thử lại rồi vào DLQ" chỉ là lời nói.
+  test-ha-tang:
+    runs-on: ubuntu-latest
+    services:
+      rabbitmq:
+        image: rabbitmq:3-management
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -e ".[all,dev]"
+
+      # mosquitto và Kafka không chạy được dưới `services` (cần file cấu hình /
+      # nhiều cổng), nên dựng bằng docker run.
+      - name: Dựng mosquitto
+        run: |
+          docker run -d --name mqtt -p 1883:1883 eclipse-mosquitto:2 \
+            sh -c "printf 'listener 1883\nallow_anonymous true\n' > /m.conf && mosquitto -c /m.conf"
+      - name: Dựng Kafka
+        run: |
+          docker run -d --name kafka -p 9092:9092 \
+            -e KAFKA_NODE_ID=1 -e KAFKA_PROCESS_ROLES=broker,controller \
+            -e KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093 \
+            -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
+            -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT \
+            -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093 \
+            -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+            -e KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT \
+            -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+            -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
+            apache/kafka:3.9.0
+          for i in $(seq 1 30); do
+            docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list && break
+            sleep 2
+          done
+
+      - name: Chạy toàn bộ test, kể cả nhóm cần hạ tầng thật
+        env:
+          TEST_RABBITMQ_URL: amqp://guest:guest@localhost:5672/
+          TEST_REDIS_URL: redis://localhost:6379/0
+          TEST_MQTT_URL: mqtt://localhost:1883
+          TEST_KAFKA_SERVERS: localhost:9092
+          TEST_POSTGRES_DSN: postgresql+asyncpg://postgres:postgres@localhost:5432/app
+        run: pytest -q
+
+  # Wheel phải cài được vào môi trường TRẮNG và `pymodular new` phải chạy ra
+  # một dự án khởi động được. Đây là thứ dễ hỏng nhất mà test thường không thấy.
+  dong-goi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install build
+      - run: python -m build
+      - name: Cài wheel vào venv sạch rồi dựng thử một dự án
+        run: |
+          python -m venv /tmp/sach
+          /tmp/sach/bin/pip install "$(ls dist/*.whl)[sqlite]"
+          cd /tmp && /tmp/sach/bin/pymodular new duan-ci
+          cd /tmp/duan-ci && /tmp/sach/bin/pymodular module posts && mkdir -p data
+          /tmp/sach/bin/python -c "
+          from src.api.main import app
+          duong_dan = sorted({r.path for r in app.routes if r.path.startswith('/api')})
+          print(duong_dan)
+          assert '/api/health' in duong_dan, duong_dan
+          assert '/api/posts' in duong_dan, duong_dan
+          "
