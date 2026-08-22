@@ -30,7 +30,7 @@ from fastapi_modular.core.websocket import Socket, WebSocketServer, gateway, sub
 from fastapi_modular.discovery import DEFAULT_PACKAGE, register_routes
 from fastapi_modular.factory import add_middleware, bind_settings, create_app, new_fastapi
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = [
     "DEFAULT_PACKAGE",

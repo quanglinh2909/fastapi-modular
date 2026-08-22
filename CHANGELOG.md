@@ -5,6 +5,8 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 
 ## [Chưa phát hành]
 
+## [0.2.1] — 2026-08-22
+
 ### Thay đổi
 
 - Tác giả và chủ bản quyền: Oryza <developer@oryza.vn> -> quanglinh
