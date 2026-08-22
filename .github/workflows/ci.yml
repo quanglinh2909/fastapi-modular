@@ -112,8 +112,8 @@ jobs:
           cd /tmp && /tmp/sach/bin/pymodular new duan-ci
           cd /tmp/duan-ci && /tmp/sach/bin/pymodular module posts && mkdir -p data
           /tmp/sach/bin/python -c "
-          from src.api.main import app
-          duong_dan = sorted({r.path for r in app.routes if r.path.startswith('/api')})
+          from src.main import app
+          duong_dan = sorted(app.openapi()['paths'])
           print(duong_dan)
           assert '/api/health' in duong_dan, duong_dan
           assert '/api/posts' in duong_dan, duong_dan
