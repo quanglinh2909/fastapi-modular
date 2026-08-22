@@ -5,6 +5,15 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 
 ## [Chưa phát hành]
 
+### Thay đổi
+
+- Tác giả và chủ bản quyền: Oryza <developer@oryza.vn> -> quanglinh
+  <hackcoquanglinh2000@gmail.com>, ở cả `pyproject.toml` lẫn `LICENSE`.
+- README tách làm hai bản song ngữ: `README.md` (tiếng Anh, là bản hiện trên
+  PyPI) và `README.vi.md` (tiếng Việt). Hai bản giữ cùng thứ tự mục.
+- Metadata PyPI viết lại cho tìm kiếm: summary sang tiếng Anh, keywords từ 9 lên
+  39 từ, thêm 7 classifier.
+
 ### Tài liệu
 
 - Viết lại `docs/websocket.md` theo hướng làm-theo thay vì tra-cứu: đưa "bốn

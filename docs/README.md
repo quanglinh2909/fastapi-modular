@@ -25,7 +25,7 @@ fam install sqlite    # dữ liệu sống qua restart
 ```
 
 Một chương trình, hai tên: `fastapi-modular` (đầy đủ) và `fam` (gõ tắt). `fam --help`
-cho danh sách lệnh; bảng đầy đủ ở [README gốc](../README.md#lệnh).
+cho danh sách lệnh; bảng đầy đủ ở [README gốc](../README.vi.md#lệnh).
 
 Realtime chạy sẵn, không phải cài gì thêm:
 `ws://localhost:8000/ws/chat?client_id=an` — xem [websocket.md](websocket.md).

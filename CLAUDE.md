@@ -27,10 +27,10 @@ chỗ là họ gõ theo rồi lỗi.
 | Sửa ở đâu | Bắt buộc soi lại |
 |---|---|
 | trường trong `core/config.py` (`Settings` và các lớp con) | `docs/config.md` (bảng biến), và doc của nhóm đó: `database.md` / `websocket.md` / `rabbitmq.md` / `redis.md` / `mqtt.md` / `kafka.md` |
-| lệnh hoặc cờ trong `cli/` | bảng lệnh ở `README.md`, cây `cli/` ở `README.md` **và** `docs/architecture.md` |
+| lệnh hoặc cờ trong `cli/` | bảng lệnh ở **`README.md` VÀ `README.vi.md`**, cây `cli/` ở cả hai README **và** `docs/architecture.md` |
 | tên file / lớp mà `cli/new_module.py` sinh ra | mục "Thêm module mới" ở `docs/architecture.md` |
 | API công khai (`fastapi_modular/__init__.py`, decorator, method) | doc của phần đó, và `docs/README.md` nếu đổi bảng đối chiếu |
-| thêm/bớt test | con số test ở `README.md` (cây thư mục) và `docs/architecture.md` (mục Chất lượng mã) |
+| thêm/bớt test | con số test ở **cả hai README** (cây thư mục) và `docs/architecture.md` (mục Chất lượng mã) |
 
 Hai cái bẫy đã từng làm docs sai:
 
@@ -38,6 +38,29 @@ Hai cái bẫy đã từng làm docs sai:
    nguyên, đừng chép.
 2. **Bảng liệt kê** — thêm một biến vào `Settings` hay một lệnh vào CLI mà quên
    thêm dòng vào bảng thì bảng lặng lẽ thiếu, không ai báo.
+
+## README song ngữ: sửa một bản là phải sửa bản kia
+
+Có **hai** README, nội dung phải luôn tương đương:
+
+| File | Ngôn ngữ | Ai đọc |
+|---|---|---|
+| `README.md` | tiếng Anh | trang PyPI, Google, người dùng quốc tế |
+| `README.vi.md` | tiếng Việt | người dùng Việt Nam |
+
+**Sửa một bản mà quên bản kia là lỗi.** Hai bản lệch nhau còn tệ hơn chỉ có một
+bản: người đọc tin vào bản họ đang mở, và không ai biết bản nào mới hơn.
+
+Quy tắc: mỗi thay đổi nội dung ở một README phải có thay đổi tương ứng ở README
+kia **trong cùng commit**. Đổi bảng lệnh, đổi con số, thêm mục, sửa ví dụ — tất
+cả đều tính. Chỉ sửa lỗi chính tả riêng của một ngôn ngữ thì không cần.
+
+Hai bản giữ **cùng thứ tự mục** để đối chiếu nhanh: mở cạnh nhau là thấy ngay
+bên nào thiếu. Đừng đổi thứ tự mục ở một bản mà không đổi bản kia.
+
+`pyproject.toml` khai `readme = "README.md"`, nên **bản tiếng Anh là bản hiện
+trên PyPI**. Link trong `README.md` phải là URL tuyệt đối (xem mục Phát hành);
+link trong `docs/*.md` thì cứ để tương đối.
 
 ## Kiểm chứng trước khi nói là xong
 

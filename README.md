@@ -1,137 +1,171 @@
+> **English** · [Tiếng Việt](https://github.com/quanglinh2909/fastapi-modular/blob/main/README.vi.md)
+
 # fastapi-modular
 
-FastAPI theo kiến trúc module kiểu NestJS: DI container, controller dạng class,
-repository chung cho nhiều loại database, gateway WebSocket có phòng, và bốn lớp
-hạ tầng tuỳ chọn: RabbitMQ, Redis, MQTT, Kafka.
+**NestJS-style modular architecture for FastAPI.** A dependency-injection
+container, class-based controllers, auto-discovered modules, a shared repository
+over four databases, a WebSocket gateway with rooms, and optional RabbitMQ /
+Redis / MQTT / Kafka layers that stay dormant until you enable them.
 
-> **In English:** fastapi-modular brings NestJS-style modular architecture to FastAPI —
-> a DI container, class-based controllers, auto-discovered modules, a shared
-> repository over four databases, a WebSocket gateway with rooms, and optional
-> RabbitMQ / Redis / MQTT / Kafka layers that stay dormant until enabled.
-> **Documentation is in Vietnamese**; the public API is English.
+If you have written NestJS and wished FastAPI came with the same structure —
+modules that register themselves, `@Injectable` services, `@Controller` classes,
+`@WebSocketGateway`, `@EventPattern` — this is that, in Python.
 
-## Bắt đầu
+```bash
+pip install fastapi-modular
+fam init && fam dev
+```
 
-Cần **Python 3.10+**.
+The full documentation lives in `docs/` and is written in **Vietnamese**; the
+public API, and this README, are in English. Start with
+[docs/architecture.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/architecture.md).
+
+## Coming from NestJS?
+
+| NestJS | fastapi-modular |
+|---|---|
+| `@Module()` + module scanning | a directory under `src/api/`, auto-scanned |
+| `@Controller('users')` | `@controller(prefix="/users", tags=["users"])` |
+| `@Get()` `@Post()` `@Patch()` `@Delete()` | `@get()` `@post()` `@patch()` `@delete()` |
+| `@Injectable()` | `@injectable` |
+| `@Injectable({scope: Scope.REQUEST})` | `@injectable(scope=Scope.REQUEST)` |
+| `forwardRef(() => X)` | `Lazy[X]` |
+| `@InjectRepository(X) repo: Repository<X>` | `repo: Repository[X]` |
+| `@UseGuards()` | `guards=[...]` on the controller or a single route |
+| `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
+| `@SubscribeMessage('x')` | `@subscribe("x")` |
+| `@EventPattern('x')` (RabbitMQ) | `@rabbitmq_subscriber("events", "x", queue="…")` |
+| `CacheModule` / `CACHE_MANAGER` | `RedisClient.cached(key, factory, ttl=…)` |
+| socket.io Redis adapter | `APP_WS__ADAPTER=redis` |
+
+Full side-by-side table in
+[docs/architecture.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/architecture.md).
+
+## Getting started
+
+Requires **Python 3.10+**.
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 pip install fastapi-modular
 
-fam init          # đổ file vào THƯ MỤC HIỆN TẠI, không tạo thêm cấp
+fam init          # scaffolds into the CURRENT directory, no extra nesting
 fam dev
 ```
 
-Mở http://localhost:8000/docs — đã có sẵn một module `health` chạy được.
+Open http://localhost:8000/docs — a working `health` module is already there.
 
-`fam init` lấy tên dự án theo **tên thư mục hiện tại**; đặt tên khác bằng
-`fam init --name ten-khac`. Nó không ghi đè file nào đã có, nên chạy được cả
-trong thư mục đang có sẵn code. Muốn nó tự tạo thư mục thì `fam new <tên>`.
+`fam init` takes the project name from the current directory name; use
+`fam init --name other-name` to override. It never overwrites an existing file,
+so it is safe to run inside a directory that already has code. If you want it to
+create the directory for you, use `fam new <name>`.
 
-Lõi **không kéo theo** driver database hay client hàng đợi nào. Cần cái gì thì
-thêm cái đó:
+The core pulls in **no** database driver and **no** queue client. Add only what
+you need:
 
 ```bash
-fam install sqlite      # hoặc postgres, mongodb
-fam install rabbitmq    # hoặc redis, mqtt, kafka
-fam install all         # tất cả
+fam install sqlite      # or postgres, mongodb
+fam install rabbitmq    # or redis, mqtt, kafka
+fam install all         # everything above
 ```
 
-`fam install` vừa cài thư viện vừa ghi biến vào `.env`. Muốn tự cài bằng pip
-cũng được: `pip install "fastapi-modular[sqlite,rabbitmq]"`.
+`fam install` both installs the libraries and writes the matching variables into
+`.env`. Plain pip works too: `pip install "fastapi-modular[sqlite,rabbitmq]"`.
 
-## Lệnh
+## Commands
 
-Một chương trình, hai tên: `fastapi-modular` (đầy đủ) và `fam` (gõ tắt). Dưới đây dùng
-`fam` cho gọn.
+One program, two names: `fastapi-modular` (full) and `fam` (short). Examples use
+`fam`.
 
-Tên lệnh rút gọn được tới khi nào tiền tố còn chỉ đúng một lệnh — `fam mo alerts`
-chạy y hệt `fam module alerts`. Nhập nhằng thì `fam` hỏi lại chứ không đoán:
+Command names can be abbreviated as long as the prefix is unambiguous — `fam mo
+alerts` is exactly `fam module alerts`. When ambiguous, it asks instead of
+guessing:
 
 ```
 $ fam m
 fam: lệnh 'm' chưa rõ — khớp với migrate, module. Gõ thêm vài chữ cho rõ.
 ```
 
-| Lệnh | Rút gọn | Làm gì |
+| Command | Short | What it does |
 |---|---|---|
-| `fam init [--name <tên>]` | `fam ini` | dựng dự án **trong thư mục hiện tại**, không ghi đè file nào đã có; tên dự án mặc định lấy theo tên thư mục |
-| `fam new <tên>` | `fam n` | dựng dự án trong một thư mục mới |
-| `fam dev` | `fam d` | chạy kèm autoreload |
-| `fam run --workers 4` | `fam r` | chạy chế độ production |
-| `fam module <tên>` | `fam mo` | sinh module: controller + service + dto + entity |
-| `fam module <tên> --gateway` | | kèm gateway WebSocket (`--consumer` cho RabbitMQ) |
-| `fam module <tên> --gateway-only` | | chỉ thêm gateway vào module **đã có** (`--consumer-only` cho RabbitMQ) |
-| `fam module <tên> --entity <Tên>` | | đặt tên lớp entity; mặc định đoán từ tên module |
-| `fam env <thành-phần>` | `fam e` | chỉ ghi biến cấu hình vào `.env` (không cài gì) |
-| `fam clean` | `fam c` | xoá cache và bản dựng (không đụng `data/`) |
-| `fam build` · `fam publish [--test]` | `fam b` · `fam p` | dựng wheel/sdist · đẩy lên PyPI |
-| `fam info` | `fam inf` | đang nối vào đâu, thư viện nào đã cài, cảnh báo cấu hình prod |
+| `fam init [--name <n>]` | `fam ini` | scaffold **into the current directory**; never overwrites; name defaults to the directory name |
+| `fam new <name>` | `fam n` | scaffold into a new directory |
+| `fam dev` | `fam d` | run with autoreload |
+| `fam run --workers 4` | `fam r` | run in production mode |
+| `fam module <name>` | `fam mo` | generate a module: controller + service + dto + entity |
+| `fam module <name> --gateway` | | plus a WebSocket gateway (`--consumer` for RabbitMQ) |
+| `fam module <name> --gateway-only` | | add a gateway to an **existing** module (`--consumer-only` for RabbitMQ) |
+| `fam module <name> --entity <N>` | | set the entity class name; guessed from the module name otherwise |
+| `fam env <component>` | `fam e` | only write config variables into `.env` (installs nothing) |
+| `fam clean` | `fam c` | remove caches and build output (leaves `data/` alone) |
+| `fam build` · `fam publish [--test]` | `fam b` · `fam p` | build wheel/sdist · upload to PyPI |
+| `fam info` | `fam inf` | what it connects to, what is installed, production config warnings |
 | `fam migrate [up\|down\|history\|sql\|create]` | `fam mi` | Alembic |
-| `fam test` · `fam lint [--fix]` | `fam t` · `fam l` | pytest · ruff. `fam lint` không tham số soi `src`; truyền đường dẫn để soi chỗ khác |
-| **Thêm database** | | *cài thư viện **rồi** ghi biến vào `.env`* |
-| `fam install sqlite` | `fam ins s` | file `.db`, không cần server |
+| `fam test` · `fam lint [--fix]` | `fam t` · `fam l` | pytest · ruff. Bare `fam lint` checks `src`; pass paths to check elsewhere |
+| **Databases** | | *installs libraries **then** writes `.env`* |
+| `fam install sqlite` | `fam ins s` | a `.db` file, no server needed |
 | `fam install postgres` | `fam ins p` | PostgreSQL |
 | `fam install mongodb` | `fam ins mo` | MongoDB |
-| **Thêm hàng đợi** | | *cài thư viện **rồi** ghi biến vào `.env`* |
-| `fam install rabbitmq` | `fam ins ra` | hàng đợi bền, thử lại + DLQ |
-| `fam install redis` | `fam ins re` | cache, đếm nguyên tử, pub/sub |
-| `fam install mqtt` | `fam ins mq` | thiết bị IoT |
-| `fam install kafka` | `fam ins k` | nhật ký sự kiện đọc lại được |
-| `fam install ws-redis` | `fam ins w` | phát tin WebSocket xuyên nhiều worker |
-| `fam install dev` | `fam ins d` | pytest · pytest-asyncio · httpx · ruff — cần cho `fam test` / `fam lint` |
-| `fam install all` | `fam ins a` | tất cả những thứ trên, **trừ** `dev` |
+| **Queues** | | *installs libraries **then** writes `.env`* |
+| `fam install rabbitmq` | `fam ins ra` | durable queues, retry + DLQ |
+| `fam install redis` | `fam ins re` | cache, atomic counters, pub/sub |
+| `fam install mqtt` | `fam ins mq` | IoT devices |
+| `fam install kafka` | `fam ins k` | replayable event log |
+| `fam install ws-redis` | `fam ins w` | WebSocket broadcast across workers |
+| `fam install dev` | `fam ins d` | pytest · pytest-asyncio · httpx · ruff |
+| `fam install all` | `fam ins a` | everything above **except** `dev` |
 
-Tham số dạng danh sách cũng rút gọn theo cùng luật đó: `fam ins sq`,
-`fam e post`, `fam mi h`. Còn giá trị bạn tự đặt thì không bị đụng tới —
-`fam mo ins` tạo module tên đúng là `ins`.
+Host and port come from `APP_HOST` / `APP_PORT` in `.env`, so `fam dev` needs no
+arguments. `fam --help` lists everything.
 
-Host và cổng lấy từ `APP_HOST` / `APP_PORT` trong `.env`, nên `fam dev` không cần
-tham số. `fam --help` cho danh sách đầy đủ.
-
-## Thêm module
+## Adding a module
 
 ```bash
 fam module alerts              # controller + service + dto + entities
-fam module alerts --gateway    # kèm gateway WebSocket
-fam module alerts --consumer   # kèm consumer RabbitMQ
+fam module alerts --gateway    # plus a WebSocket gateway
+fam module alerts --consumer   # plus a RabbitMQ consumer
 ```
 
-Route xuất hiện ngay, bảng được tạo ngay, validate chạy ngay — chỉ thân hàm là
-chưa viết (gọi vào trả 501 kèm tên hàm). Việc của bạn: thêm trường vào entity và
-DTO, rồi viết thân hàm trong service.
+Routes appear immediately, the table is created, validation runs — only the
+method bodies are missing (calling them returns 501 with the function name). Your
+job: add fields to the entity and the DTO, then write the service bodies.
 
-Không phải sửa file nào khác. Chi tiết: [docs/architecture.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/architecture.md#thêm-module-mới).
+Nothing else to edit — no registration step. Details:
+[docs/architecture.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/architecture.md#thêm-module-mới).
 
-## Chọn database
+## Choosing a database
 
-`fam install sqlite` (hoặc `postgres`, `mongodb`) làm cả hai việc: cài thư viện
-của đúng driver đó, rồi ghi biến vào `.env`. Chỉ muốn ghi `.env` mà không cài gì
-thì dùng `fam env sqlite`.
+One shared `Repository[T]` over **memory, SQLite, PostgreSQL and MongoDB** —
+switching the backend does not change your service code.
 
-`fam env` ghi mỗi biến kèm giải thích, cho biết nó **bắt buộc hay tuỳ chọn** và
-**mặc định là gì** nếu xoá dòng đi. `fam info` cho biết hiện đang nối vào đâu.
+```bash
+fam install sqlite      # or postgres, mongodb
+fam env sqlite          # write .env only, install nothing
+fam info                # what it is connected to right now
+```
 
-Chi tiết: [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md).
+Details:
+[docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md).
 
-## Cấu hình của riêng bạn
+## Your own configuration
 
-Kế thừa `Settings` là thêm được biến vào `.env`, không phải sửa gì trong khung:
+Subclass `Settings` and the new variables are readable from `.env` — no framework
+file to edit:
 
 ```python
-# src/core/config.py — fam init sinh sẵn file này
+# src/core/config.py — generated by fam init
 class AppSettings(Settings):
     team_name: str = Field(default="", alias="APP_TEAM_NAME")
     jwt: JwtSettings = Field(default_factory=JwtSettings, alias="APP_JWT")   # -> APP_JWT__SECRET
 ```
 
-Service nhận `AppSettings` qua DI với gợi ý kiểu đầy đủ.
-Chi tiết: [docs/config.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/config.md).
+Services receive `AppSettings` through DI with full type hints. Details:
+[docs/config.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/config.md).
 
-## Điểm vào là file của bạn
+## The entry point is your file
 
-`fam init` sinh ra `src/main.py` với từng bước lắp ráp bày ra hết — thêm
-middleware, đổi CORS, gắn router bên thứ ba thì sửa thẳng ở đó:
+`fam init` generates `src/main.py` with every assembly step spelled out — add
+middleware, change CORS, mount a third-party router right there:
 
 ```python
 settings = bind_settings(AppSettings())
@@ -140,33 +174,31 @@ configure_logging(settings.log)
 app = new_fastapi(settings, lifespan=lifespan)
 add_middleware(app, settings)                       # CORS + request-id + access log
 register_error_handlers(app, debug=settings.debug)
-register_routes(app, prefix=settings.api_prefix)    # quét src/api/
+register_routes(app, prefix=settings.api_prefix)    # scans src/api/
 ```
 
-Chưa cần sửa gì thì cả khối rút lại còn `app = create_app(AppSettings())` —
-`create_app` chạy đúng dãy trên, không hơn.
+If you need none of that, the whole block collapses to
+`app = create_app(AppSettings())` — `create_app` runs exactly that sequence,
+nothing more.
 
-Vòng đời cũng vậy: `src/core/lifespan.py` là của bạn, chỉ **bọc** phần hạ tầng
-của khung lại:
+Lifespan works the same way: `src/core/lifespan.py` is yours, and it simply
+**wraps** the framework's infrastructure:
 
 ```python
 @asynccontextmanager
 async def lifespan(app):
-    async with framework_lifespan(app):   # khung mở database, hàng đợi
-        await warm_cache()                # việc riêng — database đã dùng được
+    async with framework_lifespan(app):   # framework opens database, queues
+        await warm_cache()                # your work — the database is ready
         try:
             yield
         finally:
-            await flush_ledger()          # việc riêng — database VẪN CÒN
+            await flush_ledger()          # your work — the database is STILL up
 ```
-
-Đo trên log thật: `db.connected` → `app.started` → **`app.ready`** → …phục vụ… →
-**`app.closing`** → `app.stopping` → `app.stopped`.
 
 ## Realtime (WebSocket)
 
-Một client một kết nối, vào phòng để nhận tin theo nhóm, hoặc nhận tin gửi
-thẳng cho riêng mình:
+One connection per client; join **rooms** for group messages, or receive messages
+addressed to you alone:
 
 ```python
 @gateway(path="/ws/alerts", guards=[WsJwt], client_rooms=True)
@@ -180,135 +212,131 @@ class AlertGateway:
 fam dev
 # ws://localhost:8000/ws/chat?client_id=an
 
-fam module alerts --gateway-only   # thêm gateway vào module đã có
-fam install ws-redis               # bắt buộc khi chạy nhiều worker
+fam module alerts --gateway-only   # add a gateway to an existing module
+fam install ws-redis               # required when running multiple workers
 ```
 
-Đẩy tin từ REST hay tác vụ nền: nhận `WebSocketServer` qua `__init__` rồi gọi
-`to_room` / `to_user` / `to_socket`.
+To push from REST or a background task, take `WebSocketServer` in `__init__` and
+call `to_room` / `to_user` / `to_socket`.
 
-Hướng dẫn đầy đủ (kèm cách dùng bằng **Postman** và client **Next.js**):
+Full guide — including **Postman** and a **Next.js** client, plus the four things
+every client must do:
 [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md).
 
-## Hàng đợi (RabbitMQ — tuỳ chọn)
+## Queues (RabbitMQ — optional)
 
 ```python
 await self._mq.publish("events", "alert.created.hanoi", {"id": "A1"})
 
-# Mặc định: đúng MỘT hàng đợi trên broker, hỏng là bỏ (có log).
+# Default: exactly ONE queue on the broker; failures are dropped (and logged).
 @rabbitmq_subscriber("events", "alert.created", queue="alert-mailer")
-async def gui_mail(self, payload: AlertCreated) -> None: ...
+async def send_mail(self, payload: AlertCreated) -> None: ...
 
-# Tự bật khi tin đáng tiền -> thêm alert-mailer.retry và alert-mailer.dlq
+# Opt in when the message is worth money -> adds alert-mailer.retry and .dlq
 @rabbitmq_subscriber("events", "alert.created", queue="alert-mailer",
                      max_retries=3, dead_letter=True)
-async def gui_mail(self, payload: AlertCreated) -> None: ...
+async def send_mail(self, payload: AlertCreated) -> None: ...
 ```
 
-```bash
-fam install rabbitmq            # cài aio-pika + ghi APP_RABBITMQ__* vào .env
-fam module alerts --consumer    # module mới kèm consumer
-```
+Not installed and not enabled means it behaves as if it never existed. If the
+broker goes down the app keeps serving and reconnects on its own. Details:
+[docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md).
 
-Không cài, không bật thì mọi thứ chạy y như chưa từng có nó. Broker rớt thì app
-vẫn phục vụ và tự nối lại. Chi tiết: [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md).
+## Redis, MQTT, Kafka (also optional)
 
-## Redis, MQTT, Kafka (cũng tuỳ chọn)
-
-Cùng một khuôn với RabbitMQ: một package riêng dưới `infrastructure/`, một nhóm
-biến `APP_<TÊN>__*`, mặc định **tắt**, thư viện chỉ import khi bật, và luôn tự
-nối lại.
-
-```bash
-fam install redis    # cache, đếm, pub/sub      -> docs/redis.md
-fam install mqtt     # thiết bị IoT             -> docs/mqtt.md
-fam install kafka    # nhật ký sự kiện          -> docs/kafka.md
-```
+Same shape as RabbitMQ: one package under `infrastructure/`, one `APP_<NAME>__*`
+variable group, **off** by default, the library is imported only when enabled, and
+all of them reconnect automatically.
 
 ```python
-await redis.cached("bao-cao:A", tinh_that, ttl=30)     # trượt thì tính, trúng thì thôi
-await mqtt.publish("thiet-bi/bep/den", "ON", qos=1, retain=True)
-await kafka.publish("don-hang", don, key=don.ma_don)   # cùng key = cùng thứ tự
+await redis.cached("report:A", compute, ttl=30)        # miss = compute, hit = skip
+await mqtt.publish("devices/kitchen/light", "ON", qos=1, retain=True)
+await kafka.publish("orders", order, key=order.id)     # same key = same order
 
-@redis_subscriber("gia:*")                      # Redis: mọi worker một bản sao
-@mqtt_subscriber("thiet-bi/+/nhiet-do", qos=1)  # MQTT:  + một tầng, # mọi tầng
-@kafka_subscriber("don-hang", group="kho-van")  # Kafka: mỗi nhóm một con trỏ đọc
+@redis_subscriber("price:*")                    # Redis: every worker gets a copy
+@mqtt_subscriber("devices/+/temperature", qos=1)  # MQTT: + one level, # all levels
+@kafka_subscriber("orders", group="warehouse")  # Kafka: one cursor per group
 ```
 
-| Cần gì | Dùng gì |
+| You need | Use |
 |---|---|
-| tin không được mất, chia việc cho worker | RabbitMQ |
-| nhanh, mọi worker nhận một bản sao, mất vài tin cũng được | Redis |
-| thiết bị, mạng chập chờn, kết nối lâu | MQTT |
-| đọc lại được lịch sử, nhiều nhóm đọc độc lập | Kafka |
+| messages must not be lost, work split across workers | RabbitMQ |
+| fast, every worker gets a copy, losing a few is fine | Redis |
+| devices, flaky networks, long-lived connections | MQTT |
+| replayable history, several independent reader groups | Kafka |
 
-## Vận hành
+## Operations
 
 ```bash
 curl localhost:8000/api/health        # liveness
-curl localhost:8000/api/health/ready  # readiness, có ping database
-curl localhost:8000/api/metrics       # số đo dạng Prometheus
-fam migrate                           # chạy migration (SQL)
-fam info                              # cấu hình đang dùng + cảnh báo prod
+curl localhost:8000/api/health/ready  # readiness, pings the database
+curl localhost:8000/api/metrics       # Prometheus metrics
+fam migrate                           # run migrations (SQL)
+fam info                              # current config + production warnings
 ```
 
-Chi tiết: [docs/operations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/operations.md).
+Guards, circuit breaker, metrics and tracing:
+[docs/operations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/operations.md).
 
-## Cấu trúc repo này
+## Layout of this repository
 
 ```
-fastapi_modular/          THƯ VIỆN — thứ được đóng gói và cài về
-  core/             DI, controller, config, WebSocket, guard, số đo
-  infrastructure/   database, rabbitmq, redis, mqtt, kafka (mỗi thứ một package)
+fastapi_modular/    THE LIBRARY — what gets packaged and installed
+  core/             DI, controllers, config, WebSocket, guards, metrics
+  infrastructure/   database, rabbitmq, redis, mqtt, kafka (one package each)
   cli/              init · new · module · dev · run · install · env · info
                     migrate · test · lint · clean · build · publish
   factory.py        create_app()
-  discovery.py      tự quét package ứng dụng, dựng router
-src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá thoải mái
-  main.py           điểm vào: lắp ráp app — file của bạn, không phải của khung
-  core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
-  core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
-  api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              341 test chạy không cần hạ tầng, 40 test nữa bật khi có server thật
-docs/               tài liệu tra cứu
+  discovery.py      scans the application package and builds routers
+src/                SAMPLE APPLICATION — not shipped in the package; delete freely
+  main.py           entry point: assembles the app — your file, not the framework's
+  core/config.py    AppSettings: subclass Settings to add your own .env variables
+  core/lifespan.py  application-specific startup / shutdown work
+  api/              business modules; every subdirectory is one module
+tests/              341 tests that need no infrastructure, 40 more when servers exist
+docs/               reference documentation (Vietnamese)
 ```
 
-`fastapi_modular/` không import gì từ `src/`. Nó chỉ biết "có một package tên
-`src.api`, quét nó đi" — nên dự án xếp khác cũng được, khai một lần trong
-`src/main.py`: `register_routes(app, package="cong_ty.dich_vu")`.
+`fastapi_modular/` imports nothing from `src/`. All it knows is "there is a
+package called `src.api`, go scan it" — so a different layout is fine, declared
+once in `src/main.py`: `register_routes(app, package="company.service")`.
 
-## Đóng góp
+## Contributing
 
 ```bash
-git clone <repo> && cd fastapi-modular
+git clone git@github.com:quanglinh2909/fastapi-modular.git && cd fastapi-modular
 pip install -e ".[all,dev]"
-fam dev                        # chạy ứng dụng mẫu trong src/
+fam dev                             # runs the sample app in src/
 fam test
 fam lint fastapi_modular src tests
 ```
 
-Nhóm test cần hạ tầng thật chỉ chạy khi có biến môi trường tương ứng:
+Tests that need real infrastructure only run when the matching environment
+variable is set:
 
 ```bash
 docker run -d -p 6379:6379 redis:7-alpine
 TEST_REDIS_URL=redis://localhost:6379/0 fam test
 ```
 
-Xem đầu mỗi file `tests/test_<tên>.py` để biết lệnh Docker và biến cần đặt.
+See the top of each `tests/test_<name>.py` for the Docker command and the
+variables it needs.
 
-## Giấy phép
+## License
 
-MIT — xem [LICENSE](https://github.com/quanglinh2909/fastapi-modular/blob/main/LICENSE).
+MIT — see [LICENSE](https://github.com/quanglinh2909/fastapi-modular/blob/main/LICENSE).
 
-## Tài liệu
+## Documentation
 
-- [docs/architecture.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/architecture.md) — cấu trúc module, DI, đối chiếu NestJS
-- [docs/config.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/config.md) — Settings, thứ tự ưu tiên, thêm biến của riêng bạn
+Written in Vietnamese, organised for reference rather than reading front to back.
+
+- [docs/architecture.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/architecture.md) — module layout, DI, the NestJS comparison
+- [docs/config.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/config.md) — Settings, precedence, adding your own variables
 - [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) — memory / SQLite / PostgreSQL / MongoDB
-- [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: sinh, chạy, lùi migration
-- [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — gateway WebSocket, phòng, Postman, Next.js
-- [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — exchange, topic, consumer nền, `.retry` / `.dlq`
-- [docs/redis.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/redis.md) — cache, đếm nguyên tử, pub/sub
-- [docs/mqtt.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mqtt.md) — QoS, retain, luật khớp topic `+` và `#`
-- [docs/kafka.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/kafka.md) — nhóm consumer, phân vùng, `.dlt`
-- [docs/operations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/operations.md) — guard, circuit breaker, metrics, trace
+- [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: generate, run, roll back
+- [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — WebSocket gateway, rooms, Postman, Next.js
+- [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — exchanges, topics, background consumers, `.retry` / `.dlq`
+- [docs/redis.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/redis.md) — cache, atomic counters, pub/sub
+- [docs/mqtt.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mqtt.md) — QoS, retain, `+` and `#` topic matching
+- [docs/kafka.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/kafka.md) — consumer groups, partitions, `.dlt`
+- [docs/operations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/operations.md) — guards, circuit breaker, metrics, tracing

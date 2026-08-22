@@ -88,10 +88,10 @@ def test_nhom_long_nhau_tu_viet_van_hoat_dong(monkeypatch: pytest.MonkeyPatch):
     class CoSmtp(Settings):
         smtp: SmtpSettings = Field(default_factory=SmtpSettings, alias="APP_SMTP")
 
-    monkeypatch.setenv("APP_SMTP__HOST", "mail.oryza.vn")
+    monkeypatch.setenv("APP_SMTP__HOST", "mail.example.com")
     monkeypatch.setenv("APP_SMTP__PORT", "587")
     settings = CoSmtp()
-    assert (settings.smtp.host, settings.smtp.port) == ("mail.oryza.vn", 587)
+    assert (settings.smtp.host, settings.smtp.port) == ("mail.example.com", 587)
 
 
 def test_lap_rap_tay_ra_ket_qua_y_het_create_app():

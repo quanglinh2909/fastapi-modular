@@ -8,23 +8,37 @@ name = "fastapi-modular"
 # Khai ở cả đây nữa thì sớm muộn cũng lệch, và bản đẩy lên PyPI mang một số còn
 # `fam --version` in ra một số khác.
 dynamic = ["version"]
-description = "FastAPI theo kiến trúc module kiểu NestJS: DI container, controller dạng class, WebSocket, RabbitMQ/Redis/MQTT/Kafka"
+description = "NestJS-style modular architecture for FastAPI: DI container, class-based controllers, auto-discovered modules, WebSocket gateway, RabbitMQ/Redis/MQTT/Kafka"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Oryza", email = "developer@oryza.vn" }]
-keywords = ["fastapi", "nestjs", "module", "dependency-injection", "websocket",
-            "rabbitmq", "redis", "mqtt", "kafka"]
+authors = [{ name = "quanglinh", email = "hackcoquanglinh2000@gmail.com" }]
+keywords = [
+    "fastapi", "nestjs", "nest", "modular", "module", "modular-monolith",
+    "architecture", "framework", "scaffold", "cli", "boilerplate",
+    "dependency-injection", "di", "ioc", "container", "decorator", "controller",
+    "repository", "sqlalchemy", "mongodb", "postgresql", "sqlite", "alembic",
+    "websocket", "websockets", "gateway", "realtime", "pubsub",
+    "rabbitmq", "redis", "mqtt", "kafka", "amqp", "iot", "microservices",
+    "async", "asyncio", "rest", "api",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Framework :: FastAPI",
+    "Framework :: AsyncIO",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Natural Language :: Vietnamese",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: System :: Distributed Computing",
     "Typing :: Typed",
 ]
 
@@ -73,4 +87,4 @@ packages = ["fastapi_modular"]
 
 [tool.hatch.build.targets.sdist]
 include = ["fastapi_modular", "src", "tests", "docs", "migrations", "README.md",
-           "LICENSE", "CHANGELOG.md", "Makefile", "alembic.ini", "pytest.ini", "ruff.toml"]
+           "README.vi.md", "LICENSE", "CHANGELOG.md", "Makefile", "alembic.ini", "pytest.ini", "ruff.toml"]
