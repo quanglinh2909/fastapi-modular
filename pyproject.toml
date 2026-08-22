@@ -57,11 +57,11 @@ pymodular = "pymodular.cli.main:main"
 pym = "pymodular.cli.main:main"      # gõ tắt, cùng một chương trình
 
 [project.urls]
-Homepage = "https://github.com/oryza-vn/pymodular"
-Documentation = "https://github.com/oryza-vn/pymodular/tree/main/docs"
-Source = "https://github.com/oryza-vn/pymodular"
-Issues = "https://github.com/oryza-vn/pymodular/issues"
-Changelog = "https://github.com/oryza-vn/pymodular/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/quanglinh2909/pymodular"
+Documentation = "https://github.com/quanglinh2909/pymodular/tree/main/docs"
+Source = "https://github.com/quanglinh2909/pymodular"
+Issues = "https://github.com/quanglinh2909/pymodular/issues"
+Changelog = "https://github.com/quanglinh2909/pymodular/blob/main/CHANGELOG.md"
 
 # Chỉ đóng gói thư viện. `src/` là ứng dụng mẫu của repo này, không phải thứ
 # người dùng cài về.

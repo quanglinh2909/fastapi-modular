@@ -25,7 +25,7 @@ from pathlib import Path
 
 TEN_HOP_LE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
-REPO = "https://github.com/oryza-vn/pymodular"
+REPO = "https://github.com/quanglinh2909/pymodular"
 
 GOC = '''"""Ứng dụng — code của bạn.
 
