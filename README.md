@@ -271,7 +271,23 @@ async def clean_logs(self) -> None: ...
 def detect(self, payload: dict) -> None: ...
 
 await self._jobs.submit("detect", {"path": p})      # returns immediately
+
+# a LONG-RUNNING LOOP — N instances, one per camera IP
+@worker(key="ip")
+async def watch(self, ip: str, ctx: WorkerContext) -> None:
+    cap = await ctx.blocking(cv2.VideoCapture, ip)   # setup, OUTSIDE the loop
+    while ctx.running:
+        frame = await ctx.blocking(cap.read)         # blocking call -> a thread
+        await self._db.save(...)                     # plain await
+
+for camera in cameras:
+    await service.watch(camera.ip)      # calling it spawns a supervised instance
 ```
+
+`@worker` covers what `@interval` and `@job` cannot: a setup phase **before**
+the loop (open the camera, load the model) and a body that runs until you stop
+it. Crashes restart with backoff; calling it again with the same `key` returns
+the running instance instead of opening a second stream.
 
 `fam run` starts 4 workers, so a hand-written `while True: sleep(5)` runs
 **four times**. `single=True` (the default) locks it down: measured 5 runs
@@ -361,7 +377,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              831 tests that need no infrastructure, 62 more when servers exist
+tests/              847 tests that need no infrastructure, 62 more when servers exist
 docs/               reference documentation (Vietnamese)
 ```
 

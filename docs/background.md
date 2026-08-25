@@ -1,13 +1,14 @@
 # Việc chạy nền
 
-Hai thứ khác nhau, hay bị gộp làm một:
+Ba thứ khác nhau, hay bị gộp làm một:
 
-| | Chạy khi nào | Dùng gì |
-|---|---|---|
-| **Theo lịch** | tự nó, cứ tới giờ là chạy | `@interval` · `@cron` · `@timeout` |
-| **Theo yêu cầu** | khi có ai đó gửi việc vào | `@job` + `JobQueue.submit()` |
+| | Chạy khi nào | Sống bao lâu | Dùng gì |
+|---|---|---|---|
+| **Theo lịch** | tới giờ là chạy | một lượt rồi thôi | `@interval` · `@cron` · `@timeout` |
+| **Theo yêu cầu** | khi có ai gửi việc vào | một việc rồi thôi | `@job` + `JobQueue.submit()` |
+| **Vòng lặp sống mãi** | khi bạn gọi hàm | tới khi bảo nó dừng | `@worker` |
 
-Cả hai đều **không cần hạ tầng gì** — không Redis, không RabbitMQ, không thêm
+Cả ba đều **không cần hạ tầng gì** — không Redis, không RabbitMQ, không thêm
 một dòng cấu hình. Có decorator thì chạy, không có thì thôi.
 
 ---
@@ -15,16 +16,162 @@ một dòng cấu hình. Có decorator thì chạy, không có thì thôi.
 ## Chọn cái nào
 
 ```
-Việc này có ai "gửi" vào không?
-├── Không, cứ tới giờ là chạy      -> @interval / @cron / @timeout
-└── Có
-    ├── Mất việc thì chấp nhận được -> @job (hàng đợi trong tiến trình)
-    └── Mất việc là hỏng nghiệp vụ  -> @rabbitmq_subscriber (hàng đợi bền)
+Việc này chạy xong rồi thôi, hay chạy mãi?
+├── Chạy MÃI (đọc camera, giữ kết nối, nghe cổng)      -> @worker
+└── Chạy xong rồi thôi
+    ├── Không ai gửi, cứ tới giờ là chạy               -> @interval / @cron / @timeout
+    └── Có người gửi vào
+        ├── Mất việc thì chấp nhận được                 -> @job
+        └── Mất việc là hỏng nghiệp vụ                  -> @rabbitmq_subscriber
 ```
 
-Câu hỏi thứ hai là câu quan trọng nhất, và nó chỉ có một cách trả lời trung
-thực: **`@job` giữ việc trong RAM. App tắt hay chết là mất sạch phần chưa
-chạy.** Xem [Việc nằm trong RAM](#việc-nằm-trong-ram).
+Dấu hiệu nhận ra `@worker`: **có phần dựng ở TRƯỚC vòng lặp**. Mở camera, mở
+socket, nạp model — thứ làm một lần rồi dùng lại suốt. `@interval` không giữ
+được gì giữa hai lượt nên nó sẽ mở lại camera mỗi 5 giây.
+
+Nhánh cuối là chỗ chỉ có một cách trả lời trung thực: **`@job` giữ việc trong
+RAM. App tắt hay chết là mất sạch phần chưa chạy.** Xem
+[Việc nằm trong RAM](#việc-nằm-trong-ram).
+
+---
+
+## Vòng lặp sống mãi — `@worker`
+
+Hình dạng quen thuộc: mỗi camera một luồng, khác nhau mỗi cái IP.
+
+```python
+from fastapi_modular import injectable, worker, WorkerContext
+
+
+@injectable
+class CameraService:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    @worker(key="ip")
+    async def watch(self, ip: str, ctx: WorkerContext) -> None:
+        capture = await ctx.blocking(cv2.VideoCapture, ip)     # DỰNG (ngoài vòng lặp)
+        try:
+            while ctx.running:                                  # VÒNG LẶP
+                frame = await ctx.blocking(capture.read)
+                events = await ctx.blocking(model.predict, frame)
+                await self._db.save(events)                     # await như thường
+        finally:
+            await ctx.blocking(capture.release)                 # DỌN
+```
+
+**Gọi hàm là sinh ra một bản chạy nền**, trả về ngay:
+
+```python
+for camera in await self._db.all_cameras():
+    await service.watch(camera.ip)          # mỗi IP một bản
+```
+
+Gọi lại cùng một `key` **không** sinh bản thứ hai — nó trả về bản đang chạy.
+Với camera thì đó là điều bắt buộc: mở hai kết nối RTSP tới cùng một thiết bị
+là cách nhanh nhất để cả hai cùng giật.
+
+Gọi được từ bất cứ đâu: lifespan lúc boot, một endpoint "thêm camera", hay một
+`@interval` quét bảng camera mỗi phút và bật những cái mới.
+
+### `ctx.running` — cách duy nhất thoát cho sạch
+
+Viết `while True:` thì lúc tắt app khung phải huỷ ngang, và với `thread=True`
+thì nó còn **không huỷ được** — chỉ đợi rồi bỏ mặc. `while ctx.running:` hoá
+False ngay khi có lệnh dừng, và phần `finally` của bạn chạy bình thường.
+
+Cần ngủ trong vòng lặp thì dùng `ctx.wait(seconds)` thay `time.sleep()`:
+`time.sleep(30)` giữ lúc tắt app thêm 30 giây, `ctx.wait(30)` thoát ngay.
+
+### `ctx.blocking(...)` — vì sao phải bọc
+
+`capture.read()`, `model.predict()`, `cv2.VideoCapture()` đều là hàm **chặn**.
+Gọi thẳng trong `async def` thì cả tiến trình đứng im chờ chúng: mọi request
+HTTP, mọi frame WebSocket, mọi worker khác. `async def` không tự cứu được —
+`await` chỉ nhả quyền khi chờ I/O, còn đây là tính toán.
+
+`await ctx.blocking(fn, *args)` đẩy lời gọi sang thread khác rồi chờ kết quả.
+Đo được với 3 camera chạy song song: event loop trễ **0,001 giây**.
+
+### Hai kiểu chạy
+
+|  | `@worker(...)` | `@worker(..., thread=True)` |
+|---|---|---|
+| Hàm khai bằng | `async def` | `def` thường |
+| Chạy ở đâu | vòng lặp sự kiện | một thread riêng |
+| Ghi database | `await self._db.save(...)` | `ctx.run(self._db.save(...))` |
+| Gọi hàm chặn | `await ctx.blocking(fn, ...)` | gọi thẳng |
+| Dừng được giữa chừng | có | **không** — phải đợi lời gọi chặn trả về |
+
+**Mặc định (`async def`) đúng cho gần hết mọi trường hợp**, kể cả camera + AI.
+
+`thread=True` chỉ đáng dùng khi vòng lặp gọi hàm chặn liên tục và dày, tới mức
+bọc từng lời gọi thành rườm rà:
+
+```python
+@worker(key="ip", thread=True)
+def watch(self, ip: str, ctx: WorkerContext) -> None:
+    capture = cv2.VideoCapture(ip)                  # đang ở thread, gọi thẳng
+    try:
+        while ctx.running:
+            frame = capture.read()
+            events = model.predict(frame)
+            ctx.run(self._db.save(events))          # cầu nối sang event loop
+    finally:
+        capture.release()
+```
+
+`ctx.run(coro)` là câu trả lời cho **"chạy trong thread thì ghi database kiểu
+gì"**. Không dùng `asyncio.run()` ở đó: nó tạo một event loop MỚI, mà connection
+pool của database thuộc về loop cũ — hỏng theo những cách rất khó hiểu.
+
+### Hỏng thì dựng lại
+
+Vòng lặp ném lỗi thì khung ghi log rồi dựng lại sau một khoảng chờ tăng dần
+(1s, 2s, 4s… tới `max_restart_delay`). Camera rớt mạng là chuyện thường ngày,
+và một vòng lặp chết im lặng thì không ai biết cho tới lúc có người hỏi "sao
+camera 12 không lên sự kiện nữa".
+
+Vòng lặp **tự kết thúc** (bạn `return` hoặc `ctx.running` hoá False) thì không
+dựng lại — đó là bạn chủ động, khung không cãi. Muốn hỏng là dừng hẳn thì
+`restart=False`.
+
+### Dừng và liệt kê
+
+```python
+@injectable
+class CameraController:
+    def __init__(self, workers: WorkerPool) -> None:
+        self._workers = workers
+
+    async def remove(self, ip: str) -> None:
+        await self._workers.stop("watch", ip)
+
+    async def status(self) -> list[dict]:
+        return self._workers.running()   # [{"worker", "key", "uptime_seconds", "running"}]
+```
+
+Lúc tắt app khung tự gọi `stop_all()` **đầu tiên**, trước cả scheduler và hàng
+đợi việc: worker là vòng lặp sống mãi, còn chạy là còn dùng database.
+
+### `@worker(...)`
+
+```python
+@worker(
+    name="",                  # tên loại worker; mặc định lấy tên method
+    *,
+    key="",                   # TÊN THAM SỐ làm danh tính bản chạy ("ip")
+    thread=False,
+    restart=True,
+    restart_delay=1.0,
+    max_restart_delay=30.0,
+    single=False,             # chỉ MỘT tiến trình chạy bản này
+)
+```
+
+`single=True` khoá theo `<name>:<key>`, dùng chung cơ chế với
+[việc theo lịch](#cái-bẫy-nhiều-worker). Đặt khi chạy nhiều worker uvicorn mà
+chỉ muốn một tiến trình nối tới mỗi thiết bị.
 
 ---
 
@@ -320,6 +467,10 @@ Không cần đặt gì để chạy. Các biến dưới đây để chỉnh:
 | `APP_JOBS__MAX_QUEUED` | `1000` | sức chứa; đầy thì `submit()` ném 503 |
 | `APP_JOBS__WORKERS` | `1` | số việc chạy song song; 1 = đúng thứ tự |
 | `APP_JOBS__DRAIN_SECONDS` | `15.0` | chờ chạy nốt hàng đợi khi tắt app |
+| `APP_WORKERS__MAX_INSTANCES` | `200` | trần số bản `@worker` chạy cùng lúc |
+| `APP_WORKERS__STOP_SECONDS` | `20.0` | chờ worker thoát khi tắt app |
+| `APP_WORKERS__SINGLE` | `true` | worker khai `single=True` thì có khoá thật hay không |
+| `APP_WORKERS__TAKEOVER_SECONDS` | `5.0` | bản đang chờ thì bao lâu thử giành quyền lại |
 
 ---
 
@@ -334,6 +485,8 @@ Không cần đặt gì để chạy. Các biến dưới đây để chỉnh:
 | `jobs_submitted_total` / `jobs_done_total` / `jobs_failed_total` | `job` |
 | `jobs_rejected_total` | `job` |
 | `jobs_queued` | *(gauge — con số đáng theo dõi nhất)* |
+| `workers_started_total` / `workers_restarted_total` | `worker` |
+| `workers_running` | *(gauge)* |
 
 | Thấy gì | Gần như luôn là |
 |---|---|
@@ -343,3 +496,6 @@ Không cần đặt gì để chạy. Các biến dưới đây để chỉnh:
 | `jobs_queued` phình dần | bên chạy chậm hơn bên gửi; tăng `WORKERS` hoặc chuyển sang RabbitMQ |
 | `scheduler.lock_lost` | Redis chớp, hoặc lượt chạy lâu hơn hạn khoá — việc có thể đang chạy hai nơi |
 | `jobs.dropped_on_shutdown` | đúng như tên: bấy nhiêu việc đã mất khi tắt app |
+| `workers_restarted_total` tăng đều | camera rớt mạng, hoặc vòng lặp ném lỗi mỗi lượt — xem log `worker.crashed` |
+| `worker.stop_timeout` lúc tắt app | vòng lặp không kiểm `ctx.running`, hoặc lời gọi chặn không có timeout |
+| API đứng hình khi worker chạy | quên bọc `ctx.blocking(...)` quanh hàm chặn |

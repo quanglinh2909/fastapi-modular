@@ -345,6 +345,27 @@ class JobSettings(BaseModel):
     """Chờ tối đa bao lâu để chạy nốt hàng đợi lúc tắt app."""
 
 
+class WorkerSettings(BaseModel):
+    """Cấu hình worker chạy nền (@worker). Đặt qua APP_WORKERS__*."""
+
+    max_instances: int = 200
+    """Trần số bản worker chạy cùng lúc. Để chặn việc sinh worker trong một
+    vòng lặp hoặc trong HTTP handler mà quên dừng — không có trần thì tiến
+    trình cứ phình cho tới lúc hết RAM."""
+
+    stop_seconds: float = 20.0
+    """Chờ tối đa bao lâu cho worker thoát lúc tắt app. Với `thread=True` thì
+    đây là trần thật sự: thread đang kẹt trong một lời gọi chặn không huỷ
+    ngang được, chỉ đợi được thôi."""
+
+    single: bool = True
+    """Khi worker khai `single=True` thì khoá bằng gì. True = dùng khoá thật
+    (Redis nếu có, không thì flock); False = không khoá."""
+
+    takeover_seconds: float = 5.0
+    """Bản đang chờ giành quyền thì bao lâu thử lại một lần."""
+
+
 class Settings(BaseSettings):
     """Cấu hình của khung. **Kế thừa được** để thêm biến của riêng bạn.
 
@@ -411,6 +432,7 @@ class Settings(BaseSettings):
         default_factory=SchedulerSettings, alias="APP_SCHEDULER"
     )
     jobs: JobSettings = Field(default_factory=JobSettings, alias="APP_JOBS")
+    workers: WorkerSettings = Field(default_factory=WorkerSettings, alias="APP_WORKERS")
 
 
     @property

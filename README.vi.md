@@ -267,7 +267,22 @@ async def don_log(self) -> None: ...
 def nhan_dang(self, payload: dict) -> None: ...
 
 await self._jobs.submit("detect", {"path": p})      # trả về ngay
+
+# VÒNG LẶP SỐNG MÃI — N bản, mỗi camera một IP
+@worker(key="ip")
+async def watch(self, ip: str, ctx: WorkerContext) -> None:
+    cap = await ctx.blocking(cv2.VideoCapture, ip)   # dựng, NGOÀI vòng lặp
+    while ctx.running:
+        frame = await ctx.blocking(cap.read)         # hàm chặn -> thread khác
+        await self._db.save(...)                     # await thẳng
+
+for camera in cameras:
+    await service.watch(camera.ip)      # gọi hàm là sinh một bản chạy nền
 ```
+
+`@worker` là chỗ `@interval` và `@job` không với tới: nó có phần **dựng ở trước
+vòng lặp** (mở camera, nạp model) và chạy tới khi bạn bảo dừng. Hỏng thì tự dựng
+lại, chờ tăng dần. Gọi lại cùng `key` không mở thêm bản.
 
 `fam run` bật 4 worker, nên một vòng `while True: sleep(5)` viết tay sẽ chạy
 **bốn lần**. Mặc định `single=True` khoá lại: đo được 5 lượt / 1 tiến trình,
@@ -361,7 +376,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              831 test chạy không cần hạ tầng, 62 test nữa bật khi có server thật
+tests/              847 test chạy không cần hạ tầng, 62 test nữa bật khi có server thật
 docs/               tài liệu tra cứu
 ```
 

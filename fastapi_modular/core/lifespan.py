@@ -64,6 +64,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # tới sau khi mọi module đã nạp xong (entity phải đăng ký trước create_schema).
     from fastapi_modular.core.jobs import JobQueue, JobRunner
     from fastapi_modular.core.scheduler import SchedulerRunner
+    from fastapi_modular.core.workers import WorkerPool
     from fastapi_modular.infrastructure.database import Database
     from fastapi_modular.infrastructure.kafka import (
         KafkaBroker,
@@ -145,6 +146,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await scheduler.startup()
     app.state.jobs = container.resolve(JobQueue)
     app.state.scheduler = scheduler
+    workers = container.resolve(WorkerPool)
+    app.state.workers = workers
 
     log.info(
         "app.started",
@@ -166,6 +169,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         #   consumer trước  — chúng còn đang truy vấn database
         #   WebSocket       — client nhận mã 1001 để nối lại ngay
         #   broker, rồi database — hai thứ mọi tầng trên đều dựa vào
+        # Worker tắt ĐẦU TIÊN: chúng là vòng lặp sống mãi, còn chạy là còn
+        # sinh việc và còn dùng database.
+        await workers.stop_all()
         # Lịch tắt TRƯỚC hàng đợi việc: nó là một nguồn sinh việc, dừng nó
         # trước thì hàng đợi mới cạn được thay vì bị bơm thêm trong lúc đang dọn.
         await scheduler.shutdown()

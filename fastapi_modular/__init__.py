@@ -36,6 +36,7 @@ from fastapi_modular.core.providers import (
 from fastapi_modular.core.scheduler import SchedulerRunner, cron, interval, timeout
 from fastapi_modular.core.schemas import Page
 from fastapi_modular.core.websocket import Socket, WebSocketServer, gateway, subscribe
+from fastapi_modular.core.workers import WorkerContext, WorkerPool, worker
 from fastapi_modular.discovery import DEFAULT_PACKAGE, register_routes
 from fastapi_modular.factory import add_middleware, bind_settings, create_app, new_fastapi
 
@@ -63,6 +64,8 @@ __all__ = [
     "Socket",
     "UnauthorizedError",
     "WebSocketServer",
+    "WorkerContext",
+    "WorkerPool",
     "__version__",
     "add_middleware",
     "bind_settings",
@@ -92,4 +95,5 @@ __all__ = [
     "subscribe",
     "timeout",
     "use_settings",
+    "worker",
 ]

@@ -23,6 +23,7 @@ fastapi_modular/                     THƯ VIỆN — thứ được đóng gói,
 │   ├── scheduler.py           @interval / @cron / @timeout + SchedulerRunner
 │   ├── cron.py                đọc biểu thức cron 5 trường
 │   ├── jobs.py                @job + JobQueue: hàng đợi việc trong tiến trình
+│   ├── workers.py             @worker: vòng lặp sống mãi, N bản theo tham số
 │   ├── locks.py               khoá "chỉ một tiến trình chạy" (flock hoặc Redis)
 │   └── websocket/             @gateway / @subscribe, phòng, adapter nhiều worker
 ├── infrastructure/            mỗi hạ tầng MỘT package, không biết nhau
@@ -254,7 +255,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 831 test trên backend memory (62 test nữa cần hạ tầng thật)
+fam test       # 847 test trên backend memory (62 test nữa cần hạ tầng thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

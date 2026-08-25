@@ -180,6 +180,7 @@ còn tệ hơn. Muốn chặn thì đọc `settings.check_production_safety()` r
 | Kafka | `APP_KAFKA__*` | [kafka.md](kafka.md) |
 | việc theo lịch | `APP_SCHEDULER__*` | [background.md](background.md) |
 | hàng đợi việc | `APP_JOBS__*` | [background.md](background.md) |
+| worker chạy nền | `APP_WORKERS__*` | [background.md](background.md) |
 
 ### ứng dụng
 

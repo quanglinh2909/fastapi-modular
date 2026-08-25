@@ -125,6 +125,7 @@ def test_bien_nhac_trong_docs_deu_con_that(  ):
         RedisSettings,
         SchedulerSettings,
         WebSocketSettings,
+        WorkerSettings,
     )
     from src.core.config import AppSettings, JwtSettings
 
@@ -137,6 +138,7 @@ def test_bien_nhac_trong_docs_deu_con_that(  ):
         "APP_KAFKA__": KafkaSettings,
         "APP_SCHEDULER__": SchedulerSettings,
         "APP_JOBS__": JobSettings,
+        "APP_WORKERS__": WorkerSettings,
         "APP_LOG__": LogSettings,
         "APP_CORS__": CorsSettings,
         "APP_JWT__": JwtSettings,
