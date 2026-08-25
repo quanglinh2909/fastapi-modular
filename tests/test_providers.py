@@ -393,6 +393,42 @@ def test_fam_provider_chan_ten_khong_hop_le(tmp_path: Path):
     assert sinh(["1payment", "vnpay", "--root", str(tmp_path)]) == 1
 
 
+def test_nang_luc_de_phang_trong_thu_muc_ho(tmp_path: Path):
+    """Cách 1 trong docs: mỗi năng lực một file ngang hàng với provider.
+
+    Không có thư mục `capabilities/`, không có re-export nào.
+    """
+    ho = tmp_path / "prov_phang" / "device"
+    ho.mkdir(parents=True)
+    (tmp_path / "prov_phang" / "__init__.py").write_text("", encoding="utf-8")
+    (ho / "__init__.py").write_text('"""Họ device."""\n', encoding="utf-8")
+    (ho / "door_management.py").write_text(
+        "from abc import ABC, abstractmethod\n\n"
+        "class DoorManagement(ABC):\n"
+        "    @abstractmethod\n"
+        "    async def open_door(self, door_id: str) -> bool: ...\n",
+        encoding="utf-8",
+    )
+    (ho / "hik.py").write_text(
+        "from fastapi_modular import provider\n"
+        "from prov_phang.device.door_management import DoorManagement\n\n"
+        '@provider("hik")\n'
+        "class HikDevice(DoorManagement):\n"
+        "    async def open_door(self, door_id): return True\n",
+        encoding="utf-8",
+    )
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        so = register_providers("prov_phang")
+        assert sorted(so) == ["DoorManagement"]
+        assert so["DoorManagement"].names() == ["hik"]
+    finally:
+        sys.path.remove(str(tmp_path))
+        for ten in [m for m in sys.modules if m.startswith("prov_phang")]:
+            del sys.modules[ten]
+
+
 def test_tach_capabilities_thanh_package_van_quet_duoc(tmp_path: Path):
     """Tách mỗi năng lực một file phải chạy nguyên vẹn — đó là lời hứa trong docs.
 
@@ -418,6 +454,7 @@ def test_tach_capabilities_thanh_package_van_quet_duoc(tmp_path: Path):
         "    async def snapshot(self, cam_id: str) -> bytes: ...\n",
         encoding="utf-8",
     )
+    # Cách 3 trong docs: có re-export. Cách 2 (__init__ rỗng) kiểm ở dưới.
     (caps / "__init__.py").write_text(
         "from prov_tach.device.capabilities.camera import CameraManagement\n"
         "from prov_tach.device.capabilities.door import DoorManagement\n\n"

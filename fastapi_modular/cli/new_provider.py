@@ -101,9 +101,9 @@ class {nang_luc}(ABC):
 #     @abstractmethod
 #     async def lam_viec_kho(self, tham_so: str) -> str: ...
 #
-# Từ 3 năng lực trở lên thì tách file này thành package `capabilities/`, mỗi
-# năng lực một file, rồi re-export ở `capabilities/__init__.py`. Đường import
-# giữ nguyên nên không phải sửa provider nào — xem docs/providers.md.
+# Từ 3 năng lực trở lên thì tách ra, mỗi năng lực một file. Bộ quét tìm năng lực
+# ở MỌI module trong thư mục họ nên tách kiểu gì cũng chạy, không phải khai gì
+# thêm và KHÔNG bắt buộc viết re-export — xem docs/providers.md.
 '''
     return {"__init__.py": init, "capabilities.py": caps}
 

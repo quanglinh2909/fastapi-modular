@@ -348,37 +348,69 @@ create_app(AppSettings(), providers_package="cong_ty.plugins")
 Một file cho tới khi nó phình. Ngưỡng thực tế: **quá một màn hình, hoặc từ 3
 năng lực trở lên**.
 
-Điều khiến quyết định này rẻ: **đường import không đổi**.
+Bộ quét tìm năng lực ở **mọi module trong thư mục họ**, kể cả package con. Nên
+tách kiểu gì cũng chạy, **không phải khai gì thêm**. Ba cách, chọn theo số file:
 
-```python
-from src.providers.device.capabilities import DoorManagement   # trước VÀ sau khi tách
+#### Cách 1 — phẳng: mỗi năng lực một file, để ngay trong thư mục họ
+
+Ít việc nhất. Không thêm thư mục, không thêm `__init__.py` nào.
+
+```
+src/providers/device/
+├── __init__.py
+├── door_management.py        <- một năng lực
+├── camera_management.py      <- một năng lực
+├── dahua.py                  <- provider
+└── hik.py                    <- provider
 ```
 
-Nên cứ bắt đầu bằng một file, tách khi thấy vướng — không phải sửa provider nào:
+```python
+from src.providers.device.door_management import DoorManagement
+```
+
+Hợp khi **nhiều năng lực nhưng ít provider**. Nhiều cả hai thì thư mục bắt đầu
+lẫn lộn, chuyển sang cách 2.
+
+#### Cách 2 — gom vào thư mục `capabilities/`, `__init__.py` ĐỂ RỖNG
 
 ```
 src/providers/device/
 ├── __init__.py
 ├── capabilities/
-│   ├── __init__.py          # re-export, giữ nguyên đường import
-│   ├── camera_management.py
+│   ├── __init__.py           <- rỗng, không phải viết gì
 │   ├── door_management.py
-│   └── person_management.py
+│   └── camera_management.py
 ├── dahua.py
 └── hik.py
 ```
 
 ```python
+from src.providers.device.capabilities.door_management import DoorManagement
+```
+
+Tách bạch năng lực với bản hiện thực, mà vẫn không có dòng nào phải bảo trì.
+Đổi lại: đường import dài hơn.
+
+#### Cách 3 — thêm re-export, CHỈ khi bạn cần đường import ngắn
+
+```python
 # capabilities/__init__.py
 from src.providers.device.capabilities.camera_management import CameraManagement
 from src.providers.device.capabilities.door_management import DoorManagement
-from src.providers.device.capabilities.person_management import PersonManagement
 
-__all__ = ["CameraManagement", "DoorManagement", "PersonManagement"]
+__all__ = ["CameraManagement", "DoorManagement"]
 ```
 
-Bộ quét đi vào cả package con nên **không phải khai gì thêm**, và việc re-export
-không làm năng lực bị đếm hai lần.
+```python
+from src.providers.device.capabilities import DoorManagement    # ngắn lại
+```
+
+Khối này **hoàn toàn tuỳ chọn** — nó không phục vụ khung, chỉ phục vụ người đọc
+import. Đáng viết khi đã có nhiều chỗ import theo đường ngắn và bạn không muốn
+sửa hết, hoặc khi bạn muốn tự do đổi tên file mà không ai phải sửa import.
+
+Đừng lo re-export làm năng lực bị đếm hai lần: chỉ class **định nghĩa** ở một
+module mới được tính.
 
 ### Ba nguyên tắc
 
