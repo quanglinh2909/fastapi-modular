@@ -294,6 +294,57 @@ class KafkaSettings(BaseModel):
     max_reconnect_delay_seconds: float = 30.0
 
 
+class SchedulerSettings(BaseModel):
+    """Cấu hình việc theo lịch. Đặt qua APP_SCHEDULER__*.
+
+    MẶC ĐỊNH BẬT, khác các lớp hạ tầng: nó không cần server nào cả, và không có
+    `@interval`/`@cron`/`@timeout` nào thì runner cũng không làm gì.
+    """
+
+    enabled: bool = True
+
+    single: bool = True
+    """Chỉ một tiến trình chạy mỗi lượt. Để True gần như mọi lúc: `fam run`
+    mặc định bật 4 worker, nên tắt cái này là việc chạy bốn lần."""
+
+    lock_dir: str = ""
+    """Thư mục chứa file khoá; để trống là dùng thư mục tạm của hệ điều hành.
+    Chỉ có tác dụng khi KHÔNG bật Redis (bật Redis thì khoá nằm ở Redis)."""
+
+    drain_seconds: float = 15.0
+    """Chờ tối đa bao lâu cho lượt đang chạy dở lúc tắt app, trước khi huỷ."""
+
+    takeover_seconds: float = 5.0
+    """Tiến trình không giành được quyền chạy thì bao lâu thử lại một lần.
+    Đây cũng là thời gian tối đa việc bị gián đoạn khi tiến trình đang chạy nó
+    chết đột ngột."""
+
+    renew_seconds: float = 10.0
+    """Nhịp gia hạn khoá. Chỉ có ý nghĩa với khoá Redis; `flock` không cần."""
+
+
+class JobSettings(BaseModel):
+    """Cấu hình hàng đợi việc trong tiến trình. Đặt qua APP_JOBS__*.
+
+    MẶC ĐỊNH BẬT và không cần hạ tầng gì — nó chỉ là `asyncio.Queue`. Nhớ rằng
+    việc nằm trong RAM: app tắt là mất phần chưa chạy.
+    """
+
+    enabled: bool = True
+
+    max_queued: int = 1000
+    """Sức chứa hàng đợi. Đầy thì `submit()` ném 503 chứ không chờ — hàng đợi
+    đầy nghĩa là bên chạy chậm hơn bên gửi, và giấu điều đó chỉ làm request
+    treo theo."""
+
+    workers: int = 1
+    """Số việc chạy song song. Để 1 thì việc chạy ĐÚNG THỨ TỰ gửi vào; lớn hơn
+    1 thì nhanh hơn nhưng mất bảo đảm thứ tự."""
+
+    drain_seconds: float = 15.0
+    """Chờ tối đa bao lâu để chạy nốt hàng đợi lúc tắt app."""
+
+
 class Settings(BaseSettings):
     """Cấu hình của khung. **Kế thừa được** để thêm biến của riêng bạn.
 
@@ -356,6 +407,10 @@ class Settings(BaseSettings):
     redis: RedisSettings = Field(default_factory=RedisSettings, alias="APP_REDIS")
     mqtt: MqttSettings = Field(default_factory=MqttSettings, alias="APP_MQTT")
     kafka: KafkaSettings = Field(default_factory=KafkaSettings, alias="APP_KAFKA")
+    scheduler: SchedulerSettings = Field(
+        default_factory=SchedulerSettings, alias="APP_SCHEDULER"
+    )
+    jobs: JobSettings = Field(default_factory=JobSettings, alias="APP_JOBS")
 
 
     @property

@@ -8,6 +8,7 @@
 | [migrations.md](migrations.md) | Alembic: sinh, chạy, lùi migration |
 | [websocket.md](websocket.md) | Gateway WebSocket: API, phòng, gửi thẳng, Postman, Next.js |
 | [rabbitmq.md](rabbitmq.md) | RabbitMQ (tuỳ chọn): `publish`, `@rabbitmq_subscriber`, đủ 5 kiểu exchange, hạn dùng (TTL) |
+| [background.md](background.md) | Việc chạy nền: `@interval`/`@cron`/`@timeout` theo lịch, `@job` + `JobQueue` theo yêu cầu |
 | [rpc.md](rpc.md) | Gửi rồi **chờ trả lời**: `emit`/`send` + `@*_responder` cho cả 4 hạ tầng — khuôn tin tương thích NestJS |
 | [redis.md](redis.md) | Redis (tuỳ chọn): cache, đếm nguyên tử, pub/sub |
 | [mqtt.md](mqtt.md) | MQTT (tuỳ chọn): thiết bị IoT, QoS, retain, luật khớp topic |

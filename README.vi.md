@@ -31,6 +31,7 @@ fam init && fam dev
 | `@SubscribeMessage('x')` | `@subscribe("x")` |
 | `@EventPattern('x')` (RabbitMQ) | `@rabbitmq_subscriber("events", "x", queue="…")` |
 | `@MessagePattern('x')` | `@rabbitmq_responder("x", queue="…")` — giá trị trả về được gửi ngược |
+| `@Interval()` / `@Cron()` / `@Timeout()` | `@interval(seconds=5)` / `@cron("0 3 * * *")` / `@timeout(seconds=10)` |
 | `client.emit(p, d)` / `client.send(p, d)` | `broker.emit(p, d, queue=…)` / `await broker.send(p, d, queue=…)` |
 | `CacheModule` / `CACHE_MANAGER` | `RedisClient.cached(key, factory, ttl=…)` |
 | socket.io Redis adapter | `APP_WS__ADAPTER=redis` |
@@ -249,6 +250,34 @@ fam module alerts --consumer    # module mới kèm consumer
 Không cài, không bật thì mọi thứ chạy y như chưa từng có nó. Broker rớt thì app
 vẫn phục vụ và tự nối lại. Chi tiết: [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md).
 
+## Việc chạy nền
+
+Hai thứ khác nhau, không cần hạ tầng gì:
+
+```python
+# theo LỊCH — @nestjs/schedule
+@interval(seconds=5)
+async def cap_nhat_camera(self) -> None: ...
+
+@cron("0 3 * * *", timezone="Asia/Ho_Chi_Minh")     # mặc định là UTC!
+async def don_log(self) -> None: ...
+
+# theo YÊU CẦU — hàng đợi asyncio.Queue trong tiến trình, xử lý tuần tự
+@job("detect", blocking=True)          # blocking: chạy trong thread cho YOLO
+def nhan_dang(self, payload: dict) -> None: ...
+
+await self._jobs.submit("detect", {"path": p})      # trả về ngay
+```
+
+`fam run` bật 4 worker, nên một vòng `while True: sleep(5)` viết tay sẽ chạy
+**bốn lần**. Mặc định `single=True` khoá lại: đo được 5 lượt / 1 tiến trình,
+so với 20 lượt / 4 tiến trình khi tắt khoá. Khoá dùng `flock` (một máy) hoặc
+Redis (nhiều máy), tự chọn.
+
+Hàng đợi `@job` nằm trong RAM — **app tắt là mất phần chưa chạy**, và khung nói
+thẳng con số đó ra lúc tắt. Việc không được phép mất thì dùng `@rabbitmq_subscriber`.
+Chi tiết: [docs/background.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/background.md).
+
 ## Gửi rồi chờ trả lời — khuôn tin của NestJS
 
 `publish`/`emit` bắn đi rồi quên. `send` thì **chờ trả lời** — đúng cặp
@@ -332,7 +361,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              568 test chạy không cần hạ tầng, 62 test nữa bật khi có server thật
+tests/              831 test chạy không cần hạ tầng, 62 test nữa bật khi có server thật
 docs/               tài liệu tra cứu
 ```
 
@@ -371,6 +400,7 @@ MIT — xem [LICENSE](https://github.com/quanglinh2909/fastapi-modular/blob/main
 - [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: sinh, chạy, lùi migration
 - [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — gateway WebSocket, phòng, Postman, Next.js
 - [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — đủ 5 kiểu exchange, hạn dùng (TTL), consumer nền, `.retry` / `.dlq`
+- [docs/background.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/background.md) — việc theo lịch (`@interval`/`@cron`/`@timeout`) và hàng đợi việc trong tiến trình (`@job`)
 - [docs/rpc.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rpc.md) — `emit` / `send` / `@rabbitmq_responder`, khuôn tin tương thích NestJS
 - [docs/redis.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/redis.md) — cache, đếm nguyên tử, pub/sub
 - [docs/mqtt.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mqtt.md) — QoS, retain, luật khớp topic `+` và `#`

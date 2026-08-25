@@ -36,6 +36,7 @@ public API, and this README, are in English. Start with
 | `@SubscribeMessage('x')` | `@subscribe("x")` |
 | `@EventPattern('x')` (RabbitMQ) | `@rabbitmq_subscriber("events", "x", queue="…")` |
 | `@MessagePattern('x')` | `@rabbitmq_responder("x", queue="…")` — the return value is sent back |
+| `@Interval()` / `@Cron()` / `@Timeout()` | `@interval(seconds=5)` / `@cron("0 3 * * *")` / `@timeout(seconds=10)` |
 | `client.emit(p, d)` / `client.send(p, d)` | `broker.emit(p, d, queue=…)` / `await broker.send(p, d, queue=…)` |
 | `CacheModule` / `CACHE_MANAGER` | `RedisClient.cached(key, factory, ttl=…)` |
 | socket.io Redis adapter | `APP_WS__ADAPTER=redis` |
@@ -253,6 +254,35 @@ Not installed and not enabled means it behaves as if it never existed. If the
 broker goes down the app keeps serving and reconnects on its own. Details:
 [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md).
 
+## Background work
+
+Two different things, neither needs any infrastructure:
+
+```python
+# on a SCHEDULE — @nestjs/schedule
+@interval(seconds=5)
+async def update_cameras(self) -> None: ...
+
+@cron("0 3 * * *", timezone="Asia/Ho_Chi_Minh")     # defaults to UTC!
+async def clean_logs(self) -> None: ...
+
+# on DEMAND — an in-process asyncio.Queue, processed in order
+@job("detect", blocking=True)          # blocking: runs in a thread, for YOLO
+def detect(self, payload: dict) -> None: ...
+
+await self._jobs.submit("detect", {"path": p})      # returns immediately
+```
+
+`fam run` starts 4 workers, so a hand-written `while True: sleep(5)` runs
+**four times**. `single=True` (the default) locks it down: measured 5 runs
+across 1 process, versus 20 runs across 4 with the lock off. The lock is
+`flock` (one machine) or Redis (many), picked automatically.
+
+The `@job` queue lives in RAM — **shutdown loses whatever hasn't run**, and the
+framework logs that count instead of hiding it. Work that must not be lost
+belongs in `@rabbitmq_subscriber`. Details:
+[docs/background.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/background.md).
+
 ## Request/response, NestJS-compatible
 
 `publish`/`emit` fire and forget. `send` waits for an answer — the NestJS
@@ -331,7 +361,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              568 tests that need no infrastructure, 62 more when servers exist
+tests/              831 tests that need no infrastructure, 62 more when servers exist
 docs/               reference documentation (Vietnamese)
 ```
 
@@ -374,6 +404,7 @@ Written in Vietnamese, organised for reference rather than reading front to back
 - [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: generate, run, roll back
 - [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — WebSocket gateway, rooms, Postman, Next.js
 - [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — all 5 exchange types, TTL, background consumers, `.retry` / `.dlq`
+- [docs/background.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/background.md) — scheduled work (`@interval`/`@cron`/`@timeout`) and an in-process job queue (`@job`)
 - [docs/rpc.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rpc.md) — `emit` / `send` / `@rabbitmq_responder`, NestJS-compatible wire format
 - [docs/redis.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/redis.md) — cache, atomic counters, pub/sub
 - [docs/mqtt.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mqtt.md) — QoS, retain, `+` and `#` topic matching

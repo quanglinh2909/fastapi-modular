@@ -178,6 +178,8 @@ còn tệ hơn. Muốn chặn thì đọc `settings.check_production_safety()` r
 | Redis | `APP_REDIS__*` | [redis.md](redis.md) |
 | MQTT | `APP_MQTT__*` | [mqtt.md](mqtt.md) |
 | Kafka | `APP_KAFKA__*` | [kafka.md](kafka.md) |
+| việc theo lịch | `APP_SCHEDULER__*` | [background.md](background.md) |
+| hàng đợi việc | `APP_JOBS__*` | [background.md](background.md) |
 
 ### ứng dụng
 

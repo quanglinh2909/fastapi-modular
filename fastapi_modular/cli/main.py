@@ -144,15 +144,15 @@ def _main(argv: list[str] | None = None) -> int:
     command.add_parser("info", help="cấu hình đang dùng và thư viện đã cài")
 
     p_test = command.add_parser("test", help="chạy pytest")
-    p_test.add_argument("them", nargs="*", help="tham số truyền thẳng cho pytest")
+    p_test.add_argument("extra", nargs="*", help="tham số truyền thẳng cho pytest")
 
     p_lint = command.add_parser("lint", help="soi lỗi tĩnh bằng ruff")
     p_lint.add_argument("--fix", action="store_true", help="tự sửa những lỗi sửa được")
-    p_lint.add_argument("duong_dan", nargs="*", default=["src"], help="mặc định: src")
+    p_lint.add_argument("path", nargs="*", default=["src"], help="mặc định: src")
 
     p_mig = command.add_parser("migrate", help="chạy migration (Alembic)")
     p_mig.add_argument(
-        "viec",
+        "action",
         nargs="?",
         default="up",
         choices=["up", "down", "history", "sql", "create"],
@@ -165,7 +165,7 @@ def _main(argv: list[str] | None = None) -> int:
     p_ins = command.add_parser(
         "install", help="cài thư viện của một thành phần rồi ghi biến vào .env"
     )
-    p_ins.add_argument("thanh_phan", choices=COMPONENTS, metavar="thành-phần",
+    p_ins.add_argument("component", choices=COMPONENTS, metavar="thành-phần",
                        help=" | ".join(COMPONENTS))
     p_ins.add_argument("--no-env", action="store_true", help="chỉ cài, đừng đụng .env")
     p_ins.add_argument("--file", type=Path, default=Path(".env"))
@@ -179,7 +179,7 @@ def _main(argv: list[str] | None = None) -> int:
     p_pub.add_argument("--test", action="store_true", help="đẩy lên TestPyPI trước")
 
     p_env = command.add_parser("env", help="ghi biến cấu hình của một thành phần vào .env")
-    p_env.add_argument("thanh_phan", help="sqlite | postgres | mongodb | redis | "
+    p_env.add_argument("component", help="sqlite | postgres | mongodb | redis | "
                                           "rabbitmq | mqtt | kafka | ws-redis")
     p_env.add_argument("--file", type=Path, default=Path(".env"))
 
@@ -239,7 +239,7 @@ def _main(argv: list[str] | None = None) -> int:
     if args.command == "install":
         from fastapi_modular.cli.install import install
 
-        return install(args.thanh_phan, write_env=not args.no_env, env_file=args.file)
+        return install(args.component, write_env=not args.no_env, env_file=args.file)
 
     if args.command == "clean":
         from fastapi_modular.cli.clean import clean
@@ -253,7 +253,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     from fastapi_modular.cli.configure_env import main as write_env
 
-    return write_env(args.thanh_phan, args.file)
+    return write_env(args.component, args.file)
 
 
 if __name__ == "__main__":

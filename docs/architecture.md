@@ -20,6 +20,10 @@ fastapi_modular/                     THƯ VIỆN — thứ được đóng gói,
 │   ├── lifespan.py            mở/đóng database và hạ tầng (ứng dụng BỌC lại, không sửa)
 │   ├── schemas.py             Page[T]
 │   ├── rpc.py                 khuôn tin emit/send tương thích NestJS (dùng chung mọi hạ tầng)
+│   ├── scheduler.py           @interval / @cron / @timeout + SchedulerRunner
+│   ├── cron.py                đọc biểu thức cron 5 trường
+│   ├── jobs.py                @job + JobQueue: hàng đợi việc trong tiến trình
+│   ├── locks.py               khoá "chỉ một tiến trình chạy" (flock hoặc Redis)
 │   └── websocket/             @gateway / @subscribe, phòng, adapter nhiều worker
 ├── infrastructure/            mỗi hạ tầng MỘT package, không biết nhau
 │   ├── database/              base.py · memory.py · sql.py · mongo.py · factory.py · repository.py
@@ -79,6 +83,7 @@ quét nó đi". Xếp khác thì nói ra một lần trong `src/main.py`:
 | `Transport.RMQ` là một lựa chọn riêng | mỗi hạ tầng một package riêng dưới `infrastructure/` |
 | `@EventPattern('x')` (microservices) | `@rabbitmq_subscriber("events", "x", queue="...")` |
 | `@MessagePattern('x')` | `@rabbitmq_responder("x", queue="...")` — xem [rpc.md](rpc.md) |
+| `@Interval` / `@Cron` / `@Timeout` (`@nestjs/schedule`) | `@interval` / `@cron` / `@timeout` — xem [background.md](background.md) |
 | `ClientProxy.emit/send` | `broker.emit(...)` / `await broker.send(...)`, khuôn tin tương thích NestJS |
 | `@EventPattern('x')` (transport Kafka) | `@kafka_subscriber("x", group="...")` |
 | `@EventPattern('x')` (transport MQTT) | `@mqtt_subscriber("x/+/y", qos=1)` |
@@ -249,7 +254,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 568 test trên backend memory (62 test nữa cần hạ tầng thật)
+fam test       # 831 test trên backend memory (62 test nữa cần hạ tầng thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

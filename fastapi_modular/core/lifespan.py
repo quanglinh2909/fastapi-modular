@@ -62,6 +62,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Import muộn: Database kéo theo factory driver, mà factory chỉ được chạm
     # tới sau khi mọi module đã nạp xong (entity phải đăng ký trước create_schema).
+    from fastapi_modular.core.jobs import JobQueue, JobRunner
+    from fastapi_modular.core.scheduler import SchedulerRunner
     from fastapi_modular.infrastructure.database import Database
     from fastapi_modular.infrastructure.kafka import (
         KafkaBroker,
@@ -134,6 +136,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await kafka_responders.startup()
     app.state.kafka = kafka
 
+    # Việc chạy nền bật CUỐI CÙNG: chúng dùng database và hàng đợi, nên phải
+    # đợi những thứ đó sẵn sàng. Không cần hạ tầng gì để chạy, nhưng không có
+    # @interval/@cron/@timeout hay @job nào thì hai lời gọi này không làm gì.
+    jobs = container.resolve(JobRunner)
+    await jobs.startup()
+    scheduler = container.resolve(SchedulerRunner)
+    await scheduler.startup()
+    app.state.jobs = container.resolve(JobQueue)
+    app.state.scheduler = scheduler
+
     log.info(
         "app.started",
         driver=database.driver,
@@ -154,6 +166,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         #   consumer trước  — chúng còn đang truy vấn database
         #   WebSocket       — client nhận mã 1001 để nối lại ngay
         #   broker, rồi database — hai thứ mọi tầng trên đều dựa vào
+        # Lịch tắt TRƯỚC hàng đợi việc: nó là một nguồn sinh việc, dừng nó
+        # trước thì hàng đợi mới cạn được thay vì bị bơm thêm trong lúc đang dọn.
+        await scheduler.shutdown()
+        await jobs.shutdown()
         await kafka_consumers.shutdown()
         await kafka.shutdown()
         await mqtt.shutdown()

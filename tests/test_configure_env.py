@@ -117,11 +117,13 @@ def test_bien_nhac_trong_docs_deu_con_that(  ):
     from fastapi_modular.core.config import (
         CorsSettings,
         DatabaseSettings,
+        JobSettings,
         KafkaSettings,
         LogSettings,
         MqttSettings,
         RabbitSettings,
         RedisSettings,
+        SchedulerSettings,
         WebSocketSettings,
     )
     from src.core.config import AppSettings, JwtSettings
@@ -133,6 +135,8 @@ def test_bien_nhac_trong_docs_deu_con_that(  ):
         "APP_REDIS__": RedisSettings,
         "APP_MQTT__": MqttSettings,
         "APP_KAFKA__": KafkaSettings,
+        "APP_SCHEDULER__": SchedulerSettings,
+        "APP_JOBS__": JobSettings,
         "APP_LOG__": LogSettings,
         "APP_CORS__": CorsSettings,
         "APP_JWT__": JwtSettings,

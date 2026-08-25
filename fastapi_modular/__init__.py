@@ -23,6 +23,7 @@ from fastapi_modular.core.exceptions import (
     ServiceUnavailableError,
     UnauthorizedError,
 )
+from fastapi_modular.core.jobs import JobQueue, JobRunner, job
 from fastapi_modular.core.lifespan import lifespan
 from fastapi_modular.core.logging import configure_logging, get_logger
 from fastapi_modular.core.providers import (
@@ -32,6 +33,7 @@ from fastapi_modular.core.providers import (
     provider,
     register_providers,
 )
+from fastapi_modular.core.scheduler import SchedulerRunner, cron, interval, timeout
 from fastapi_modular.core.schemas import Page
 from fastapi_modular.core.websocket import Socket, WebSocketServer, gateway, subscribe
 from fastapi_modular.discovery import DEFAULT_PACKAGE, register_routes
@@ -47,11 +49,14 @@ __all__ = [
     "ComponentNotEnabledError",
     "ConflictError",
     "ForbiddenError",
+    "JobQueue",
+    "JobRunner",
     "Lazy",
     "NotFoundError",
     "Page",
     "ProviderNotFoundError",
     "Providers",
+    "SchedulerRunner",
     "Scope",
     "ServiceUnavailableError",
     "Settings",
@@ -65,6 +70,7 @@ __all__ = [
     "container",
     "controller",
     "create_app",
+    "cron",
     "delete",
     "entity",
     "gateway",
@@ -72,6 +78,8 @@ __all__ = [
     "get_logger",
     "get_settings",
     "injectable",
+    "interval",
+    "job",
     "lifespan",
     "new_fastapi",
     "patch",
@@ -82,5 +90,6 @@ __all__ = [
     "register_providers",
     "register_routes",
     "subscribe",
+    "timeout",
     "use_settings",
 ]

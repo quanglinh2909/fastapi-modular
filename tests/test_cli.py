@@ -552,3 +552,64 @@ def test_moi_lenh_rut_gon_trong_readme_deu_giai_ra_dung_lenh_do(source: str, tmp
             assert explain(tu_ngan[1], danh_sach[tu_day[0]], "thành phần") == tu_day[1], (
                 f"`fam {ngan}` không ra `fam {day_du}`"
             )
+
+
+def test_moi_tham_so_argparse_deu_co_noi_doc_toi():
+    """Chặn loại lỗi tên-nằm-trong-chuỗi: `add_argument("duong_dan")` nhưng code
+    đọc `args.path`.
+
+    argparse không kêu gì — nó tạo `args.duong_dan`, còn chỗ đọc `args.path` chỉ
+    nổ khi có người chạy đúng lệnh đó. Đã lọt một lần khi đổi tên hàng loạt.
+    """
+    import ast
+    from pathlib import Path
+
+    cli = Path("fastapi_modular/cli")
+    khai_bao: dict[str, str] = {}
+    doc_duoc: set[str] = set()
+
+    for file in sorted(cli.glob("*.py")):
+        tree = ast.parse(file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+                and not node.args[0].value.startswith("-")
+            ):
+                khai_bao[node.args[0].value] = f"{file.name}:{node.lineno}"
+            elif (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "args"
+            ):
+                doc_duoc.add(node.attr)
+
+    thieu = {name: where for name, where in khai_bao.items() if name not in doc_duoc}
+    assert not thieu, f"tham số khai rồi nhưng không chỗ nào đọc `args.<tên>`: {thieu}"
+
+
+def test_tham_so_argparse_deu_dat_ten_tieng_anh():
+    """Quy ước của dự án: định danh tiếng Anh. `dest` của argparse cũng là định
+    danh — nó thành `args.<tên>` và hiện luôn trong `fam --help`."""
+    import ast
+    from pathlib import Path
+
+    VIET = {"ten", "lenh", "duong_dan", "them", "thanh_phan", "viec", "tep", "khoi"}
+    xau: list[str] = []
+    for file in sorted(Path("fastapi_modular/cli").glob("*.py")):
+        tree = ast.parse(file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value in VIET
+            ):
+                xau.append(f"{file.name}:{node.lineno} {node.args[0].value!r}")
+    assert not xau, f"tham số CLI còn tên tiếng Việt: {xau}"

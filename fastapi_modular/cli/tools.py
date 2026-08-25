@@ -41,7 +41,7 @@ def run_tool(args: Namespace) -> int:
     if args.command == "test":
         if not _has("pytest"):
             return _missing("pytest")
-        return _call("pytest", "-q", *args.them)
+        return _call("pytest", "-q", *args.extra)
 
     if args.command == "lint":
         if not _has("ruff"):
@@ -97,7 +97,7 @@ def _migrate(args: Namespace) -> int:
         )
         return 1
 
-    if args.viec == "create":
+    if args.action == "create":
         if not args.message:
             print('Thiếu mô tả. Dùng: fam migrate create -m "them cot phone"')
             return 1
@@ -108,4 +108,4 @@ def _migrate(args: Namespace) -> int:
         "down": ("downgrade", "-1"),
         "history": ("history", "--indicate-current"),
         "sql": ("upgrade", "head", "--sql"),
-    }[args.viec])
+    }[args.action])
