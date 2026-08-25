@@ -73,6 +73,11 @@ _SCOPE_PROVIDER = "__provider_scope__"
 
 _TEN_HOP_LE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
+#: Tên các lớp token đã khai. CHỈ dùng để gợi ý trong thông báo lỗi của
+#: container — không tham gia vào việc phân giải, nên không sợ dính trạng thái
+#: cũ giữa hai lần chạy.
+_TEN_TOKEN: set[str] = set()
+
 
 class ProviderNotFoundError(AppError):
     """Tên provider không có trong họ — thường là client gửi sai tên."""
@@ -180,6 +185,7 @@ class ProviderFamily(Generic[C]):
             )
         cls.__family__ = family
         cls.__capability__ = _nang_luc_chinh(cls)
+        _TEN_TOKEN.add(cls.__name__)
 
     def __init__(self) -> None:
         self._classes: dict[str, type] = {}

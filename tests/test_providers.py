@@ -424,3 +424,19 @@ def test_ho_khong_khai_nang_luc_thi_require_doi_tham_so_thu_hai():
         r.require("vnpay")
     # truyền tay thì vẫn chạy
     assert isinstance(r.require("vnpay", PaymentGateway), VNPayProvider)
+
+
+def test_quen_goi_register_providers_thi_bao_dung_nguyen_nhan():
+    """Lỗi hay gặp nhất: main.py lắp tay mà quên register_providers().
+
+    Câu "thiếu @injectable" mặc định dẫn người đọc đi sai hướng — token của họ
+    provider không bao giờ nằm trong _REGISTRY.
+    """
+
+    class ChuaDungSo(ProviderFamily[PaymentGateway], family="chua-dung"):
+        pass
+
+    with pytest.raises(RuntimeError) as loi:
+        container.resolve(ChuaDungSo)
+    assert "register_providers()" in str(loi.value)
+    assert "@injectable" not in str(loi.value)

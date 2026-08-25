@@ -201,11 +201,7 @@ class Container:
 
         cls = _REGISTRY.get(name)
         if cls is None:
-            raise RuntimeError(
-                f"Không có provider '{name}'. Thiếu @injectable, hoặc module chứa nó "
-                "chưa được nạp — package ứng dụng phải nằm trong thư mục mà "
-                "create_app(package=...) quét tới."
-            )
+            raise RuntimeError(_khong_co_provider(name))
 
         if key in self._building:
             chain = " -> ".join([*self._building, key])
@@ -379,3 +375,29 @@ def Inject(token: type[T] | str) -> Any:
         return container.resolve(token)
 
     return Depends(_provide)
+
+
+def _khong_co_provider(name: str) -> str:
+    """Thông báo cho lỗi tra cứu hỏng — nói đúng nguyên nhân hay gặp nhất.
+
+    Token của một họ provider (`DeviceProviders`) không nằm trong `_REGISTRY`;
+    nó được `register_providers()` cắm thẳng vào store. Quên gọi hàm đó thì lỗi
+    hiện ra ở đây, và câu "thiếu @injectable" sẽ dẫn người đọc đi sai đường.
+    """
+    try:
+        from fastapi_modular.core.providers import _TEN_TOKEN
+    except ImportError:  # pragma: no cover
+        _TEN_TOKEN = set()
+
+    if name in _TEN_TOKEN:
+        return (
+            f"Không có sổ provider '{name}'. Lớp token đã khai nhưng chưa ai dựng sổ — "
+            "gọi `register_providers()` trong src/main.py TRƯỚC register_routes(), "
+            "hoặc dùng `create_app()` (nó gọi sẵn). Nếu thư mục provider không nằm ở "
+            "`src/providers/` thì truyền đường dẫn: register_providers('src.plugins')."
+        )
+    return (
+        f"Không có provider '{name}'. Thiếu @injectable, hoặc module chứa nó "
+        "chưa được nạp — package ứng dụng phải nằm trong thư mục mà "
+        "create_app(package=...) quét tới."
+    )

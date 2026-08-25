@@ -80,23 +80,37 @@ worker có thể xử lý ngược thứ tự.
 @injectable
 class KhoVanConsumer:
     @kafka_subscriber("don-hang", group="kho-van", auto_offset_reset="earliest",
-                      max_retries=2, retry_delay=0.5)
+                      max_retries=2, retry_delay=0.5, dead_letter=True)
     async def giao_hang(self, don: DonHang, meta: dict) -> None:
         ...
 ```
 
 ```python
 @kafka_subscriber(topic, *, group, auto_offset_reset="latest",
-                  max_retries=3, retry_delay=1.0, dead_letter=True)
+                  max_retries=0, retry_delay=1.0, dead_letter=False)
 ```
 
 | Tham số | Mặc định | Không truyền thì | Đổi khi nào |
 |---|---|---|---|
 | `group` | *bắt buộc* | — | luôn phải đặt; đây là danh tính con trỏ đọc |
 | `auto_offset_reset` | `"latest"` | nhóm mới chỉ đọc tin phát sinh **từ giờ** | `"earliest"` để đọc lại từ đầu nhật ký |
-| `max_retries` | `3` | lỗi thì thử lại 3 lần rồi sang `.dlt` | `0` = hỏng là bỏ ngay |
-| `retry_delay` | `1.0` | chờ 1 giây giữa các lần | để **nhỏ** — thử lại làm đứng cả phân vùng |
-| `dead_letter` | `True` | tin lỗi được sao sang `<topic>.dlt` | `False` = bỏ qua hẳn, không lưu lại |
+| `max_retries` | `0` | **hỏng là bỏ ngay**, không thử lại | tăng lên khi lỗi hay gặp là chập chờn mạng — nhớ nó làm đứng cả phân vùng |
+| `retry_delay` | `1.0` | chờ 1 giây giữa các lần | chỉ có tác dụng khi `max_retries > 0`. Để **nhỏ** — thử lại làm đứng cả phân vùng |
+| `dead_letter` | `False` | tin lỗi **bị bỏ hẳn**, chỉ còn log `kafka.message_dropped` | `True` để sao sang `<topic>.dlt` — bật khi tin đáng tiền |
+
+> **Mặc định là "nhanh và quên".** `max_retries=0, dead_letter=False` nghĩa là
+> tin nào handler ném lỗi thì **mất luôn**, con trỏ đi tiếp và chỉ để lại một
+> dòng log `kafka.message_dropped`. Đó là lựa chọn đúng cho dòng tin đo đạc,
+> vị trí, nhiệt độ — nơi thông lượng quan trọng hơn từng tin lẻ.
+>
+> Tin **đáng tiền** thì phải tự bật:
+>
+> ```python
+> @kafka_subscriber("don-hang", group="kho-van", max_retries=3, dead_letter=True)
+> async def xu_ly(self, don: DonHang) -> None: ...
+> ```
+>
+> Nhớ cái giá: mỗi lượt thử lại **chặn cả phân vùng** trong `retry_delay` giây.
 
 `group` cố ý **không tự sinh**, cùng lý do với `queue` bên RabbitMQ: tên tự sinh
 sẽ đổi sau mỗi lần deploy, và mỗi lần deploy sẽ đọc lại từ đầu (hoặc bỏ qua sạch
@@ -138,11 +152,11 @@ phân vùng thì chạy mười worker cũng chỉ một worker chạy.
 |---|---|
 | trả về bình thường | commit offset, đi tiếp |
 | ném lỗi, còn lượt thử | **chờ `retry_delay` rồi chạy lại ngay tại chỗ** |
-| ném lỗi, hết lượt thử | sao sang `<topic>.dlt`, commit, đi tiếp |
-| ném `PermanentMessageError` | sang `.dlt` **ngay**, không thử lại |
+| ném lỗi, hết lượt thử | `dead_letter=True` -> sao sang `<topic>.dlt`; mặc định `False` -> **bỏ hẳn**, chỉ còn log. Cả hai đều commit và đi tiếp |
+| ném `PermanentMessageError` | xử như hết lượt **ngay**, không thử lại |
 | payload sai khuôn model | như `PermanentMessageError` |
 
-Đo được với `max_retries=2`:
+Đo được với `max_retries=2, dead_letter=True`:
 
 ```
 kieu=ok               -> lan_thu=1                    (xong)

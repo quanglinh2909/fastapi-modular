@@ -98,6 +98,7 @@ from fastapi_modular import (
     configure_logging,
     new_fastapi,
     register_error_handlers,
+    register_providers,
     register_routes,
 )
 
@@ -119,7 +120,12 @@ add_middleware(app, settings)
 # Đổi lỗi nghiệp vụ thành JSON có mã và request_id.
 register_error_handlers(app, debug=settings.debug)
 
-# Quét app/, gắn mọi @controller và @gateway tìm được.
+# Quét src/providers/, dựng sổ cho mỗi họ provider. Không có thư mục đó thì
+# bỏ qua, không lỗi. Phải chạy TRƯỚC register_routes: service nhận sổ qua
+# __init__, mà controller nhận service.
+register_providers()
+
+# Quét src/api/, gắn mọi @controller và @gateway tìm được.
 register_routes(app, prefix=settings.api_prefix)
 
 
