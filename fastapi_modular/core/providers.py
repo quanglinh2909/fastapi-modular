@@ -54,7 +54,7 @@ from __future__ import annotations
 import re
 from abc import ABC
 from collections.abc import Callable
-from typing import Any, Generic, TypeVar, get_args
+from typing import Any, Generic, TypeVar, get_args, overload
 
 from fastapi_modular.core.container import Scope, container
 from fastapi_modular.core.exceptions import AppError
@@ -63,6 +63,9 @@ T = TypeVar("T", bound=type)
 
 #: Kiểu năng lực chính của một họ — `ProviderFamily[PaymentGateway]`.
 C = TypeVar("C")
+
+#: Kiểu của năng lực TUỲ CHỌN truyền vào require().
+K = TypeVar("K")
 
 #: Gói mặc định chứa các họ provider. Đổi bằng `register_providers(package=...)`.
 DEFAULT_PROVIDERS_PACKAGE = "src.providers"
@@ -238,8 +241,24 @@ class ProviderFamily(Generic[C]):
             )
         return can
 
-    def require(self, name: str, capability: type | None = None) -> C:
+    @overload
+    def require(self, name: str) -> C: ...
+
+    @overload
+    def require(self, name: str, capability: type[K]) -> K: ...
+
+    def require(self, name: str, capability: type | None = None) -> Any:
         """Lấy provider và khẳng định nó hiện thực `capability`.
+
+        Hai overload để IDE gợi ý đúng: không truyền gì thì kiểu trả về là năng
+        lực CHÍNH của họ; truyền một năng lực tuỳ chọn thì kiểu trả về là CHÍNH
+        năng lực đó — nếu không, `require(ten, DeviceAdvanced)` vẫn bị coi là
+        năng lực chính và IDE không biết method của DeviceAdvanced tồn tại.
+
+        Lưu ý cho ai chạy mypy: truyền một ABC vào `type[K]` sẽ bị báo
+        `type-abstract`, vì mypy hiểu `type[X]` là "lớp dựng được". Ở đây năng
+        lực chỉ dùng cho `issubclass`, không bao giờ được khởi tạo — tắt mã lỗi
+        đó là an toàn.
 
         Không truyền `capability` thì dùng năng lực chính của họ — thứ khai ở
         `ProviderFamily[NangLuc]`. Truyền tường minh khi cần một năng lực TUỲ

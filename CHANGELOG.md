@@ -19,7 +19,8 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
   `class PaymentProviders(ProviderFamily[PaymentGateway], family="payment")`.
   Nhờ đó `require(tên)` chỉ cần một tham số và trả về đúng kiểu đó — IDE gợi ý
   được method, thay vì `Any` như trước. Năng lực tuỳ chọn vẫn khai tường minh:
-  `require(tên, HoanTien)`.
+  `require(tên, HoanTien)` — và overload khiến kiểu trả về khi đó là CHÍNH
+  `HoanTien`, nếu không thì IDE vẫn chỉ gợi ý method của năng lực chính.
 - **`container.build(cls, key=..., scope=...)`** — dựng một lớp có nối phụ thuộc
   mà KHÔNG đăng ký vào sổ toàn cục. Cần cho provider: sổ toàn cục tra theo tên
   class, trong khi hai họ có quyền cùng có một `OryzaProvider`.

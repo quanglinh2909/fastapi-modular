@@ -131,6 +131,30 @@ class DonHangService:
         return await cong.tao_giao_dich(don.so_tien, don.ma)
 ```
 
+### Năng lực tuỳ chọn — và vì sao IDE không gợi ý
+
+`require(tên)` trả về **năng lực chính** — thứ khai trong
+`ProviderFamily[PaymentGateway]`. Nên IDE chỉ gợi ý method của `PaymentGateway`.
+
+Method thuộc một năng lực **tuỳ chọn** thì phải nói ra:
+
+```python
+# IDE KHÔNG biết `hoan_tien` — nó thuộc HoanTien, không phải năng lực chính
+cong = self._payments.require(ten)
+await cong.hoan_tien(ma)                      # ✗ không gợi ý, type checker báo lỗi
+
+# Nói rõ năng lực -> IDE gợi ý đúng method của HoanTien
+cong = self._payments.require(ten, HoanTien)
+await cong.hoan_tien(ma)                      # ✓
+```
+
+Không chắc provider có năng lực đó không thì hỏi trước, đừng để 501 bay ra:
+
+```python
+if self._payments.supports(ten, HoanTien):
+    await self._payments.require(ten, HoanTien).hoan_tien(ma)
+```
+
 **Thêm ZaloPay = thả một file `zalopay.py` vào thư mục.** Không sửa service,
 không sửa `main.py`, không có danh sách import nào phải bảo trì.
 
@@ -138,8 +162,8 @@ không sửa `main.py`, không có danh sách import nào phải bảo trì.
 
 | Gọi | Trả về | Ném lỗi |
 |---|---|---|
-| `require(tên)` | provider, đã khẳng định làm được **năng lực chính** | **404** không có tên · **501** thiếu năng lực |
-| `require(tên, NăngLực)` | như trên, nhưng cho năng lực **tuỳ chọn** | nt |
+| `require(tên)` | provider, kiểu tĩnh là **năng lực chính** | **404** không có tên · **501** thiếu năng lực |
+| `require(tên, NăngLực)` | provider, kiểu tĩnh là **chính `NăngLực` đó** | nt |
 | `get(tên)` | provider, **không** kiểm năng lực | **404** |
 | `supports(tên[, NăngLực])` | `bool` | — |
 | `names()` | `["momo", "vnpay"]` | — |

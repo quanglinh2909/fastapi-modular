@@ -440,3 +440,14 @@ def test_quen_goi_register_providers_thi_bao_dung_nguyen_nhan():
         container.resolve(ChuaDungSo)
     assert "register_providers()" in str(loi.value)
     assert "@injectable" not in str(loi.value)
+
+
+def test_require_voi_nang_luc_tuy_chon_tra_ve_dung_doi_tuong(so: PaymentProviders):
+    """Overload chỉ ảnh hưởng KIỂU TĨNH; lúc chạy vẫn phải trả đúng provider.
+
+    Kiểu tĩnh đã kiểm riêng bằng mypy: require(ten) -> năng lực chính,
+    require(ten, HoanTien) -> HoanTien.
+    """
+    doi_tuong = so.require("vnpay", HoanTien)
+    assert isinstance(doi_tuong, VNPayProvider)
+    assert isinstance(doi_tuong, HoanTien)
