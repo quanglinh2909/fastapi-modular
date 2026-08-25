@@ -11,8 +11,15 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
   (tra theo kiểu) không làm được: cổng thanh toán lấy từ cột trong đơn hàng, nhà
   mạng SMS lấy từ cấu hình. API: `@provider`, `ProviderFamily`, `Registry`,
   `register_providers`. Xem `docs/providers.md`.
+  Lớp token CHÍNH LÀ sổ đăng ký — không còn `Registry` tách riêng, bớt một
+  khái niệm và annotation `payments: PaymentProviders` trở thành sự thật.
 - **`fam provider <họ> <tên>`** — sinh khung. Lần đầu dựng cả họ; lần sau đọc
   `capabilities.py` rồi sinh sẵn stub đúng chữ ký các method cần viết.
+- Họ khai **năng lực chính** qua tham số generic:
+  `class PaymentProviders(ProviderFamily[PaymentGateway], family="payment")`.
+  Nhờ đó `require(tên)` chỉ cần một tham số và trả về đúng kiểu đó — IDE gợi ý
+  được method, thay vì `Any` như trước. Năng lực tuỳ chọn vẫn khai tường minh:
+  `require(tên, HoanTien)`.
 - **`container.build(cls, key=..., scope=...)`** — dựng một lớp có nối phụ thuộc
   mà KHÔNG đăng ký vào sổ toàn cục. Cần cho provider: sổ toàn cục tra theo tên
   class, trong khi hai họ có quyền cùng có một `OryzaProvider`.

@@ -21,20 +21,24 @@ Dùng:
         @abstractmethod
         async def tao_giao_dich(self, so_tien: int, ma_don: str) -> str: ...
 
+    # src/providers/payment/__init__.py
+    class PaymentProviders(ProviderFamily[PaymentGateway], family="payment"):
+        pass
+
     # src/providers/payment/vnpay.py
     @provider("vnpay")
-    class VNPayProvider(PaymentGateway):
+    class VnpayPayment(PaymentGateway):
         def __init__(self, settings: Settings) -> None:   # DI chạy bình thường
             self._key = settings.vnpay.secret
 
     # src/api/don_hang/don_hang_service.py
     @injectable
     class DonHangService:
-        def __init__(self, payments: Providers["payment"]) -> None:
+        def __init__(self, payments: PaymentProviders) -> None:
             self._payments = payments
 
         async def thanh_toan(self, don: DonHang) -> str:
-            cong = self._payments.require(don.cong_thanh_toan, PaymentGateway)
+            cong = self._payments.require(don.cong_thanh_toan)
             return await cong.tao_giao_dich(don.so_tien, don.ma)
 
 Thêm cổng mới = thả một file vào `src/providers/payment/`. Không sửa service,
@@ -50,12 +54,15 @@ from __future__ import annotations
 import re
 from abc import ABC
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, Generic, TypeVar, get_args
 
 from fastapi_modular.core.container import Scope, container
 from fastapi_modular.core.exceptions import AppError
 
 T = TypeVar("T", bound=type)
+
+#: Kiểu năng lực chính của một họ — `ProviderFamily[PaymentGateway]`.
+C = TypeVar("C")
 
 #: Gói mặc định chứa các họ provider. Đổi bằng `register_providers(package=...)`.
 DEFAULT_PROVIDERS_PACKAGE = "src.providers"
@@ -65,7 +72,6 @@ _TEN_PROVIDER = "__provider_name__"
 _SCOPE_PROVIDER = "__provider_scope__"
 
 _TEN_HOP_LE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
-
 
 
 class ProviderNotFoundError(AppError):
@@ -125,20 +131,62 @@ def capabilities_of(provider_cls: type) -> list[str]:
     )
 
 
-class Registry:
-    """Sổ đăng ký của MỘT họ provider.
+def _nang_luc_chinh(cls: type) -> type | None:
+    """Đọc `ProviderFamily[PaymentGateway]` -> PaymentGateway."""
+    for base in getattr(cls, "__orig_bases__", ()):
+        for arg in get_args(base):
+            if isinstance(arg, type):
+                return arg
+    return None
+
+
+class ProviderFamily(Generic[C]):
+    """Sổ đăng ký của MỘT họ provider — cũng chính là token DI của họ đó.
+
+        # src/providers/payment/__init__.py
+        class PaymentProviders(ProviderFamily[PaymentGateway], family="payment"):
+            pass
+
+        # service
+        def __init__(self, payments: PaymentProviders) -> None: ...
+
+    Tham số generic là **năng lực chính** của họ. Khai nó thì `require(tên)` chỉ
+    cần một tham số và trả về đúng kiểu đó, nên IDE gợi ý được method.
+
+    Vì sao token là CLASS chứ không phải `Providers["payment"]`: chuỗi trong
+    subscript bị ruff đọc thành forward-reference nên báo F821 ở mọi dự án bật
+    lint. Dùng lớp thì annotation là một tên thật.
 
     Không dựng tay — `register_providers()` dựng sẵn mỗi họ một sổ và cắm vào
-    container. Service nhận nó qua `Providers["<họ>"]`.
+    container.
     """
 
-    def __init__(self, family: str) -> None:
-        self._family = family
+    #: Tên họ, do `class X(ProviderFamily[Cap], family="...")` đặt.
+    __family__: str = ""
+
+    #: Năng lực chính, đọc từ tham số generic. None nghĩa là không khai.
+    __capability__: type | None = None
+
+    def __init_subclass__(cls, family: str = "", **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if not family:
+            raise TypeError(
+                f"{cls.__name__} thiếu tên họ. Viết: "
+                f'class {cls.__name__}(ProviderFamily[NangLuc], family="ten-ho")'
+            )
+        if not _TEN_HOP_LE.match(family):
+            raise ValueError(
+                f"Tên họ không hợp lệ: {family!r}. Chữ thường, số, gạch ngang hoặc gạch dưới."
+            )
+        cls.__family__ = family
+        cls.__capability__ = _nang_luc_chinh(cls)
+
+    def __init__(self) -> None:
         self._classes: dict[str, type] = {}
 
     def __repr__(self) -> str:
         ten = ", ".join(sorted(self._classes)) or "rỗng"
-        return f"<Providers[{self._family}]: {ten}>"
+        return f"<{type(self).__name__} (họ {self.__family__}): {ten}>"
 
     # -- đăng ký (register_providers gọi) ---------------------------------
 
@@ -146,7 +194,7 @@ class Registry:
         truoc = self._classes.get(name)
         if truoc is not None and truoc is not provider_cls:
             raise RuntimeError(
-                f"Họ '{self._family}' có hai provider cùng tên '{name}': "
+                f"Họ '{self.__family__}' có hai provider cùng tên '{name}': "
                 f"{truoc.__module__}.{truoc.__qualname__} và "
                 f"{provider_cls.__module__}.{provider_cls.__qualname__}. Đổi tên một cái."
             )
@@ -155,13 +203,13 @@ class Registry:
     # -- tra cứu ----------------------------------------------------------
 
     def get(self, name: str) -> Any:
-        """Instance của provider `name`. Dựng qua container nên có đủ DI."""
+        """Instance của provider `name`, KHÔNG kiểm năng lực."""
         return self._dung(name, self.get_class(name))
 
     def _dung(self, name: str, provider_cls: type) -> Any:
         return container.build(
             provider_cls,
-            key=f"providers:{self._family}:{name}",
+            key=f"providers:{self.__family__}:{name}",
             scope=getattr(provider_cls, _SCOPE_PROVIDER, Scope.SINGLETON),
         )
 
@@ -170,27 +218,42 @@ class Registry:
         if provider_cls is None:
             co = ", ".join(sorted(self._classes)) or "(chưa có cái nào)"
             raise ProviderNotFoundError(
-                f"Không có provider '{name}' trong họ '{self._family}'. Đang có: {co}"
+                f"Không có provider '{name}' trong họ '{self.__family__}'. Đang có: {co}"
             )
         return provider_cls
 
-    def require(self, name: str, capability: type) -> Any:
+    def _can(self, capability: type | None) -> type:
+        can = capability or self.__capability__
+        if can is None:
+            raise TypeError(
+                f"Họ '{self.__family__}' chưa khai năng lực chính, nên phải truyền "
+                f"tham số thứ hai. Hoặc khai: class {type(self).__name__}"
+                f'(ProviderFamily[NangLuc], family="{self.__family__}")'
+            )
+        return can
+
+    def require(self, name: str, capability: type | None = None) -> C:
         """Lấy provider và khẳng định nó hiện thực `capability`.
+
+        Không truyền `capability` thì dùng năng lực chính của họ — thứ khai ở
+        `ProviderFamily[NangLuc]`. Truyền tường minh khi cần một năng lực TUỲ
+        CHỌN mà không phải provider nào cũng có.
 
         Kiểm bằng `issubclass` chứ không phải `hasattr`: method abstract kế thừa
         vẫn cho `hasattr == True` dù lớp con chưa hiện thực gì.
         """
+        can = self._can(capability)
         provider_cls = self.get_class(name)
-        if not issubclass(provider_cls, capability):
+        if not issubclass(provider_cls, can):
             co = ", ".join(capabilities_of(provider_cls)) or "(không có năng lực nào)"
             raise CapabilityNotSupportedError(
-                f"Provider '{name}' (họ '{self._family}') không hỗ trợ "
-                f"{capability.__name__}. Nó làm được: {co}"
+                f"Provider '{name}' (họ '{self.__family__}') không hỗ trợ "
+                f"{can.__name__}. Nó làm được: {co}"
             )
         return self._dung(name, provider_cls)
 
-    def supports(self, name: str, capability: type) -> bool:
-        return issubclass(self.get_class(name), capability)
+    def supports(self, name: str, capability: type | None = None) -> bool:
+        return issubclass(self.get_class(name), self._can(capability))
 
     def names(self) -> list[str]:
         """Tên mọi provider CỦA HỌ NÀY — không lẫn họ khác."""
@@ -202,49 +265,8 @@ class Registry:
     def describe(self) -> list[dict[str, Any]]:
         """Bảng tóm tắt cả họ — trả thẳng ra endpoint liệt kê được."""
         return [{"name": ten, "capabilities": self.capabilities(ten)} for ten in self.names()]
-
-
-class ProviderFamily:
-    """Lớp nền cho token DI của một họ. `fam provider` sinh sẵn lớp con.
-
-        # src/providers/payment/__init__.py
-        class PaymentProviders(ProviderFamily, family="payment"):
-            pass
-
-        # service
-        def __init__(self, payments: PaymentProviders) -> None: ...
-
-    Vì sao là CLASS chứ không phải `Providers["payment"]`: chuỗi trong subscript
-    bị ruff đọc thành forward-reference nên báo F821 ở mọi dự án bật lint. Dùng
-    lớp thì annotation là một tên thật — lint sạch, IDE gợi ý được method, và
-    container phân giải theo đúng đường bình thường của nó.
-
-    Không bao giờ khởi tạo: `register_providers()` cắm sẵn một `Registry` vào
-    khoá mang tên lớp này.
-    """
-
-    #: Tên họ, do `class X(ProviderFamily, family="...")` đặt.
-    __family__: str = ""
-
-    def __init_subclass__(cls, family: str = "", **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        if not family:
-            raise TypeError(
-                f"{cls.__name__} thiếu tên họ. Viết: "
-                f'class {cls.__name__}(ProviderFamily, family="ten-ho")'
-            )
-        if not _TEN_HOP_LE.match(family):
-            raise ValueError(
-                f"Tên họ không hợp lệ: {family!r}. Chữ thường, số, gạch ngang hoặc gạch dưới."
-            )
-        cls.__family__ = family
-
-    def __init__(self) -> None:  # pragma: no cover - không bao giờ gọi tới
-        raise RuntimeError("ProviderFamily là token DI, không phải class để khởi tạo.")
-
-
-def register_providers(package: str = DEFAULT_PROVIDERS_PACKAGE) -> dict[str, Registry]:
-    """Quét `package`, dựng một `Registry` cho MỖI thư mục con, cắm vào container.
+def register_providers(package: str = DEFAULT_PROVIDERS_PACKAGE) -> dict[str, ProviderFamily]:
+    """Quét `package`, dựng sổ cho MỖI thư mục con, cắm vào container.
 
     Gọi một lần trong `src/main.py` (hoặc để `create_app()` gọi hộ). Quét NGAY
     LÚC KHỞI ĐỘNG chứ không lười: file provider lỗi cú pháp thì `fam dev` chết
@@ -269,16 +291,25 @@ def register_providers(package: str = DEFAULT_PROVIDERS_PACKAGE) -> dict[str, Re
     if duong_dan is None:
         raise RuntimeError(f"'{package}' phải là một package (có __init__.py), không phải module.")
 
-    so: dict[str, Registry] = {}
+    so: dict[str, ProviderFamily] = {}
     for info in pkgutil.iter_modules(list(duong_dan)):
         if not info.ispkg or info.name.startswith("_"):
             continue
 
         family = info.name
         goi_ho = f"{package}.{family}"
-        registry = Registry(family)
+        token = _token_cua(importlib.import_module(goi_ho), family)
+        if token is None:
+            goi_y = family.replace("-", "_").title().replace("_", "")
+            raise RuntimeError(
+                f"Họ '{family}' chưa có token DI. Thêm vào {goi_ho}/__init__.py:\n"
+                f'    class {goi_y}Providers(ProviderFamily[NangLuc], family="{family}"): ...'
+            )
 
-        for con in pkgutil.walk_packages([f"{p}/{family}" for p in duong_dan], prefix=f"{goi_ho}."):
+        registry = token()
+        for con in pkgutil.walk_packages(
+            [f"{p}/{family}" for p in duong_dan], prefix=f"{goi_ho}."
+        ):
             if con.name.rsplit(".", 1)[-1].startswith("_"):
                 continue
             module = importlib.import_module(con.name)
@@ -293,13 +324,6 @@ def register_providers(package: str = DEFAULT_PROVIDERS_PACKAGE) -> dict[str, Re
                 registry.add(ten, doi_tuong)
 
         so[family] = registry
-        token = _token_cua(importlib.import_module(goi_ho), family)
-        if token is None:
-            raise RuntimeError(
-                f"Họ '{family}' chưa có token DI. Thêm vào {goi_ho}/__init__.py:\n"
-                f'    class {family.replace("-", "_").title().replace("_", "")}Providers'
-                f'(ProviderFamily, family="{family}"): ...'
-            )
         container.override(token, registry)
 
     if so:
@@ -312,7 +336,7 @@ def register_providers(package: str = DEFAULT_PROVIDERS_PACKAGE) -> dict[str, Re
     return so
 
 
-def _token_cua(goi_ho: Any, family: str) -> type | None:
+def _token_cua(goi_ho: Any, family: str) -> type[ProviderFamily] | None:
     """Tìm lớp token `ProviderFamily` khai trong `__init__.py` của họ.
 
     Tra ngay trong package của họ chứ không giữ một map toàn cục: map toàn cục

@@ -61,7 +61,7 @@ def _chu_ky(duong_dan: Path, lop: str, method: str) -> tuple[str, bool]:
     return "(self)", True
 
 
-def render_family(family: str) -> dict[str, str]:
+def render_family(family: str, goi: str) -> dict[str, str]:
     """Hai file khung của một họ mới."""
     lop_token = f"{pascal(family)}Providers"
     nang_luc = f"{pascal(family)}Basic"
@@ -74,9 +74,15 @@ không sửa service, không sửa main.py, không có danh sách import nào ph
 
 from fastapi_modular import ProviderFamily
 
+from {goi}.{family}.capabilities import {nang_luc}
 
-class {lop_token}(ProviderFamily, family="{family}"):
-    """Token DI của họ. Service khai `def __init__(self, x: {lop_token})`."""
+
+class {lop_token}(ProviderFamily[{nang_luc}], family="{family}"):
+    """Token DI của họ. Service khai `def __init__(self, x: {lop_token})`.
+
+    Tham số generic là NĂNG LỰC CHÍNH: nhờ nó `require(tên)` chỉ cần một tham
+    số và trả về đúng kiểu {nang_luc}, nên IDE gợi ý được method.
+    """
 '''
 
     caps = f'''"""Năng lực của họ **{family}** — provider CÓ THỂ hiện thực cái nào tuỳ nó.
@@ -191,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         _write(goc, {"__init__.py": '"""Các provider cắm được, nhóm theo họ."""\n'})
 
     if ho_moi:
-        _write(thu_muc, render_family(family))
+        _write(thu_muc, render_family(family, str(goc).replace("/", ".")))
 
     caps = _capabilities_trong(thu_muc / "capabilities.py")
     _write(thu_muc, {f"{name}.py": render_provider(family, name, caps, goc)})

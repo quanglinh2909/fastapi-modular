@@ -18,7 +18,6 @@ from fastapi_modular.core.providers import (
     CapabilityNotSupportedError,
     ProviderFamily,
     ProviderNotFoundError,
-    Registry,
     capabilities_of,
     provider,
     register_providers,
@@ -53,21 +52,25 @@ class MomoProvider(PaymentGateway):
         return f"momo:{so_tien}"
 
 
+class PaymentProviders(ProviderFamily[PaymentGateway], family="payment"):
+    pass
+
+
 @pytest.fixture
-def so() -> Registry:
-    r = Registry("payment")
+def so() -> PaymentProviders:
+    r = PaymentProviders()
     r.add("vnpay", VNPayProvider)
     r.add("momo", MomoProvider)
     return r
 
 
 # --------------------------------------------------------------- tra cứu
-def test_require_tra_ve_dung_provider(so: Registry):
+def test_require_tra_ve_dung_provider(so: PaymentProviders):
     assert isinstance(so.require("vnpay", PaymentGateway), VNPayProvider)
     assert isinstance(so.require("momo", PaymentGateway), MomoProvider)
 
 
-def test_ten_khong_co_thi_404_va_liet_ke_cai_dang_co(so: Registry):
+def test_ten_khong_co_thi_404_va_liet_ke_cai_dang_co(so: PaymentProviders):
     with pytest.raises(ProviderNotFoundError) as loi:
         so.get_class("zalopay")
     assert loi.value.status_code == 404
@@ -75,7 +78,7 @@ def test_ten_khong_co_thi_404_va_liet_ke_cai_dang_co(so: Registry):
     assert "momo" in str(loi.value) and "vnpay" in str(loi.value)
 
 
-def test_thieu_nang_luc_thi_501_chu_khong_phai_500(so: Registry):
+def test_thieu_nang_luc_thi_501_chu_khong_phai_500(so: PaymentProviders):
     """Momo có thật, chỉ là không hoàn tiền được — đó không phải bug của server."""
     with pytest.raises(CapabilityNotSupportedError) as loi:
         so.require("momo", HoanTien)
@@ -85,7 +88,7 @@ def test_thieu_nang_luc_thi_501_chu_khong_phai_500(so: Registry):
     assert "PaymentGateway" in str(loi.value)
 
 
-def test_supports_va_describe(so: Registry):
+def test_supports_va_describe(so: PaymentProviders):
     assert so.supports("vnpay", HoanTien) is True
     assert so.supports("momo", HoanTien) is False
     assert so.names() == ["momo", "vnpay"]
@@ -96,7 +99,7 @@ def test_supports_va_describe(so: Registry):
 
 
 def test_hai_provider_trung_ten_bi_chan():
-    r = Registry("payment")
+    r = PaymentProviders()
     r.add("x", VNPayProvider)
     r.add("x", VNPayProvider)  # cùng một class: vô hại
     with pytest.raises(RuntimeError, match="hai provider cùng tên"):
@@ -135,6 +138,10 @@ class CoPhuThuoc(ABC):
     def ten_app(self) -> str: ...
 
 
+class CfgProviders(ProviderFamily[CoPhuThuoc], family="cfg"):
+    pass
+
+
 @provider("can-settings")
 class ProviderCanSettings(CoPhuThuoc):
     """Provider có phụ thuộc — bản registry cũ dựng bằng `cls()` nên chết ở đây."""
@@ -148,12 +155,12 @@ class ProviderCanSettings(CoPhuThuoc):
 
 def test_provider_nhan_duoc_phu_thuoc_qua_container():
     container.override(Settings, Settings(APP_NAME="thu-nghiem", APP_DB=DatabaseSettings()))
-    r = Registry("cfg")
+    r = CfgProviders()
     r.add("can-settings", ProviderCanSettings)
     assert r.require("can-settings", CoPhuThuoc).ten_app() == "thu-nghiem"
 
 
-def test_provider_la_singleton_theo_mac_dinh(so: Registry):
+def test_provider_la_singleton_theo_mac_dinh(so: PaymentProviders):
     assert so.get("vnpay") is so.get("vnpay")
 
 
@@ -165,7 +172,7 @@ class ProviderTheoRequest(CoPhuThuoc):
 
 @pytest.mark.asyncio
 async def test_scope_request_duoc_ton_trong():
-    r = Registry("cfg")
+    r = CfgProviders()
     r.add("theo-request", ProviderTheoRequest)
     async with request_scope():
         a, b = r.get("theo-request"), r.get("theo-request")
@@ -184,8 +191,9 @@ def _du_an_mau(root: Path) -> None:
         textwrap.dedent(
             """
             from fastapi_modular import ProviderFamily
+            from providers_thu.sms.capabilities import GuiSms
 
-            class SmsProviders(ProviderFamily, family="sms"):
+            class SmsProviders(ProviderFamily[GuiSms], family="sms"):
                 pass
             """
         ),
@@ -244,13 +252,9 @@ def test_khong_co_thu_muc_providers_thi_im_lang_bo_qua():
 
 
 # ------------------------------------------------- nhận qua DI trong service
-class PaymentProviders(ProviderFamily, family="payment"):
-    pass
-
-
 def test_service_nhan_duoc_so_qua_token_lop():
     """Đúng cách người dùng viết: `def __init__(self, payments: PaymentProviders)`."""
-    r = Registry("payment")
+    r = PaymentProviders()
     r.add("vnpay", VNPayProvider)
     container.override(PaymentProviders, r)
 
@@ -269,7 +273,7 @@ def test_service_nhan_duoc_so_qua_token_lop():
 def test_token_thieu_ten_ho_bi_chan_ngay_luc_dinh_nghia():
     with pytest.raises(TypeError, match="thiếu tên họ"):
 
-        class Thieu(ProviderFamily):
+        class Thieu(ProviderFamily[str]):
             pass
 
 
@@ -300,7 +304,13 @@ def test_hai_ho_dung_chung_mot_ten_class_van_song_hoa_binh():
         @abstractmethod
         def gui(self) -> str: ...
 
-    ho_a, ho_b = Registry("device"), Registry("notification")
+    class DeviceProviders(ProviderFamily[GuiTin], family="device"):
+        pass
+
+    class NotifProviders(ProviderFamily[GuiTin], family="notification"):
+        pass
+
+    ho_a, ho_b = DeviceProviders(), NotifProviders()
 
     @provider("oryza")
     class OryzaProvider(GuiTin):
@@ -341,7 +351,7 @@ def test_fam_provider_sinh_ho_moi_roi_them_provider(tmp_path: Path, monkeypatch)
     assert (ho / "vnpay.py").exists()
 
     # Token DI mang tên suy ra từ tên họ.
-    assert 'class PaymentProviders(ProviderFamily, family="payment")' in (
+    assert 'class PaymentProviders(ProviderFamily[PaymentBasic], family="payment")' in (
         ho / "__init__.py"
     ).read_text(encoding="utf-8")
 
@@ -380,3 +390,37 @@ def test_fam_provider_chan_ten_khong_hop_le(tmp_path: Path):
     # "Payment" được hạ chữ thường thành "payment" — cố ý, cho dễ gõ.
     assert sinh(["payment", "VN Pay", "--root", str(tmp_path)]) == 1
     assert sinh(["1payment", "vnpay", "--root", str(tmp_path)]) == 1
+
+
+# ------------------------------------------- năng lực chính khai ở lớp token
+def test_require_mot_tham_so_dung_nang_luc_chinh(so: PaymentProviders):
+    """`ProviderFamily[PaymentGateway]` khai năng lực chính, nên require() gọn."""
+    assert PaymentProviders.__capability__ is PaymentGateway
+    assert isinstance(so.require("vnpay"), VNPayProvider)
+    assert isinstance(so.require("momo"), MomoProvider)
+
+
+def test_nang_luc_tuy_chon_van_khai_tuong_minh(so: PaymentProviders):
+    assert isinstance(so.require("vnpay", HoanTien), VNPayProvider)
+    with pytest.raises(CapabilityNotSupportedError):
+        so.require("momo", HoanTien)
+
+
+def test_supports_cung_dung_nang_luc_chinh(so: PaymentProviders):
+    assert so.supports("momo") is True
+    assert so.supports("momo", HoanTien) is False
+
+
+def test_ho_khong_khai_nang_luc_thi_require_doi_tham_so_thu_hai():
+    """Không khai `ProviderFamily[...]` thì phải nói rõ, đừng đoán bừa."""
+
+    class KhongKhai(ProviderFamily, family="mo-ho"):
+        pass
+
+    r = KhongKhai()
+    r.add("vnpay", VNPayProvider)
+    assert KhongKhai.__capability__ is None
+    with pytest.raises(TypeError, match="chưa khai năng lực chính"):
+        r.require("vnpay")
+    # truyền tay thì vẫn chạy
+    assert isinstance(r.require("vnpay", PaymentGateway), VNPayProvider)

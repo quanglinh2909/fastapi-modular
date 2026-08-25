@@ -29,7 +29,6 @@ from fastapi_modular.core.providers import (
     CapabilityNotSupportedError,
     ProviderFamily,
     ProviderNotFoundError,
-    Registry,
     provider,
     register_providers,
 )
@@ -53,7 +52,6 @@ __all__ = [
     "Page",
     "ProviderFamily",
     "ProviderNotFoundError",
-    "Registry",
     "Scope",
     "ServiceUnavailableError",
     "Settings",

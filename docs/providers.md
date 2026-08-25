@@ -4,9 +4,9 @@ Chọn **bản hiện thực bằng tên lúc chạy**: cổng thanh toán lấy
 hàng, nhà mạng SMS lấy từ cấu hình, hãng camera lấy từ bản ghi thiết bị.
 
 ```
-DonHangService ──require("vnpay", PaymentGateway)──▶ VnpayPayment
-                                                     MomoPayment
-                                                     ZaloPayPayment  <- thả file vào là có
+DonHangService ──── require("vnpay") ────▶ VnpayPayment
+                                          MomoPayment
+                                          ZaloPayPayment  <- thả file vào là có
 ```
 
 Container giải quyết phụ thuộc theo **kiểu**, quyết định lúc viết code
@@ -60,10 +60,15 @@ thân hàm.
 ```python
 from fastapi_modular import ProviderFamily
 
+from src.providers.payment.capabilities import PaymentGateway
 
-class PaymentProviders(ProviderFamily, family="payment"):
+
+class PaymentProviders(ProviderFamily[PaymentGateway], family="payment"):
     """Token DI của họ. Service khai `def __init__(self, x: PaymentProviders)`."""
 ```
+
+Tham số generic là **năng lực chính** của họ. Nhờ nó `require(tên)` chỉ cần một
+tham số và trả về đúng kiểu `PaymentGateway` — IDE gợi ý được method.
 
 **`capabilities.py`** — việc mà provider *có thể* làm:
 
@@ -113,7 +118,6 @@ Nhận sổ qua DI, đúng cách nhận mọi thứ khác:
 from fastapi_modular import injectable
 
 from src.providers.payment import PaymentProviders
-from src.providers.payment.capabilities import PaymentGateway
 
 
 @injectable
@@ -123,7 +127,7 @@ class DonHangService:
 
     async def thanh_toan(self, don: DonHang) -> str:
         # tên cổng lấy từ DB — service không biết trước là cổng nào
-        cong = self._payments.require(don.cong_thanh_toan, PaymentGateway)
+        cong = self._payments.require(don.cong_thanh_toan)
         return await cong.tao_giao_dich(don.so_tien, don.ma)
 ```
 
@@ -134,9 +138,10 @@ không sửa `main.py`, không có danh sách import nào phải bảo trì.
 
 | Gọi | Trả về | Ném lỗi |
 |---|---|---|
-| `require(tên, NăngLực)` | provider, đã khẳng định làm được `NăngLực` | **404** không có tên · **501** có nhưng thiếu năng lực |
-| `get(tên)` | provider, không kiểm năng lực | **404** |
-| `supports(tên, NăngLực)` | `bool` | — |
+| `require(tên)` | provider, đã khẳng định làm được **năng lực chính** | **404** không có tên · **501** thiếu năng lực |
+| `require(tên, NăngLực)` | như trên, nhưng cho năng lực **tuỳ chọn** | nt |
+| `get(tên)` | provider, **không** kiểm năng lực | **404** |
+| `supports(tên[, NăngLực])` | `bool` | — |
 | `names()` | `["momo", "vnpay"]` | — |
 | `capabilities(tên)` | `["HoanTien", "PaymentGateway"]` | **404** |
 | `describe()` | `[{"name", "capabilities"}, …]` | — |
@@ -219,7 +224,7 @@ def test_vnpay_tao_duoc_giao_dich():
 from src.providers.payment import PaymentProviders
 
 def test_service_dung_cong_gia_lap():
-    so = Registry("payment")
+    so = PaymentProviders()
     so.add("vnpay", CongGiaLap)
     container.override(PaymentProviders, so)
     ...
@@ -232,6 +237,7 @@ def test_service_dung_cong_gia_lap():
 | Triệu chứng | Nguyên nhân | Cách chữa |
 |---|---|---|
 | `Họ 'x' chưa có token DI` | thiếu lớp `ProviderFamily` trong `__init__.py` của họ | thêm 2 dòng, hoặc chạy lại `fam provider x <tên>` |
+| `Họ 'x' chưa khai năng lực chính` | token viết `ProviderFamily` không có `[NangLuc]` | thêm tham số generic, hoặc truyền năng lực vào `require(tên, NăngLực)` |
 | `Không có provider 'y' trong họ 'x'` (404) | sai tên, hoặc file chưa được quét | so tên với `names()`; file phải nằm dưới `src/providers/x/` và không bắt đầu bằng `_` |
 | `Provider 'y' không hỗ trợ Z` (501) | provider không kế thừa `Z` | đúng như thiết kế — dùng `supports()` để kiểm trước, hoặc cho `y` hiện thực `Z` |
 | `capabilities()` trả rỗng | interface không kế thừa `ABC` | năng lực phải là lớp con của `ABC` mới được nhận diện |
