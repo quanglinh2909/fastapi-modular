@@ -59,6 +59,7 @@ from fastapi_modular.core.workers import (
     call_handler,
     check_thread_mode,
     context_param_of,
+    warn_if_endless,
 )
 
 log = get_logger(__name__)
@@ -114,6 +115,7 @@ class ScheduledSpec:
 def _decorate(spec: ScheduledSpec, thread: bool) -> Callable[[Callable], Callable]:
     def decorate(fn: Callable) -> Callable:
         check_thread_mode(fn, thread)
+        warn_if_endless(fn, spec.kind, spec.label or fn.__qualname__)
         context_param = context_param_of(fn)
         others = [
             p for p in inspect.signature(fn).parameters if p not in ("self", context_param)
@@ -433,6 +435,7 @@ class SchedulerRunner:
                     context=context,
                     context_param=spec.context_param,
                     thread=spec.thread,
+                    own_thread=True,
                 )
                 if spec.max_seconds:
                     await asyncio.wait_for(call, spec.max_seconds)

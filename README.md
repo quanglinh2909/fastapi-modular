@@ -283,6 +283,8 @@ async def watch(self, data: dict, ctx: WorkerContext) -> None:
 
 for camera in cameras:
     await service.watch(camera.id, {"ip": camera.ip})   # key + data at call time
+
+await self.watch.stop(camera.id)       # stops ONE instance, waits for its cleanup
 ```
 
 All four decorators come in two shapes: `async def` (the default) and
@@ -294,6 +296,14 @@ blocking code, or `ctx.run(...)` to write to the DB from inside a thread.
 the loop (open the camera, load the model) and a body that runs until you stop
 it. Crashes restart with backoff; calling it again with the same `key` returns
 the running instance instead of opening a second stream.
+
+`stop()` waits for the loop's `finally:` to finish, so anything you write after
+it runs with the camera already closed — put resource cleanup in `finally:` and
+business cleanup after the call.
+
+Write `while ctx.running:`, not `while True:` — a loop that never checks makes
+Ctrl+C look dead for the whole shutdown timeout. The framework says so at
+startup (`worker.endless_loop`) rather than letting you find out at 2am.
 
 `fam run` starts 4 workers, so a hand-written `while True: sleep(5)` runs
 **four times**. `single=True` (the default) locks it down: measured 5 runs
@@ -383,7 +393,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              854 tests that need no infrastructure, 62 more when servers exist
+tests/              864 tests that need no infrastructure, 62 more when servers exist
 docs/               reference documentation (Vietnamese)
 ```
 

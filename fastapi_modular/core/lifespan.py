@@ -37,22 +37,21 @@ from fastapi_modular.core.websocket import WebSocketServer
 log = get_logger(__name__)
 
 
-def _resize_blocking_pool(settings: Settings) -> Any:
-    """Đổi pool thread mà `ctx.blocking(...)` dùng, nếu có khai kích thước.
+def _install_blocking_pool(settings: Settings) -> Any:
+    """Dựng pool thread mà `ctx.blocking(...)` dùng.
 
-    Mặc định của Python là `min(32, số nhân + 4)`. Nhiều worker cùng gọi hàm
-    chặn liên tục hơn số đó thì chúng xếp hàng chờ nhau.
+    Không phải `ThreadPoolExecutor` của thư viện chuẩn, và có lý do — xem
+    `BlockingPool`: thread ở đó là `daemon`, nên một lời gọi chặn treo vĩnh
+    viễn không kéo cả tiến trình theo lúc thoát.
+
+    Kích thước mặc định giữ nguyên của Python (`min(32, số nhân + 4)`); nhiều
+    worker cùng gọi hàm chặn dày hơn số đó thì chúng xếp hàng chờ nhau, nới
+    bằng `APP_WORKERS__THREAD_POOL_SIZE`.
     """
-    size = settings.workers.thread_pool_size
-    if size <= 0:
-        return None
+    from fastapi_modular.core.workers import configure_blocking_pool
 
-    import asyncio
-    from concurrent.futures import ThreadPoolExecutor
-
-    pool = ThreadPoolExecutor(max_workers=size, thread_name_prefix="fam-blocking")
-    asyncio.get_running_loop().set_default_executor(pool)
-    log.info("workers.thread_pool", size=size)
+    pool = configure_blocking_pool(settings.workers.thread_pool_size)
+    log.debug("workers.thread_pool", size=pool.size)
     return pool
 
 
@@ -168,7 +167,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.scheduler = scheduler
     workers = container.resolve(WorkerPool)
     app.state.workers = workers
-    blocking_pool = _resize_blocking_pool(settings)
+    blocking_pool = _install_blocking_pool(settings)
 
     log.info(
         "app.started",
@@ -207,7 +206,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await redis.shutdown()
         await database.shutdown()
         if blocking_pool is not None:
-            blocking_pool.shutdown(wait=False, cancel_futures=True)
+            blocking_pool.shutdown()
         container.reset()
         app.state.container = None
         app.state.database = None

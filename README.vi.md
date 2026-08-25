@@ -279,6 +279,8 @@ async def watch(self, data: dict, ctx: WorkerContext) -> None:
 
 for camera in cameras:
     await service.watch(camera.id, {"ip": camera.ip})   # khoá + data lúc gọi
+
+await self.watch.stop(camera.id)       # dừng MỘT bản, chờ nó dọn dẹp xong
 ```
 
 Cả bốn decorator đều có hai dạng: `async def` (mặc định) và `thread=True` cho
@@ -289,6 +291,13 @@ database từ trong thread.
 `@worker` là chỗ `@interval` và `@job` không với tới: nó có phần **dựng ở trước
 vòng lặp** (mở camera, nạp model) và chạy tới khi bạn bảo dừng. Hỏng thì tự dựng
 lại, chờ tăng dần. Gọi lại cùng `key` không mở thêm bản.
+
+`stop()` chờ `finally:` của vòng lặp chạy xong, nên dòng viết sau nó chạy khi
+camera đã đóng — tài nguyên dọn trong `finally:`, việc nghiệp vụ dọn sau lời gọi.
+
+Viết `while ctx.running:`, đừng viết `while True:` — vòng lặp không kiểm cờ dừng
+làm Ctrl+C trông như chết suốt cả thời gian chờ tắt. Khung kêu ngay lúc khởi
+động (`worker.endless_loop`) chứ không để bạn phát hiện lúc 2 giờ sáng.
 
 `fam run` bật 4 worker, nên một vòng `while True: sleep(5)` viết tay sẽ chạy
 **bốn lần**. Mặc định `single=True` khoá lại: đo được 5 lượt / 1 tiến trình,
@@ -382,7 +391,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              854 test chạy không cần hạ tầng, 62 test nữa bật khi có server thật
+tests/              864 test chạy không cần hạ tầng, 62 test nữa bật khi có server thật
 docs/               tài liệu tra cứu
 ```
 

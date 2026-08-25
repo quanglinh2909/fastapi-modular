@@ -141,20 +141,38 @@ HTTP, mọi frame WebSocket, mọi worker khác. `async def` không tự cứu �
 
 #### Bên dưới nó là gì
 
-`ctx.blocking` gọi `asyncio.to_thread`, tức đẩy việc vào
-**`ThreadPoolExecutor` dùng chung của event loop**. Hai điều đáng biết:
+`ctx.blocking` đẩy việc vào một **pool thread dùng chung**. Ba điều đáng biết:
 
 - **Thread được TÁI SỬ DỤNG**, không mở mới mỗi lần gọi. Gọi một triệu lần
   cũng không sinh một triệu thread.
-- **Pool có trần**: `min(32, số nhân + 4)` — trên máy 12 nhân là 16 chỗ. Nhiều
-  worker gọi dày hơn số chỗ thì chúng xếp hàng chờ nhau: **chậm đi**, không
-  hỏng. Nới bằng `APP_WORKERS__THREAD_POOL_SIZE`.
+- **Pool có trần**: mặc định `min(32, số nhân + 4)` — trên máy 12 nhân là 16
+  chỗ. Nhiều worker gọi dày hơn số chỗ thì chúng xếp hàng chờ nhau: **chậm
+  đi**, không hỏng. Nới bằng `APP_WORKERS__THREAD_POOL_SIZE`.
+- **Thread trong pool là `daemon`**, và điều đó không phải chi tiết vụn vặt.
+  `ThreadPoolExecutor` của thư viện chuẩn dùng thread thường, mà lúc thoát
+  Python **JOIN mọi thread thường — không timeout, không cách nào bỏ qua**. Chỉ
+  cần một `capture.read()` treo trên luồng RTSP đã chết là tiến trình không
+  thoát được nữa: Ctrl+C bấm bao nhiêu lần cũng chỉ in ra một
+  `KeyboardInterrupt` trong `t.join()` rồi lại chờ tiếp, và người ta phải
+  `kill -9`. Vì vậy khung dùng pool riêng với thread daemon.
 
-Còn `@worker(thread=True)` thì **KHÔNG** dùng pool đó — mỗi bản một thread
-riêng. Khác biệt này quan trọng, và tôi đã mắc đúng lỗi ấy một lần: vòng lặp
-chạy mãi mà mượn pool chung thì nó giữ chỗ **vĩnh viễn**. Đủ 16 worker là pool
-cạn sạch và mọi `ctx.blocking` treo cứng — đo được 20 worker thì cả tiến trình
-chết, không phải chậm. Sau khi cho thread riêng:
+  Lời gọi treo thì vẫn treo — Python không có cách nào giết một thread đang kẹt
+  — nhưng nó không kéo cả tiến trình theo. **Hàm chặn nào có tham số timeout
+  thì hãy đặt nó** (`cv2.CAP_PROP_OPEN_TIMEOUT_MSEC`, `socket.settimeout`,
+  `requests.get(..., timeout=...)`); đó là cách duy nhất lấy lại được cái chỗ
+  trong pool.
+
+Còn **thân của `@worker`/`@job`/`@interval` khai `thread=True` thì KHÔNG dùng
+pool đó** — mỗi lượt chạy một thread daemon riêng. Khác biệt này quan trọng, và
+tôi đã mắc đúng lỗi ấy hai lần:
+
+- Vòng lặp chạy mãi mà mượn pool chung thì nó giữ chỗ **vĩnh viễn**. Đủ 16
+  worker là pool cạn sạch và mọi `ctx.blocking` treo cứng — đo được 20 worker
+  thì cả tiến trình chết, không phải chậm.
+- `@job(thread=True)` mượn pool chung là thread **không phải daemon**. Một việc
+  không chịu kết thúc là tiến trình không bao giờ thoát nổi.
+
+Sau khi cho mỗi lượt một thread riêng:
 
 | Worker `thread=True` | Thread tiến trình | `ctx.blocking(0.01s)` mất |
 |---|---|---|
@@ -163,9 +181,8 @@ chết, không phải chậm. Sau khi cho thread riêng:
 | 20 | 22 | 0,015s *(trước khi sửa: treo vĩnh viễn)* |
 | 40 | 42 | 0,015s |
 
-Cái giá của thread riêng: mỗi bản là một thread hệ điều hành thật. `@worker`
-chạy mãi nên đó là cái giá đúng; `@interval`/`@job` chạy từng lượt ngắn thì
-mượn pool là đúng hơn — mở thread mới cho mỗi lượt 5 giây một lần là phí.
+Cái giá là mỗi lượt chạy tốn một lần dựng thread — cỡ chục micro giây, không
+đáng kể với một việc mà bạn đã chọn đẩy sang thread.
 
 ### Hai kiểu chạy — có ở CẢ BỐN decorator
 
@@ -225,19 +242,68 @@ Vòng lặp **tự kết thúc** (bạn `return` hoặc `ctx.running` hoá False
 dựng lại — đó là bạn chủ động, khung không cãi. Muốn hỏng là dừng hẳn thì
 `restart=False`.
 
-### Dừng và liệt kê
+### Dừng một bản, và dọn dẹp
+
+Gọi thẳng trên chính method mang `@worker` — không phải nhắc lại tên worker
+dưới dạng chuỗi ở chỗ gọi, nên đổi tên worker thì không sót chỗ nào:
+
+```python
+await self.watch.stop(device_id)      # dừng MỘT bản, chờ nó dọn xong
+await self.watch.stop_all()           # dừng mọi bản, trả về số bản đã dừng
+self.watch.running()                  # [{"worker", "key", "uptime_seconds", "running"}]
+self.watch.is_running(device_id)      # True/False
+```
+
+**`stop()` chờ tới lúc vòng lặp thoát hẳn** — tức là sau `finally:` trong thân
+hàm. Nên chỗ dọn dẹp có hai nơi, và ranh giới giữa chúng rõ ràng:
+
+| Dọn cái gì | Viết ở đâu |
+|---|---|
+| Tài nguyên của chính vòng lặp (camera, file, kết nối) | `finally:` trong thân worker |
+| Việc nghiệp vụ đi kèm (xoá bản ghi, báo cho nơi khác) | sau `await ...stop(key)` |
+
+`finally:` chạy **mọi lần** vòng lặp kết thúc — bị dừng, tự `return`, hay ném
+lỗi — nên tài nguyên phải đóng ở đó. Việc nghiệp vụ thì không: gỡ thiết bị khỏi
+database chỉ đúng khi người dùng gỡ thiết bị, chứ không phải mỗi lần camera rớt
+mạng và worker dựng lại.
 
 ```python
 @injectable
-class CameraController:
-    def __init__(self, workers: WorkerPool) -> None:
-        self._workers = workers
+class DeviceService:
+    def __init__(self, repo: Repository[Device]) -> None:
+        self._repo = repo
 
-    async def remove(self, ip: str) -> None:
-        await self._workers.stop("watch", ip)
+    @worker("camera")
+    async def watch(self, data: dict, ctx: WorkerContext) -> None:
+        capture = await ctx.blocking(cv2.VideoCapture, data["ip"])
+        try:
+            while ctx.running:
+                frame = await ctx.blocking(capture.read)
+                await self._repo.save(...)
+        finally:
+            await ctx.blocking(capture.release)     # LUÔN chạy
 
-    async def status(self) -> list[dict]:
-        return self._workers.running()   # [{"worker", "key", "uptime_seconds", "running"}]
+    async def remove(self, device_id: str) -> None:
+        # Dừng TRƯỚC: dòng dưới chỉ chạy khi camera đã đóng và vòng lặp đã im,
+        # nên không có chuyện worker ghi thêm sự kiện cho một thiết bị vừa xoá.
+        await self.watch.stop(device_id)
+        await self._repo.delete(device_id)
+        await self._notify(f"đã gỡ {device_id}")
+```
+
+`stop()` trả về `False` nếu không có bản nào mang khoá đó — dùng nó để biết là
+gọi thừa, chứ nó không ném lỗi.
+
+Cần dừng từ một chỗ không giữ instance của service thì tiêm `WorkerPool`:
+
+```python
+def __init__(self, workers: WorkerPool) -> None:
+    self._workers = workers
+
+async def stop_everything(self) -> None:
+    await self._workers.stop("camera", device_id)   # tên worker dạng chuỗi
+    await self._workers.stop_kind("camera")         # mọi khoá của loại này
+    self._workers.stats()                           # {"count", "instances"}
 ```
 
 Lúc tắt app khung tự gọi `stop_all()` **đầu tiên**, trước cả scheduler và hàng
@@ -593,3 +659,57 @@ Không cần đặt gì để chạy. Các biến dưới đây để chỉnh:
 | `worker.stop_timeout` lúc tắt app | vòng lặp không kiểm `ctx.running`, hoặc lời gọi chặn không có timeout |
 | API đứng hình khi worker chạy | quên bọc `ctx.blocking(...)` quanh hàm chặn |
 | `ctx.blocking` chậm dần khi thêm worker | vượt trần pool — nới `APP_WORKERS__THREAD_POOL_SIZE` |
+| **Ctrl+C bấm mà không có gì xảy ra** | xem mục ngay dưới |
+
+## Ctrl+C như không ăn
+
+Gần như luôn là **một `while True:` không có đường thoát**. Khung xin dừng,
+vòng lặp không nghe, khung chờ hết `APP_WORKERS__STOP_SECONDS` (mặc định 20
+giây) rồi mới bỏ mặc — và trong hai chục giây đó vòng lặp vẫn in ra màn hình
+như chưa có gì xảy ra.
+
+Khung nói ra cả hai đầu:
+
+```
+[warning] worker.endless_loop   name=camera function=CamService.watch
+          hint='`while True:` không có đường thoát: ...'      ← lúc KHỞI ĐỘNG
+[info]    worker.stopping       count=1 workers=['camera:test'] timeout=20.0
+[info]    worker.stopping_still remaining=['worker-camera-test'] seconds_left=15.0
+[warning] worker.stop_timeout   stuck=['camera:test']         ← lúc TẮT
+```
+
+Dòng `worker.endless_loop` in ra ngay lúc khởi động, trước khi bạn kịp gặp vấn
+đề. Nó chỉ soi được `while True:`; vòng lặp thoát bằng `break` theo điều kiện
+riêng thì khung không đọc được ý định nên không kêu, và cũng không chặn.
+
+Sửa:
+
+```python
+# TRƯỚC — Ctrl+C phải chờ 20 giây
+@worker("camera", thread=True)
+def watch(self, data: dict, ctx: WorkerContext) -> None:
+    while True:
+        xu_ly()
+        time.sleep(1)
+
+# SAU — Ctrl+C thoát trong chưa tới một giây
+@worker("camera", thread=True)
+def watch(self, data: dict, ctx: WorkerContext) -> None:
+    while ctx.running:          # hoá False ngay khi có lệnh dừng
+        xu_ly()
+        ctx.wait(1)             # tỉnh NGAY khi có lệnh dừng, khác time.sleep
+```
+
+Đo trên một app thật với cùng một worker:
+
+| Vòng lặp viết kiểu | Ctrl+C tới lúc tiến trình thoát |
+|---|---|
+| `while True:` + `time.sleep(1)` | 21 giây |
+| `while ctx.running:` + `ctx.wait(1)` | dưới 1 giây, `finally` chạy đủ |
+
+Còn nếu vòng lặp có kiểm `ctx.running` mà vẫn kẹt, thì nó đang nằm trong một
+**lời gọi chặn không chịu trả về** — `capture.read()` trên luồng đã chết,
+`requests.get()` không đặt timeout. Python không giết được thread đang kẹt;
+đường duy nhất là đặt timeout cho chính lời gọi đó. Nhưng nó sẽ **không** giữ
+tiến trình lại nữa: mọi thread khung mở đều là daemon, nên quá hạn là app vẫn
+thoát.

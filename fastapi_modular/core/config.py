@@ -366,8 +366,8 @@ class WorkerSettings(BaseModel):
     """Bản đang chờ giành quyền thì bao lâu thử lại một lần."""
 
     thread_pool_size: int = 0
-    """Số thread cho `ctx.blocking(...)`. 0 = để nguyên mặc định của Python,
-    tức `min(32, số nhân + 4)`.
+    """Số thread cho `ctx.blocking(...)`. 0 = dùng đúng công thức mặc định của
+    Python, tức `min(32, số nhân + 4)`.
 
     Nới lên khi có nhiều worker `async def` cùng gọi hàm chặn liên tục — quá
     số chỗ thì chúng xếp hàng chờ nhau. Không ảnh hưởng `@worker(thread=True)`:

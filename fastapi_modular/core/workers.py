@@ -64,13 +64,17 @@ Không muốn dựng lại thì `restart=False` — khi đó lỗi làm bản ch
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import contextlib
 import contextvars
 import inspect
+import queue
+import textwrap
 import threading
 import time
 from collections.abc import Callable, Coroutine
+from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any
 
@@ -85,12 +89,133 @@ from fastapi_modular.core.metrics import Counter, Gauge, registry
 log = get_logger(__name__)
 
 _SPEC_ATTR = "__worker__"
+# Thấy một trong những tên này là coi như vòng lặp có nghe lệnh dừng.
+_STOP_NAMES = frozenset({"running", "wait", "request_stop", "is_set"})
+# Bao lâu thì nhắc lại một lần trong lúc chờ worker dừng.
+_STOP_REPORT_EVERY = 5.0
 
 workers_started = registry.register(Counter("workers_started_total", "Số bản worker đã khởi động"))
 workers_restarted = registry.register(
     Counter("workers_restarted_total", "Số lần một bản worker được dựng lại sau khi hỏng")
 )
 workers_running = registry.register(Gauge("workers_running", "Số bản worker đang chạy"))
+
+
+class BlockingPool:
+    """Pool thread cho `ctx.blocking(...)`. Giống `ThreadPoolExecutor`, trừ MỘT điểm.
+
+    Điểm đó là thread ở đây `daemon=True`, và nó chính là lý do lớp này tồn tại.
+
+    `ThreadPoolExecutor` của thư viện chuẩn dùng thread thường, mà lúc thoát,
+    Python JOIN mọi thread thường — không có timeout, không cách nào bỏ qua.
+    Nên chỉ cần MỘT lời gọi chặn không bao giờ trả về (một `cap.read()` trên
+    luồng RTSP đã chết là đủ) thì tiến trình không thoát được nữa: Ctrl+C bấm
+    bao nhiêu lần cũng chỉ in ra một KeyboardInterrupt trong `t.join()` rồi lại
+    chờ tiếp, và người ta phải `kill -9`.
+
+    Thread daemon thì không bị join. Lời gọi treo vẫn treo — Python không có
+    cách nào giết một thread đang kẹt — nhưng nó không kéo cả tiến trình theo.
+
+    Không cắm vào `loop.set_default_executor()`: hàm đó chỉ nhận đúng
+    `ThreadPoolExecutor`. `ctx.blocking` gọi thẳng vào đây qua
+    `asyncio.wrap_future`, nên `asyncio.to_thread` của người dùng vẫn dùng pool
+    mặc định như thường.
+    """
+
+    __slots__ = ("_closed", "_idle", "_lock", "_name", "_queue", "_size", "_threads")
+
+    def __init__(self, size: int, name: str = "fam-blocking") -> None:
+        self._size = size
+        self._name = name
+        self._queue: queue.SimpleQueue[Any] = queue.SimpleQueue()
+        self._threads: list[threading.Thread] = []
+        self._idle = 0
+        self._lock = threading.Lock()
+        self._closed = False
+
+    @property
+    def size(self) -> int:
+        return self._size
+
+    def submit(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
+        if self._closed:
+            raise ServiceUnavailableError("App đang tắt nên không nhận việc chặn mới")
+        future: Future = Future()
+        self._queue.put((future, contextvars.copy_context(), fn, args, kwargs))
+        self._grow()
+        return future
+
+    def _grow(self) -> None:
+        """Mở thêm thread khi không còn ai rảnh, tới trần thì thôi."""
+        with self._lock:
+            if self._idle > 0 or len(self._threads) >= self._size:
+                return
+            thread = threading.Thread(
+                target=self._loop, daemon=True, name=f"{self._name}-{len(self._threads)}"
+            )
+            self._threads.append(thread)
+        thread.start()
+
+    def _loop(self) -> None:
+        while True:
+            with self._lock:
+                self._idle += 1
+            item = self._queue.get()
+            with self._lock:
+                self._idle -= 1
+            if item is None:
+                return
+            future, context, fn, args, kwargs = item
+            if not future.set_running_or_notify_cancel():
+                continue
+            try:
+                future.set_result(context.run(fn, *args, **kwargs))
+            except BaseException as exc:                # noqa: BLE001
+                future.set_exception(exc)
+
+    def shutdown(self) -> None:
+        """Đóng cửa nhận việc. KHÔNG chờ thread — chờ chính là thứ ta đang tránh."""
+        self._closed = True
+        for _ in self._threads:
+            self._queue.put(None)
+
+    def stats(self) -> dict[str, Any]:
+        with self._lock:
+            return {"size": self._size, "threads": len(self._threads), "idle": self._idle}
+
+
+_blocking_pool: BlockingPool | None = None
+
+
+def default_pool_size() -> int:
+    """Mặc định của Python cho `asyncio.to_thread`; giữ nguyên cho đỡ bất ngờ."""
+    import os
+
+    return min(32, (os.cpu_count() or 1) + 4)
+
+
+def configure_blocking_pool(size: int = 0) -> BlockingPool:
+    """Dựng lại pool theo kích thước trong cấu hình. Lifespan gọi lúc khởi động."""
+    global _blocking_pool
+    if _blocking_pool is not None:
+        _blocking_pool.shutdown()
+    _blocking_pool = BlockingPool(size or default_pool_size())
+    return _blocking_pool
+
+
+def get_blocking_pool() -> BlockingPool:
+    """Pool đang dùng; tự dựng nếu chưa có (test gọi thẳng, không qua lifespan)."""
+    global _blocking_pool
+    if _blocking_pool is None or _blocking_pool._closed:
+        _blocking_pool = BlockingPool(default_pool_size())
+    return _blocking_pool
+
+
+def shutdown_blocking_pool() -> None:
+    global _blocking_pool
+    if _blocking_pool is not None:
+        _blocking_pool.shutdown()
+        _blocking_pool = None
 
 
 class WorkerContext:
@@ -146,18 +271,20 @@ class WorkerContext:
         Gọi thẳng trong `async def` thì cả tiến trình đứng im chờ chúng: mọi
         request HTTP, mọi frame WebSocket, mọi worker khác.
 
-        Bên dưới là `asyncio.to_thread`, tức `ThreadPoolExecutor` **dùng chung**
-        của event loop. Thread được TÁI SỬ DỤNG chứ không mở mới mỗi lần, nhưng
-        pool có trần `min(32, cpu+4)` chỗ. Nhiều worker gọi dày hơn số chỗ thì
-        chúng xếp hàng chờ nhau — chậm đi chứ không hỏng. Nới trần bằng
-        `APP_WORKERS__THREAD_POOL_SIZE`.
+        Bên dưới là một pool thread **dùng chung**: thread được TÁI SỬ DỤNG chứ
+        không mở mới mỗi lần, và trần mặc định là `min(32, cpu+4)` chỗ. Nhiều
+        worker gọi dày hơn số chỗ thì chúng xếp hàng chờ nhau — chậm đi chứ
+        không hỏng. Nới trần bằng `APP_WORKERS__THREAD_POOL_SIZE`.
+
+        Thread trong pool là `daemon`, nên một lời gọi chặn treo vĩnh viễn
+        không giữ cả tiến trình lại lúc thoát (xem `BlockingPool`). Nhưng nó
+        vẫn giữ MỘT chỗ trong pool vĩnh viễn — hàm chặn nào có tham số timeout
+        thì hãy đặt nó.
         """
         if self._thread_mode:
             # Đang ở trong thread rồi, đẩy thêm một lớp nữa là vô ích.
             return fn(*args, **kwargs)
-        if kwargs:
-            return await asyncio.to_thread(lambda: fn(*args, **kwargs))
-        return await asyncio.to_thread(fn, *args)
+        return await asyncio.wrap_future(get_blocking_pool().submit(fn, *args, **kwargs))
 
     def run(self, coro: Coroutine[Any, Any, Any], *, timeout: float | None = None) -> Any:
         """Chạy một coroutine trên event loop và chờ kết quả — chỉ cho `thread=True`.
@@ -203,6 +330,44 @@ def check_thread_mode(fn: Callable, thread: bool) -> None:
         raise RuntimeError(
             f"{fn.__name__} phải là `async def`. Toàn hàm chặn thì khai `thread=True`."
         )
+
+
+def warn_if_endless(fn: Callable, kind: str, name: str) -> None:
+    """Kêu lên khi thân hàm có `while True:` mà không hề nhìn tới cờ dừng.
+
+    Đây là cái bẫy đắt nhất của cả ba decorator, và nó không lộ ra lúc chạy —
+    chỉ lộ lúc TẮT: khung xin dừng, vòng lặp không nghe, khung chờ hết
+    `APP_WORKERS__STOP_SECONDS` rồi mới bỏ mặc. Người dùng thấy Ctrl+C bấm mà
+    không có gì xảy ra suốt hai chục giây, và kết luận là treo.
+
+    Chỉ cảnh báo chứ không chặn: có những vòng lặp thoát bằng `break` theo điều
+    kiện riêng, và ta không đọc được ý định đó từ cây cú pháp.
+    """
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    except (OSError, TypeError, SyntaxError, IndentationError):
+        return                                    # hàm sinh động, không có mã nguồn
+    nodes = list(ast.walk(tree))
+    endless = any(
+        isinstance(n, ast.While) and isinstance(n.test, ast.Constant) and bool(n.test.value)
+        for n in nodes
+    )
+    if not endless:
+        return
+    if any(isinstance(n, ast.Attribute) and n.attr in _STOP_NAMES for n in nodes):
+        return
+    log.warning(
+        "worker.endless_loop",
+        kind=kind,
+        name=name,
+        function=fn.__qualname__,
+        hint=(
+            "`while True:` không có đường thoát: lúc tắt app khung xin dừng nhưng "
+            "vòng lặp không nghe, phải chờ hết APP_WORKERS__STOP_SECONDS rồi bỏ mặc "
+            "— Ctrl+C trông như bị treo. Khai `ctx: WorkerContext` rồi viết "
+            "`while ctx.running:`, và dùng `ctx.wait(giây)` thay `time.sleep(giây)`."
+        ),
+    )
 
 
 async def run_in_own_thread(fn: Callable, *args: Any, **kwargs: Any) -> Any:
@@ -360,12 +525,43 @@ def worker(
             wants_data=bool(others),
         )
 
+        warn_if_endless(fn, "worker", spec.name)
+
         async def launch(self: Any, key: str = "", data: Any = None) -> WorkerHandle:
             pool = container.resolve(WorkerPool)
             return await pool.start(spec, self, str(key), data)
 
+        async def stop(key: str = "", *, timeout: float | None = None) -> bool:
+            """Dừng MỘT bản và chờ nó dọn xong. False = không có bản nào mang khoá đó.
+
+                await self.watch.stop(device_id)
+
+            Chờ tới lúc vòng lặp thoát hẳn — tức là sau `finally:` trong thân
+            hàm — nên viết tiếp phần dọn dẹp ngay dưới lời gọi này là an toàn.
+            """
+            return await container.resolve(WorkerPool).stop(spec.name, str(key), timeout)
+
+        async def stop_all(*, timeout: float | None = None) -> int:
+            """Dừng MỌI bản của loại worker này, trả về số bản đã dừng."""
+            return await container.resolve(WorkerPool).stop_kind(spec.name, timeout)
+
+        def running() -> list[dict[str, Any]]:
+            """Các bản của loại worker này đang chạy: khoá, thời gian sống."""
+            pool = container.resolve(WorkerPool)
+            return [row for row in pool.running() if row["worker"] == spec.name]
+
+        def is_running(key: str = "") -> bool:
+            return container.resolve(WorkerPool).is_running(spec.name, str(key))
+
         launch.__name__ = fn.__name__
         launch.__doc__ = fn.__doc__
+        # Gắn lên chính hàm: method đã bind vẫn chuyển tiếp thuộc tính sang hàm
+        # gốc, nên `self.watch.stop(...)` chạy được mà không phải nhắc lại tên
+        # worker dưới dạng chuỗi ở chỗ gọi.
+        launch.stop = stop                    # type: ignore[attr-defined]
+        launch.stop_all = stop_all            # type: ignore[attr-defined]
+        launch.running = running              # type: ignore[attr-defined]
+        launch.is_running = is_running        # type: ignore[attr-defined]
         setattr(launch, _SPEC_ATTR, spec)
         return launch
 
@@ -493,13 +689,26 @@ class WorkerPool:
             await asyncio.sleep(self._config.takeover_seconds)
         return False
 
-    async def stop(self, name: str, key: str = "") -> bool:
+    async def stop(self, name: str, key: str = "", timeout: float | None = None) -> bool:
         """Dừng một bản. Trả về False nếu không có bản nào mang khoá đó."""
         handle = self._handles.get((name, key))
         if handle is None:
             return False
-        await handle.stop(self._config.stop_seconds)
+        await handle.stop(self._config.stop_seconds if timeout is None else timeout)
         return True
+
+    async def stop_kind(self, name: str, timeout: float | None = None) -> int:
+        """Dừng mọi bản của một loại worker, bất kể khoá. Trả về số bản đã dừng."""
+        handles = [h for (kind, _), h in self._handles.items() if kind == name]
+        if not handles:
+            return 0
+        limit = self._config.stop_seconds if timeout is None else timeout
+        await asyncio.gather(*(h.stop(limit) for h in handles))
+        return len(handles)
+
+    def is_running(self, name: str, key: str = "") -> bool:
+        handle = self._handles.get((name, key))
+        return handle is not None and handle.running
 
     async def stop_all(self) -> None:
         """Xin mọi bản dừng, rồi chờ. Quá hạn thì nói rõ cái nào còn kẹt."""
@@ -511,9 +720,30 @@ class WorkerPool:
         for handle in handles:
             handle.context.request_stop()
 
-        done, pending = await asyncio.wait(
-            [h.task for h in handles], timeout=self._config.stop_seconds
+        # Nói NGAY, đừng đợi tới lúc quá hạn: một vòng lặp không nghe lệnh dừng
+        # làm Ctrl+C trông như không ăn thua suốt `stop_seconds` giây.
+        log.info(
+            "worker.stopping",
+            count=len(handles),
+            workers=[f"{h.name}:{h.key}" if h.key else h.name for h in handles],
+            timeout=self._config.stop_seconds,
         )
+        # Chờ thành từng lát và nhắc lại giữa chừng: hai chục giây im lặng thì
+        # người ta kết luận là treo và bấm Ctrl+C tiếp, hoặc `kill -9`.
+        tasks = [h.task for h in handles]
+        left = self._config.stop_seconds
+        done: set[asyncio.Task[None]] = set()
+        pending: set[asyncio.Task[None]] = set(tasks)
+        while left > 0 and pending:
+            slice_seconds = min(_STOP_REPORT_EVERY, left)
+            done, pending = await asyncio.wait(tasks, timeout=slice_seconds)
+            left -= slice_seconds
+            if pending and left > 0:
+                log.info(
+                    "worker.stopping_still",
+                    remaining=[t.get_name() for t in pending],
+                    seconds_left=round(left, 1),
+                )
         if pending:
             stuck = [f"{h.name}:{h.key}" for h in handles if not h.task.done()]
             # Với `thread=True` thì huỷ cũng không ăn thua: thread đang kẹt
@@ -547,4 +777,15 @@ class WorkerPool:
         return {"count": len(self._handles), "instances": self.running()}
 
 
-__all__ = ["WorkerContext", "WorkerHandle", "WorkerPool", "WorkerSpec", "worker"]
+__all__ = [
+    "BlockingPool",
+    "WorkerContext",
+    "WorkerHandle",
+    "WorkerPool",
+    "WorkerSpec",
+    "configure_blocking_pool",
+    "get_blocking_pool",
+    "shutdown_blocking_pool",
+    "warn_if_endless",
+    "worker",
+]

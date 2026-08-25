@@ -83,6 +83,7 @@ from fastapi_modular.core.workers import (
     call_handler,
     check_thread_mode,
     context_param_of,
+    warn_if_endless,
 )
 
 log = get_logger(__name__)
@@ -136,6 +137,7 @@ def job(
 
     def decorate(fn: Callable) -> Callable:
         check_thread_mode(fn, thread)
+        warn_if_endless(fn, "job", name)
         setattr(
             fn,
             _SPEC_ATTR,
@@ -332,6 +334,7 @@ class JobRunner:
             context=context,
             context_param=spec.context_param,
             thread=spec.thread,
+            own_thread=True,
         )
 
     async def shutdown(self) -> None:

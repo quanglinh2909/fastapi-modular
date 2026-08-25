@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 import threading
 import time
 
@@ -11,7 +13,7 @@ import pytest
 from fastapi_modular.core.config import DatabaseSettings, Settings, WorkerSettings
 from fastapi_modular.core.container import container
 from fastapi_modular.core.exceptions import BadRequestError, ServiceUnavailableError
-from fastapi_modular.core.workers import WorkerContext, WorkerPool, worker
+from fastapi_modular.core.workers import BlockingPool, WorkerContext, WorkerPool, worker
 
 DB: list[tuple[str, str]] = []
 THREADS: dict[str, int] = {}
@@ -198,7 +200,9 @@ async def test_hong_thi_dung_lai_chu_khong_chet_im(pool: WorkerPool):
     """Camera rớt mạng là chuyện thường ngày; chết im thì không ai biết."""
     service = CameraService()
     await service.crashy()
-    await asyncio.sleep(0.2)
+    # Rộng tay: mỗi lần hỏng, khung in cả traceback ra log và việc đó tốn gần
+    # 0.1s — chờ sát nút thì test đo tốc độ in log chứ không đo việc dựng lại.
+    await asyncio.sleep(0.6)
     await pool.stop_all()
 
     assert len([x for x in DB if x == ("crashy", "start")]) >= 3, "phải dựng lại nhiều lần"
@@ -336,3 +340,195 @@ async def test_thread_rieng_van_giu_duoc_request_id(pool: WorkerPool):
     await pool.stop_all()
 
     assert thay and thay[0] is not None, "request-id phải theo được sang thread"
+
+
+# ------------------------------------------------- dừng theo yêu cầu và dọn dẹp
+async def test_stop_ngay_tren_method_va_cho_don_dep_xong(pool: WorkerPool):
+    """`await self.watch.stop(key)` — không phải nhắc lại tên worker dạng chuỗi.
+
+    Và nó CHỜ tới lúc `finally:` chạy xong, nên viết phần dọn dẹp ngay dưới lời
+    gọi là an toàn: khi nó trả về thì camera đã đóng.
+    """
+    dau_vet: list[str] = []
+
+    class DeviceService:
+        @worker("device-cam")
+        async def watch(self, data: dict, ctx: WorkerContext) -> None:
+            dau_vet.append(f"mo:{data['ip']}")
+            try:
+                while ctx.running:
+                    await asyncio.sleep(0.01)
+            finally:
+                dau_vet.append(f"dong:{data['ip']}")
+
+    service = DeviceService()
+    await service.watch("cam-1", {"ip": "10.0.0.1"})
+    await asyncio.sleep(0.05)
+    assert service.watch.is_running("cam-1") is True
+
+    assert await service.watch.stop("cam-1") is True
+    assert dau_vet == ["mo:10.0.0.1", "dong:10.0.0.1"], "phải dọn xong rồi mới trả về"
+    assert service.watch.is_running("cam-1") is False
+    assert await service.watch.stop("cam-1") is False, "không còn bản nào mang khoá đó"
+
+
+async def test_stop_chi_dung_dung_mot_khoa(pool: WorkerPool):
+    """Gỡ một thiết bị thì những thiết bị khác không được rớt theo."""
+
+    class DeviceService:
+        @worker("device-many")
+        async def watch(self, data: dict, ctx: WorkerContext) -> None:
+            while ctx.running:
+                await asyncio.sleep(0.01)
+
+    service = DeviceService()
+    for i in range(3):
+        await service.watch(f"cam-{i}", {"ip": f"10.0.0.{i}"})
+    await asyncio.sleep(0.05)
+
+    await service.watch.stop("cam-1")
+    con_lai = {row["key"] for row in service.watch.running()}
+    assert con_lai == {"cam-0", "cam-2"}
+
+    assert await service.watch.stop_all() == 2
+    assert service.watch.running() == []
+
+
+async def test_stop_thread_worker_cho_toi_khi_vong_lap_thoat(pool: WorkerPool):
+    """`thread=True` không huỷ ngang được — `ctx.running` là đường duy nhất."""
+    dau_vet: list[str] = []
+
+    class DeviceService:
+        @worker("device-thread", thread=True)
+        def watch(self, data: dict, ctx: WorkerContext) -> None:
+            try:
+                while ctx.running:
+                    ctx.wait(0.01)          # thay time.sleep: tỉnh ngay khi có lệnh dừng
+            finally:
+                dau_vet.append("dong")
+
+    service = DeviceService()
+    await service.watch("cam-9", {})
+    await asyncio.sleep(0.05)
+    await service.watch.stop("cam-9")
+
+    assert dau_vet == ["dong"]
+
+
+# ------------------------------------------------------- bẫy `while True:`
+def test_while_true_khong_co_co_dung_thi_bi_keu(capsys):
+    """Cái bẫy đắt nhất: nó chỉ lộ ra lúc TẮT, dưới dạng "Ctrl+C không ăn"."""
+
+    class Quen:
+        @worker("keu-len", thread=True)
+        def watch(self, ctx: WorkerContext) -> None:
+            while True:
+                time.sleep(1)
+
+    ra = capsys.readouterr().out
+    assert "worker.endless_loop" in ra
+    assert "ctx.running" in ra, "phải chỉ luôn cách sửa, đừng chỉ báo là sai"
+
+
+def test_while_ctx_running_thi_khong_keu(capsys):
+    class Dung:
+        @worker("khong-keu", thread=True)
+        def watch(self, ctx: WorkerContext) -> None:
+            while True:
+                if not ctx.running:
+                    break
+                ctx.wait(1)
+
+    assert "worker.endless_loop" not in capsys.readouterr().out
+
+
+def test_job_va_interval_cung_bi_keu(capsys):
+    """Cùng cái bẫy, và với `@job(thread=True)` thì hậu quả còn nặng hơn."""
+    from fastapi_modular.core.jobs import job
+    from fastapi_modular.core.scheduler import interval
+
+    class Quen:
+        @job("keu-job", thread=True)
+        def detect(self, payload: dict) -> None:
+            while True:
+                time.sleep(1)
+
+        @interval(seconds=5, thread=True, name="keu-interval")
+        def quet(self) -> None:
+            while True:
+                time.sleep(1)
+
+    ra = capsys.readouterr().out
+    assert ra.count("worker.endless_loop") == 2
+
+
+# ------------------------------------------- tiến trình có thoát được không
+_KICH_BAN = """
+import sys, time
+sys.path.insert(0, {repo!r})
+{dung_pool}
+pool.submit(time.sleep, 300)          # lời gọi chặn không bao giờ trả về
+time.sleep(0.3)                       # đợi thread thật sự sinh ra
+print("den cuoi", flush=True)
+"""
+
+_POOL_CUA_KHUNG = (
+    "from fastapi_modular.core.workers import BlockingPool\n"
+    "pool = BlockingPool(2)"
+)
+_POOL_CHUAN = (
+    "from concurrent.futures import ThreadPoolExecutor\n"
+    "pool = ThreadPoolExecutor(max_workers=2)"
+)
+
+
+def _chay(dung_pool: str) -> subprocess.CompletedProcess:
+    from pathlib import Path
+
+    repo = str(Path(__file__).resolve().parent.parent)
+    return subprocess.run(
+        [sys.executable, "-c", _KICH_BAN.format(repo=repo, dung_pool=dung_pool)],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+def test_loi_goi_chan_treo_khong_giu_tien_trinh_lai():
+    """Đây chính là triệu chứng "Ctrl+C bấm mãi không được".
+
+    Một `ctx.blocking(cap.read)` treo trên luồng RTSP đã chết là chuyện có
+    thật, và nó không được phép biến thành `kill -9`.
+    """
+    xong = _chay(_POOL_CUA_KHUNG)
+    assert xong.returncode == 0
+    assert "den cuoi" in xong.stdout
+
+
+def test_pool_chuan_thi_dung_la_treo_that():
+    """Chứng minh cái trên không thừa: đổi sang ThreadPoolExecutor là treo.
+
+    Python JOIN mọi thread không phải daemon lúc thoát, không timeout, không
+    cách nào bỏ qua — nên chỉ một lời gọi không về là hết đường thoát.
+    """
+    with pytest.raises(subprocess.TimeoutExpired):
+        _chay(_POOL_CHUAN)
+
+
+def test_blocking_van_chay_dung_va_tai_su_dung_thread():
+    pool = BlockingPool(3)
+    ket_qua = [pool.submit(lambda x: x * 2, i).result(timeout=5) for i in range(20)]
+    assert ket_qua == [i * 2 for i in range(20)]
+    assert pool.stats()["threads"] <= 3, "phải tái sử dụng chứ không mở 20 thread"
+    pool.shutdown()
+
+
+def test_blocking_chuyen_nguyen_ven_loi_ve_cho_goi():
+    pool = BlockingPool(1)
+
+    def hong() -> None:
+        raise ValueError("hỏng cố ý")
+
+    with pytest.raises(ValueError, match="hỏng cố ý"):
+        pool.submit(hong).result(timeout=5)
+    pool.shutdown()
