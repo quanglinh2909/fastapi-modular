@@ -392,6 +392,28 @@ def test_vi_du_code_trong_readme_sinh_ra_chay_duoc(tmp_path: Path):
 
 
 # ------------------------------------------------------------- viết tắt lệnh
+def _moi_lenh() -> list[str]:
+    """Tên mọi lệnh, đọc thẳng từ parser thật."""
+    import argparse
+
+    from fastapi_modular.cli import main as M
+
+    class _Tom(Exception):
+        def __init__(self, p): self.p = p
+
+    goc = argparse.ArgumentParser.parse_args
+    argparse.ArgumentParser.parse_args = lambda self, *a, **k: (_ for _ in ()).throw(_Tom(self))
+    try:
+        M._main([])
+    except _Tom as bat:
+        parser = bat.p
+    finally:
+        argparse.ArgumentParser.parse_args = goc
+
+    sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    return list(sub.choices)
+
+
 @pytest.mark.parametrize(
     ("go", "that_ra_la"),
     [
@@ -407,7 +429,9 @@ def test_vi_du_code_trong_readme_sinh_ra_chay_duoc(tmp_path: Path):
         ("l", "lint"),
         ("c", "clean"),
         ("b", "build"),
-        ("p", "publish"),
+        # "p" giờ nhập nhằng giữa publish và provider — cố ý, `fam` hỏi lại.
+        ("pu", "publish"),
+        ("pr", "provider"),
         ("e", "env"),
         ("n", "new"),
         ("module", "module"),          # gõ đầy đủ vẫn phải chạy
@@ -419,9 +443,9 @@ def test_viet_tat_lenh(go: str, that_ra_la: str):
     with pytest.raises(SystemExit) as thoat:
         main([go, "--help"])
     assert thoat.value.code == 0
-    assert _mo_rong_vietat([go], ["init", "new", "module", "dev", "run", "info",
-                                  "test", "lint", "migrate", "install", "clean",
-                                  "build", "publish", "env"]) == [that_ra_la]
+    # Lấy danh sách lệnh từ chính parser, đừng chép tay: chép tay thì thêm
+    # lệnh mới mà quên sửa ở đây là test vẫn xanh trong khi thực tế đã đổi.
+    assert _mo_rong_vietat([go], _moi_lenh()) == [that_ra_la]
 
 
 @pytest.mark.parametrize(("go", "khop_voi"), [("m", "migrate, module"),

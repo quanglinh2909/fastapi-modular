@@ -5,6 +5,7 @@
     fam dev                  chạy kèm autoreload
     fam run --workers 4      chạy chế độ production
     fam module alerts        sinh module nghiệp vụ
+    fam provider sms viettel sinh provider cắm được
     fam install postgres     cài thư viện của một thành phần + ghi .env
     fam env postgres         chỉ ghi biến cấu hình vào .env
     fam info                 đang nối vào đâu, thư viện nào đã cài
@@ -125,6 +126,13 @@ def _main(argv: list[str] | None = None) -> int:
     p_mod.add_argument("--consumer", action="store_true", help="tạo kèm consumer RabbitMQ")
     p_mod.add_argument("--consumer-only", action="store_true")
 
+    p_prov = lenh.add_parser("provider", help="sinh provider cắm được (họ + năng lực)")
+    p_prov.add_argument("family", help="tên họ: payment, sms, device")
+    p_prov.add_argument("ten", help="tên provider: vnpay, viettel, dahua")
+    p_prov.add_argument(
+        "--root", type=Path, default=Path("src/providers"), help="thư mục chứa các họ"
+    )
+
     p_dev = lenh.add_parser("dev", help="chạy kèm autoreload")
     p_run = lenh.add_parser("run", help="chạy chế độ production, nhiều worker")
     for p_chay in (p_dev, p_run):
@@ -206,6 +214,11 @@ def _main(argv: list[str] | None = None) -> int:
             if co:
                 argv2.append(ten_co)
         return sinh_module(argv2)
+
+    if args.lenh == "provider":
+        from fastapi_modular.cli.new_provider import main as sinh_provider
+
+        return sinh_provider([args.family, args.ten, "--root", str(args.root)])
 
     if args.lenh in ("dev", "run"):
         from fastapi_modular.cli.serve import serve

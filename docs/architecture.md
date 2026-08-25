@@ -27,14 +27,15 @@ fastapi_modular/                     THƯ VIỆN — thứ được đóng gói,
 │   ├── mqtt/                  (tuỳ chọn) client · consumers · patterns (+ và #)
 │   └── kafka/                 (tuỳ chọn) broker · consumers
 ├── middleware/                request-id, access log (ASGI thuần)
-└── cli/                       init · new · module · dev · run · install · env · info
-                               migrate · test · lint · clean · build · publish
+└── cli/                       init · new · module · provider · dev · run · install · env
+                               info · migrate · test · lint · clean · build · publish
 
 src/                           ỨNG DỤNG — code của bạn, KHÔNG nằm trong gói cài
 ├── main.py                    lắp ráp app: settings, middleware, route — sửa thoải mái
 ├── core/
 │   ├── config.py              AppSettings — thêm biến .env của riêng bạn
 │   └── lifespan.py            việc lúc khởi động / lúc tắt của riêng bạn
+├── providers/                 provider cắm được, mỗi họ một thư mục (tuỳ chọn)
 └── api/                       mỗi thư mục con là một module
     ├── health/
     ├── users/
@@ -245,7 +246,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 341 test trên backend memory (40 test nữa cần hạ tầng thật)
+fam test       # 363 test trên backend memory (40 test nữa cần hạ tầng thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

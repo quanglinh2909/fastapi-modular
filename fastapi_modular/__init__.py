@@ -25,6 +25,14 @@ from fastapi_modular.core.exceptions import (
 )
 from fastapi_modular.core.lifespan import lifespan
 from fastapi_modular.core.logging import configure_logging, get_logger
+from fastapi_modular.core.providers import (
+    CapabilityNotSupportedError,
+    ProviderFamily,
+    ProviderNotFoundError,
+    Registry,
+    provider,
+    register_providers,
+)
 from fastapi_modular.core.schemas import Page
 from fastapi_modular.core.websocket import Socket, WebSocketServer, gateway, subscribe
 from fastapi_modular.discovery import DEFAULT_PACKAGE, register_routes
@@ -36,12 +44,16 @@ __all__ = [
     "DEFAULT_PACKAGE",
     "AppError",
     "BadRequestError",
+    "CapabilityNotSupportedError",
     "ComponentNotEnabledError",
     "ConflictError",
     "ForbiddenError",
     "Lazy",
     "NotFoundError",
     "Page",
+    "ProviderFamily",
+    "ProviderNotFoundError",
+    "Registry",
     "Scope",
     "ServiceUnavailableError",
     "Settings",
@@ -66,8 +78,10 @@ __all__ = [
     "new_fastapi",
     "patch",
     "post",
+    "provider",
     "put",
     "register_error_handlers",
+    "register_providers",
     "register_routes",
     "subscribe",
     "use_settings",

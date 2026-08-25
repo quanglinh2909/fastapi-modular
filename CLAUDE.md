@@ -29,6 +29,7 @@ chỗ là họ gõ theo rồi lỗi.
 | trường trong `core/config.py` (`Settings` và các lớp con) | `docs/config.md` (bảng biến), và doc của nhóm đó: `database.md` / `websocket.md` / `rabbitmq.md` / `redis.md` / `mqtt.md` / `kafka.md` |
 | lệnh hoặc cờ trong `cli/` | bảng lệnh ở **`README.md` VÀ `README.vi.md`**, cây `cli/` ở cả hai README **và** `docs/architecture.md` |
 | tên file / lớp mà `cli/new_module.py` sinh ra | mục "Thêm module mới" ở `docs/architecture.md` |
+| `core/providers.py` hoặc `cli/new_provider.py` | `docs/providers.md` |
 | API công khai (`fastapi_modular/__init__.py`, decorator, method) | doc của phần đó, và `docs/README.md` nếu đổi bảng đối chiếu |
 | thêm/bớt test | con số test ở **cả hai README** (cây thư mục) và `docs/architecture.md` (mục Chất lượng mã) |
 

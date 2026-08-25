@@ -235,6 +235,33 @@ class Container:
         log.debug("container.provider_created", provider=key, scope=scope.value)
         return instance
 
+    def build(self, cls: type[T], *, key: str, scope: Scope = Scope.SINGLETON) -> T:
+        """Dựng `cls` với phụ thuộc được nối, KHÔNG đăng ký nó vào sổ toàn cục.
+
+        Dành cho những thứ tra cứu theo tên lúc chạy — provider chẳng hạn —
+        nơi hai lớp cùng tên ở hai họ khác nhau là chuyện bình thường, nên
+        không thể dùng chung sổ `_REGISTRY` vốn tra theo tên class.
+
+        `key` phải duy nhất trong phạm vi người gọi (ví dụ "providers:sms:viettel");
+        instance được cache theo `scope` giống mọi provider khác.
+        """
+        store = self._store_for(scope, key)
+        if key in store:
+            return store[key]
+
+        if key in self._building:
+            chain = " -> ".join([*self._building, key])
+            raise RuntimeError(f"Vòng tròn phụ thuộc lúc khởi tạo: {chain}.")
+
+        self._building.append(key)
+        try:
+            instance = cls(**self._build_kwargs(cls, scope))
+        finally:
+            self._building.pop()
+
+        store[key] = instance
+        return instance
+
     def _store_for(self, scope: Scope, key: str) -> dict[str, Any]:
         if scope is Scope.SINGLETON:
             return self._instances

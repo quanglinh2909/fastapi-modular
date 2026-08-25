@@ -88,9 +88,10 @@ fam: lệnh 'm' chưa rõ — khớp với migrate, module. Gõ thêm vài chữ
 | `fam module <tên> --gateway` | | kèm gateway WebSocket (`--consumer` cho RabbitMQ) |
 | `fam module <tên> --gateway-only` | | chỉ thêm gateway vào module **đã có** (`--consumer-only` cho RabbitMQ) |
 | `fam module <tên> --entity <Tên>` | | đặt tên lớp entity; mặc định đoán từ tên module |
+| `fam provider <họ> <tên>` | `fam pr` | sinh provider cắm được: interface năng lực + khung hiện thực |
 | `fam env <thành-phần>` | `fam e` | chỉ ghi biến cấu hình vào `.env` (không cài gì) |
 | `fam clean` | `fam c` | xoá cache và bản dựng (không đụng `data/`) |
-| `fam build` · `fam publish [--test]` | `fam b` · `fam p` | dựng wheel/sdist · đẩy lên PyPI |
+| `fam build` · `fam publish [--test]` | `fam b` · `fam pu` | dựng wheel/sdist · đẩy lên PyPI |
 | `fam info` | `fam inf` | đang nối vào đâu, thư viện nào đã cài, cảnh báo cấu hình prod |
 | `fam migrate [up\|down\|history\|sql\|create]` | `fam mi` | Alembic |
 | `fam test` · `fam lint [--fix]` | `fam t` · `fam l` | pytest · ruff. `fam lint` không tham số soi `src`; truyền đường dẫn để soi chỗ khác |
@@ -285,8 +286,8 @@ Chi tiết: [docs/operations.md](https://github.com/quanglinh2909/fastapi-modula
 fastapi_modular/          THƯ VIỆN — thứ được đóng gói và cài về
   core/             DI, controller, config, WebSocket, guard, số đo
   infrastructure/   database, rabbitmq, redis, mqtt, kafka (mỗi thứ một package)
-  cli/              init · new · module · dev · run · install · env · info
-                    migrate · test · lint · clean · build · publish
+  cli/              init · new · module · provider · dev · run · install · env
+                    info · migrate · test · lint · clean · build · publish
   factory.py        create_app()
   discovery.py      tự quét package ứng dụng, dựng router
 src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá thoải mái
@@ -294,7 +295,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              341 test chạy không cần hạ tầng, 40 test nữa bật khi có server thật
+tests/              363 test chạy không cần hạ tầng, 40 test nữa bật khi có server thật
 docs/               tài liệu tra cứu
 ```
 
@@ -336,4 +337,5 @@ MIT — xem [LICENSE](https://github.com/quanglinh2909/fastapi-modular/blob/main
 - [docs/redis.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/redis.md) — cache, đếm nguyên tử, pub/sub
 - [docs/mqtt.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mqtt.md) — QoS, retain, luật khớp topic `+` và `#`
 - [docs/kafka.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/kafka.md) — nhóm consumer, phân vùng, `.dlt`
+- [docs/providers.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/providers.md) — provider cắm được: chọn bản hiện thực bằng tên lúc chạy
 - [docs/operations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/operations.md) — guard, circuit breaker, metrics, trace

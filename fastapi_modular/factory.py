@@ -32,6 +32,7 @@ from fastapi_modular.core.container import container
 from fastapi_modular.core.error_handlers import register_error_handlers
 from fastapi_modular.core.lifespan import lifespan
 from fastapi_modular.core.logging import configure_logging
+from fastapi_modular.core.providers import register_providers
 from fastapi_modular.discovery import DEFAULT_PACKAGE, register_routes
 from fastapi_modular.middleware.request_context import AccessLogMiddleware, RequestContextMiddleware
 
@@ -101,9 +102,15 @@ def add_middleware(app: FastAPI, settings: Settings) -> None:
 
 
 def create_app(
-    settings: Settings | None = None, *, package: str = DEFAULT_PACKAGE
+    settings: Settings | None = None,
+    *,
+    package: str = DEFAULT_PACKAGE,
+    providers_package: str | None = None,
 ) -> FastAPI:
     """Dựng app theo cách mặc định. `package` là nơi chứa module ứng dụng.
+
+    `providers_package` mặc định là gói `providers` nằm cạnh `package`, tức
+    `src.api` -> `src.providers`. Không có thư mục đó thì bỏ qua, không lỗi.
 
     Không có gì ở đây mà `src/main.py` của bạn không gọi được từng phần.
     """
@@ -113,6 +120,12 @@ def create_app(
     app = new_fastapi(settings)
     add_middleware(app, settings)
     register_error_handlers(app, debug=settings.debug)
+
+    # Provider phải có mặt TRƯỚC khi route được dựng: controller nhận service,
+    # service nhận Providers["..."] qua __init__.
+    goc, _, _ = package.rpartition(".")
+    register_providers(providers_package or (f"{goc}.providers" if goc else "providers"))
+
     register_routes(app, prefix=settings.api_prefix, package=package)
 
     @app.get("/", include_in_schema=False)

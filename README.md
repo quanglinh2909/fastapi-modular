@@ -96,9 +96,10 @@ fam: lệnh 'm' chưa rõ — khớp với migrate, module. Gõ thêm vài chữ
 | `fam module <name> --gateway` | | plus a WebSocket gateway (`--consumer` for RabbitMQ) |
 | `fam module <name> --gateway-only` | | add a gateway to an **existing** module (`--consumer-only` for RabbitMQ) |
 | `fam module <name> --entity <N>` | | set the entity class name; guessed from the module name otherwise |
+| `fam provider <family> <name>` | `fam pr` | generate a pluggable provider: capability interfaces + implementation stub |
 | `fam env <component>` | `fam e` | only write config variables into `.env` (installs nothing) |
 | `fam clean` | `fam c` | remove caches and build output (leaves `data/` alone) |
-| `fam build` · `fam publish [--test]` | `fam b` · `fam p` | build wheel/sdist · upload to PyPI |
+| `fam build` · `fam publish [--test]` | `fam b` · `fam pu` | build wheel/sdist · upload to PyPI |
 | `fam info` | `fam inf` | what it connects to, what is installed, production config warnings |
 | `fam migrate [up\|down\|history\|sql\|create]` | `fam mi` | Alembic |
 | `fam test` · `fam lint [--fix]` | `fam t` · `fam l` | pytest · ruff. Bare `fam lint` checks `src`; pass paths to check elsewhere |
@@ -284,8 +285,8 @@ Guards, circuit breaker, metrics and tracing:
 fastapi_modular/    THE LIBRARY — what gets packaged and installed
   core/             DI, controllers, config, WebSocket, guards, metrics
   infrastructure/   database, rabbitmq, redis, mqtt, kafka (one package each)
-  cli/              init · new · module · dev · run · install · env · info
-                    migrate · test · lint · clean · build · publish
+  cli/              init · new · module · provider · dev · run · install · env
+                    info · migrate · test · lint · clean · build · publish
   factory.py        create_app()
   discovery.py      scans the application package and builds routers
 src/                SAMPLE APPLICATION — not shipped in the package; delete freely
@@ -293,7 +294,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              341 tests that need no infrastructure, 40 more when servers exist
+tests/              363 tests that need no infrastructure, 40 more when servers exist
 docs/               reference documentation (Vietnamese)
 ```
 
@@ -339,4 +340,5 @@ Written in Vietnamese, organised for reference rather than reading front to back
 - [docs/redis.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/redis.md) — cache, atomic counters, pub/sub
 - [docs/mqtt.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mqtt.md) — QoS, retain, `+` and `#` topic matching
 - [docs/kafka.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/kafka.md) — consumer groups, partitions, `.dlt`
+- [docs/providers.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/providers.md) — pluggable providers: pick an implementation by name at runtime
 - [docs/operations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/operations.md) — guards, circuit breaker, metrics, tracing

@@ -11,6 +11,7 @@
 | [redis.md](redis.md) | Redis (tuỳ chọn): cache, đếm nguyên tử, pub/sub |
 | [mqtt.md](mqtt.md) | MQTT (tuỳ chọn): thiết bị IoT, QoS, retain, luật khớp topic |
 | [kafka.md](kafka.md) | Kafka (tuỳ chọn): nhật ký đọc lại được, nhóm consumer, `.dlt` |
+| [providers.md](providers.md) | Provider cắm được: chọn bản hiện thực bằng tên lúc chạy |
 | [operations.md](operations.md) | Guard, circuit breaker, metrics, trace |
 
 ## Bắt đầu nhanh

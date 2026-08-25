@@ -5,6 +5,25 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 
 ## [Chưa phát hành]
 
+### Thêm
+
+- **Provider cắm được** — chọn bản hiện thực bằng TÊN lúc chạy, thứ mà container
+  (tra theo kiểu) không làm được: cổng thanh toán lấy từ cột trong đơn hàng, nhà
+  mạng SMS lấy từ cấu hình. API: `@provider`, `ProviderFamily`, `Registry`,
+  `register_providers`. Xem `docs/providers.md`.
+- **`fam provider <họ> <tên>`** — sinh khung. Lần đầu dựng cả họ; lần sau đọc
+  `capabilities.py` rồi sinh sẵn stub đúng chữ ký các method cần viết.
+- **`container.build(cls, key=..., scope=...)`** — dựng một lớp có nối phụ thuộc
+  mà KHÔNG đăng ký vào sổ toàn cục. Cần cho provider: sổ toàn cục tra theo tên
+  class, trong khi hai họ có quyền cùng có một `OryzaProvider`.
+
+### Thay đổi
+
+- `fam p` giờ **nhập nhằng** giữa `publish` và `provider` nên `fam` hỏi lại. Viết
+  tắt mới: `fam pu` cho publish, `fam pr` cho provider.
+- `create_app()` gọi `register_providers()` trước khi dựng route. Không có
+  `src/providers/` thì bỏ qua, không lỗi.
+
 ## [0.2.1] — 2026-08-22
 
 ### Thay đổi
