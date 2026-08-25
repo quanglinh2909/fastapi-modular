@@ -19,7 +19,15 @@ import pytest
 
 from fastapi_modular.core.config import RedisSettings, Settings
 from fastapi_modular.core.container import injectable
-from fastapi_modular.infrastructure.redis import RedisClient, RedisRunner, redis_subscriber
+from fastapi_modular.core.exceptions import ServiceUnavailableError
+from fastapi_modular.core.rpc import RpcRemoteError
+from fastapi_modular.infrastructure.redis import (
+    RedisClient,
+    RedisResponderRunner,
+    RedisRunner,
+    redis_responder,
+    redis_subscriber,
+)
 
 CO_REDIS = importlib.util.find_spec("redis") is not None
 REDIS_URL = os.getenv("TEST_REDIS_URL")
@@ -34,7 +42,7 @@ DA_NHAN: list[dict] = []
 @injectable
 class KenhTest:
     @redis_subscriber("test-gia:*")
-    async def nhan(self, payload: dict, meta: dict) -> None:
+    async def label_(self, payload: dict, meta: dict) -> None:
         DA_NHAN.append({"payload": payload, "channel": meta["channel"]})
 
 
@@ -69,9 +77,9 @@ async def test_ghi_doc_va_han_su_dung(redis: RedisClient):
 
 async def test_key_prefix_that_su_di_xuong_server(redis: RedisClient):
     await redis.set("co-tien-to", 1)
-    tho = redis.raw()
-    assert await tho.get("test:co-tien-to") == "1"
-    assert await tho.get("co-tien-to") is None
+    raw_ = redis.raw()
+    assert await raw_.get("test:co-tien-to") == "1"
+    assert await raw_.get("co-tien-to") is None
 
 
 async def test_incr_nguyen_tu_khi_goi_song_song(redis: RedisClient):
@@ -100,17 +108,17 @@ async def test_cache_tinh_mot_lan_roi_thoi(redis: RedisClient):
 
 async def test_cache_chiu_hong_khi_redis_chet(redis_settings: Settings):
     """Redis chết thì cache đi đường vòng, KHÔNG làm hỏng request."""
-    hong = RedisClient(
+    broken = RedisClient(
         Settings(APP_REDIS=RedisSettings(enabled=True, url="redis://localhost:1/0"))
     )
-    await hong.startup()                     # nối không được, app vẫn chạy
-    assert hong.connected is False
-    assert await hong.cached("x", lambda: _tra("van-chay"), ttl=10) == "van-chay"
-    await hong.shutdown()
+    await broken.startup()                     # nối không được, app vẫn chạy
+    assert broken.connected is False
+    assert await broken.cached("x", lambda: _tra("van-chay"), ttl=10) == "van-chay"
+    await broken.shutdown()
 
 
-async def _tra(gia_tri: str) -> str:
-    return gia_tri
+async def _tra(value: str) -> str:
+    return value
 
 
 async def test_pubsub_toi_duoc_handler(redis_settings: Settings):
@@ -125,8 +133,8 @@ async def test_pubsub_toi_duoc_handler(redis_settings: Settings):
         so_nguoi_nghe = await client.publish("test-gia:vang", {"gia": 78.5})
         assert so_nguoi_nghe == 1
 
-        han = time.monotonic() + 5
-        while time.monotonic() < han and not DA_NHAN:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not DA_NHAN:
             await anyio.sleep(0.05)
         assert DA_NHAN == [{"payload": {"gia": 78.5}, "channel": "test:test-gia:vang"}]
 
@@ -135,3 +143,64 @@ async def test_pubsub_toi_duoc_handler(redis_settings: Settings):
     finally:
         await runner.shutdown()
         await client.shutdown()
+
+
+# ============================================== emit / send (khuôn NestJS)
+DA_TRA_LOI: list[dict] = []
+
+
+@injectable
+class RedisRpcService:
+    @redis_responder("rpc-sum")
+    async def cong(self, data: list[int]) -> int:
+        return sum(data)
+
+    @redis_responder("rpc-boom")
+    async def no(self, data: dict) -> None:
+        raise RuntimeError("hỏng cố ý")
+
+    @redis_responder("rpc-event")
+    async def su_kien(self, data: dict) -> str:
+        DA_TRA_LOI.append(data)
+        return "không ai đọc"
+
+
+@pytest.fixture
+async def rpc_redis(redis_settings: Settings):
+    client = RedisClient(redis_settings)
+    await client.startup()
+    runner = RedisResponderRunner(client, redis_settings)
+    await runner.startup()
+    await anyio.sleep(0.4)          # chờ đăng ký kênh xong mới gửi
+    yield client
+    await runner.shutdown()
+    await client.shutdown()
+
+
+async def test_send_nhan_lai_gia_tri(rpc_redis: RedisClient):
+    assert await rpc_redis.send("rpc-sum", [1, 2, 3, 4], timeout=10) == 10
+
+
+async def test_handler_hong_thi_bao_ngay(rpc_redis: RedisClient):
+    with pytest.raises(RpcRemoteError, match="hỏng cố ý"):
+        await rpc_redis.send("rpc-boom", {}, timeout=10)
+
+
+async def test_khong_ai_nghe_thi_bao_ngay_chu_khong_doi_het_gio(rpc_redis: RedisClient):
+    """Redis ĐẾM ĐƯỢC người nghe, nên biết chắc yêu cầu mất — nói ngay.
+
+    NestJS ở chỗ này để người gọi đợi hết giờ rồi mới báo.
+    """
+    truoc = time.monotonic()
+    with pytest.raises(ServiceUnavailableError, match="không có ai đang nghe"):
+        await rpc_redis.send("khong-ai-nghe-kenh-nay", {}, timeout=10)
+    assert time.monotonic() - truoc < 1.0, "phải báo ngay, không đợi hết timeout"
+
+
+async def test_emit_khong_cho_ket_qua(rpc_redis: RedisClient):
+    DA_TRA_LOI.clear()
+    await rpc_redis.emit("rpc-event", {"tu": "test"})
+    han = time.monotonic() + 10
+    while time.monotonic() < han and not DA_TRA_LOI:
+        await anyio.sleep(0.1)
+    assert DA_TRA_LOI == [{"tu": "test"}]

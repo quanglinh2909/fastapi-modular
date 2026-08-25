@@ -81,9 +81,9 @@ def test_main_dung_lifespan_cua_ung_dung():
     Kiểm ở mức nguồn: FastAPI gộp lifespan lại thành một hàm mới nên so sánh
     định danh ở runtime không nói lên điều gì.
     """
-    nguon = Path("src/main.py").read_text(encoding="utf-8")
-    assert "from src.core.lifespan import lifespan" in nguon
-    assert "lifespan=lifespan" in nguon
+    source = Path("src/main.py").read_text(encoding="utf-8")
+    assert "from src.core.lifespan import lifespan" in source
+    assert "lifespan=lifespan" in source
 
 
 def test_app_that_su_khoi_dong_duoc():

@@ -57,15 +57,15 @@ def test_utc_la_mui_gio_that():
 
 def test_khong_dung_tinh_nang_chi_co_tu_311():
     """Quét nguồn: `asyncio.timeout` và `enum.StrEnum` nhập thẳng sẽ vỡ trên 3.10."""
-    goc = Path(__file__).resolve().parent.parent / "fastapi_modular"
+    root = Path(__file__).resolve().parent.parent / "fastapi_modular"
     pham: list[str] = []
-    for file in goc.rglob("*.py"):
+    for file in root.rglob("*.py"):
         if file.name == "compat.py":
             continue                       # chỗ duy nhất được phép biết khác biệt
-        noi_dung = file.read_text(encoding="utf-8")
+        content = file.read_text(encoding="utf-8")
         for cam in ("asyncio.timeout(", "from enum import StrEnum", "from datetime import UTC"):
-            if cam in noi_dung:
-                pham.append(f"{file.relative_to(goc.parent)}: {cam}")
+            if cam in content:
+                pham.append(f"{file.relative_to(root.parent)}: {cam}")
     assert not pham, "dùng tính năng 3.11+ ngoài compat.py:\n  " + "\n  ".join(pham)
 
 

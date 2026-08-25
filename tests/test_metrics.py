@@ -117,8 +117,8 @@ def test_khong_co_traceparent_thi_sinh_moi(client):
     response = client.get("/api/users")
     trace_id = response.headers["x-trace-id"]
     assert len(trace_id) == 32
-    khac = client.get("/api/users").headers["x-trace-id"]
-    assert khac != trace_id, "mỗi hành trình một trace id"
+    different = client.get("/api/users").headers["x-trace-id"]
+    assert different != trace_id, "mỗi hành trình một trace id"
 
 
 def test_loi_tra_kem_ca_request_id_va_trace_id(client):

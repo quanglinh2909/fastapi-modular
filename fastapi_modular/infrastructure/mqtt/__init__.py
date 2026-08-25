@@ -21,13 +21,21 @@ from fastapi_modular.infrastructure.mqtt.patterns import (
     validate_topic,
     validate_topic_filter,
 )
+from fastapi_modular.infrastructure.mqtt.responders import (
+    MqttResponderRunner,
+    discover_mqtt_responders,
+    mqtt_responder,
+)
 
 __all__ = [
     "MqttClient",
+    "MqttResponderRunner",
     "MqttRunner",
     "covers",
+    "discover_mqtt_responders",
     "discover_mqtt_subscribers",
     "matches",
+    "mqtt_responder",
     "mqtt_subscriber",
     "narrow_filters",
     "validate_topic",

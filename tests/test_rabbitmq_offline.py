@@ -59,9 +59,9 @@ async def test_tat_thi_khoi_dong_khong_lam_gi():
 
 async def test_tat_ma_van_dang_tin_thi_bao_ro_cach_bat():
     broker = RabbitBroker(_settings())
-    with pytest.raises(ComponentNotEnabledError) as loi:
+    with pytest.raises(ComponentNotEnabledError) as error:
         await broker.publish("events", "alert.created", {"id": 1})
-    assert "APP_RABBITMQ__ENABLED" in str(loi.value)
+    assert "APP_RABBITMQ__ENABLED" in str(error.value)
 
 
 def test_khong_co_cai_dat_khai_exchange():
@@ -128,7 +128,7 @@ class ConsumerMau:
     """Consumer chỉ dùng cho test — không phụ thuộc module ví dụ nào."""
 
     @rabbitmq_subscriber("events", "alert.#", queue="test-mac-dinh")
-    async def mac_dinh(self, payload: dict, meta: dict) -> None: ...
+    async def default_value(self, payload: dict, meta: dict) -> None: ...
 
     @rabbitmq_subscriber("events", "alert.#", queue="test-day-du", max_retries=3, dead_letter=True)
     async def day_du(self, payload: dict) -> None: ...
@@ -148,12 +148,12 @@ def test_tim_duoc_consumer_da_khai():
 def test_mac_dinh_chi_mot_hang_doi():
     """Không khai gì thêm thì broker chỉ mọc ra ĐÚNG MỘT hàng đợi."""
     specs = {spec.queue: spec for spec in discover_rabbitmq_subscribers()}
-    mac_dinh = specs["test-mac-dinh"]
-    assert mac_dinh.max_retries == 0, "không tự thử lại -> không có <queue>.retry"
-    assert mac_dinh.dead_letter is False, "không tự giữ tin hỏng -> không có <queue>.dlq"
-    assert (mac_dinh.durable, mac_dinh.prefetch) == (True, 20)
+    default_value = specs["test-mac-dinh"]
+    assert default_value.max_retries == 0, "không tự thử lại -> không có <queue>.retry"
+    assert default_value.dead_letter is False, "không tự giữ tin hỏng -> không có <queue>.dlq"
+    assert (default_value.durable, default_value.prefetch) == (True, 20)
     # Mặc định GIỮ hàng đợi khi app tắt: tin gửi lúc deploy không được mất.
-    assert mac_dinh.auto_delete is False
+    assert default_value.auto_delete is False
 
     # Hai hàng đợi phụ chỉ xuất hiện khi tự bật.
     day_du = specs["test-day-du"]
@@ -273,7 +273,7 @@ def test_consumer_mau_sai_bi_tu_choi_ngay_luc_khai_bao():
     with pytest.raises(BadRequestError):
 
         @rabbitmq_subscriber("events", "a..b", queue="q")
-        async def sai(self, payload: dict) -> None: ...
+        async def bad(self, payload: dict) -> None: ...
 
 
 # --------------------------------------------------- năm kiểu exchange
@@ -305,17 +305,17 @@ def test_direct_doi_routing_key_trung_khit():
     with pytest.raises(BadRequestError, match=r"đại diện|không hợp lệ"):
 
         @rabbitmq_subscriber("cmd", "device.*", queue="q-direct-sai", exchange_type="direct")
-        async def sai(self, payload: dict) -> None: ...
+        async def bad(self, payload: dict) -> None: ...
 
 
-@pytest.mark.parametrize("kieu", ["fanout", "headers", "default"])
-def test_kieu_khong_dung_routing_key_thi_cam_khai_routing_key(kieu):
+@pytest.mark.parametrize("kind", ["fanout", "headers", "default"])
+def test_kieu_khong_dung_routing_key_thi_cam_khai_routing_key(kind):
     """Đưa routing key cho fanout là hiểu nhầm — nó nhận MỌI tin, không lọc."""
-    ten = "" if kieu == "default" else "broadcast"
+    label = "" if kind == "default" else "broadcast"
     with pytest.raises(BadRequestError, match="không dùng routing key"):
 
-        @rabbitmq_subscriber(ten, "alert.#", queue="q", exchange_type=kieu)
-        async def sai(self, payload: dict) -> None: ...
+        @rabbitmq_subscriber(label, "alert.#", queue="q", exchange_type=kind)
+        async def bad(self, payload: dict) -> None: ...
 
 
 def test_fanout_moi_worker_mot_ban_sao():
@@ -341,7 +341,7 @@ def test_headers_khong_co_dieu_kien_thi_khong_khop_tin_nao():
     with pytest.raises(BadRequestError, match="headers_match"):
 
         @rabbitmq_subscriber("audit", queue="q", exchange_type="headers")
-        async def sai(self, payload: dict) -> None: ...
+        async def bad(self, payload: dict) -> None: ...
 
 
 def test_headers_match_o_kieu_khac_la_vo_nghia_nen_bi_chan():
@@ -349,7 +349,7 @@ def test_headers_match_o_kieu_khac_la_vo_nghia_nen_bi_chan():
     with pytest.raises(BadRequestError, match="chỉ có tác dụng"):
 
         @rabbitmq_subscriber("events", "a.b", queue="q", headers_match={"x": "1"})
-        async def sai(self, payload: dict) -> None: ...
+        async def bad(self, payload: dict) -> None: ...
 
 
 def test_x_match_phai_dat_qua_tham_so_match():
@@ -358,14 +358,14 @@ def test_x_match_phai_dat_qua_tham_so_match():
         @rabbitmq_subscriber(
             "audit", queue="q", exchange_type="headers", headers_match={"x-match": "all"}
         )
-        async def sai(self, payload: dict) -> None: ...
+        async def bad(self, payload: dict) -> None: ...
 
 
 def test_kieu_khong_co_that_bi_tu_choi():
     with pytest.raises(BadRequestError, match="Kiểu exchange"):
 
         @rabbitmq_subscriber("events", "a.b", queue="q", exchange_type="round-robin")
-        async def sai(self, payload: dict) -> None: ...
+        async def bad(self, payload: dict) -> None: ...
 
 
 def test_ten_exchange_va_kieu_default_phai_di_cung_nhau():
@@ -385,15 +385,15 @@ class _KenhGia:
     """Kênh giả: ghi lại đúng tham số mà khung gửi xuống AMQP."""
 
     def __init__(self) -> None:
-        self.hang_doi: dict[str, dict] = {}
+        self.queue: dict[str, dict] = {}
         self.exchange_da_khai: list[tuple[str, str]] = []
 
     async def declare_queue(self, name, **kwargs):
-        self.hang_doi[name] = kwargs
+        self.queue[name] = kwargs
         return _HangDoiGhiLai(name)
 
-    async def declare_exchange(self, name, kieu, **kwargs):
-        self.exchange_da_khai.append((name, str(getattr(kieu, "value", kieu))))
+    async def declare_exchange(self, name, kind, **kwargs):
+        self.exchange_da_khai.append((name, str(getattr(kind, "value", kind))))
         return name
 
     async def set_qos(self, **_):
@@ -417,36 +417,36 @@ class _HangDoiGhiLai:
 def _broker_gia_lap(monkeypatch) -> tuple[RabbitBroker, _KenhGia]:
     """Broker bật sẵn, bỏ qua kiểm tra kết nối — chỉ để soi tham số khai báo."""
     broker = RabbitBroker(_settings(enabled=True))
-    kenh = _KenhGia()
+    channels = _KenhGia()
     monkeypatch.setattr(broker, "_ready", lambda: None)
-    broker._publish_channel = kenh
-    return broker, kenh
+    broker._publish_channel = channels
+    return broker, channels
 
 
 async def test_ttl_khai_bang_giay_nhung_gui_xuong_amqp_bang_mili_giay(monkeypatch):
     """AMQP tính bằng mili-giây, khung tính bằng giây. Nhầm đơn vị ở đây không
     báo lỗi gì — chỉ là tin sống lâu gấp một nghìn lần."""
-    broker, kenh = _broker_gia_lap(monkeypatch)
-    await broker.durable_queue(kenh, "q-ttl", message_ttl=30, queue_expires=3600)
+    broker, channels = _broker_gia_lap(monkeypatch)
+    await broker.durable_queue(channels, "q-ttl", message_ttl=30, queue_expires=3600)
 
-    tham_so = kenh.hang_doi["q-ttl"]["arguments"]
-    assert tham_so["x-message-ttl"] == 30_000
-    assert tham_so["x-expires"] == 3_600_000
+    arguments_ = channels.queue["q-ttl"]["arguments"]
+    assert arguments_["x-message-ttl"] == 30_000
+    assert arguments_["x-expires"] == 3_600_000
 
 
 async def test_khong_khai_ttl_thi_khong_them_tham_so_nao(monkeypatch):
     """Hàng đợi mặc định phải khai y như trước khi có TTL — nếu không, mọi hàng
     đợi đang chạy sẽ dính PRECONDITION_FAILED ngay lần nâng cấp thư viện."""
-    broker, kenh = _broker_gia_lap(monkeypatch)
-    await broker.durable_queue(kenh, "q-thuong")
-    assert kenh.hang_doi["q-thuong"]["arguments"] is None
+    broker, channels = _broker_gia_lap(monkeypatch)
+    await broker.durable_queue(channels, "q-thuong")
+    assert channels.queue["q-thuong"]["arguments"] is None
 
 
 @pytest.mark.parametrize("xau", [0, -1])
 async def test_ttl_khong_duong_bi_chan(monkeypatch, xau):
-    broker, kenh = _broker_gia_lap(monkeypatch)
+    broker, channels = _broker_gia_lap(monkeypatch)
     with pytest.raises(Exception, match="lớn hơn 0 giây"):
-        await broker.durable_queue(kenh, "q-xau", message_ttl=xau)
+        await broker.durable_queue(channels, "q-xau", message_ttl=xau)
 
 
 def test_ttl_di_tron_duong_tu_decorator_toi_spec():
@@ -462,10 +462,10 @@ async def _chay_setup(monkeypatch, spec) -> tuple[Any, _KenhGia]:
     """Chạy đúng đoạn dựng hàng đợi + bind của runner, trên kênh giả."""
     from fastapi_modular.infrastructure.rabbitmq.consumers import RabbitmqRunner
 
-    broker, kenh = _broker_gia_lap(monkeypatch)
+    broker, channels = _broker_gia_lap(monkeypatch)
 
     async def new_channel(**_):
-        return kenh
+        return channels
 
     monkeypatch.setattr(broker, "new_channel", new_channel)
     runner = RabbitmqRunner(broker, _settings(enabled=True))
@@ -474,7 +474,7 @@ async def _chay_setup(monkeypatch, spec) -> tuple[Any, _KenhGia]:
     # `_setup` nuốt mọi lỗi để một consumer hỏng không giết các consumer khác,
     # nên phải kiểm tích cực: có mặt ở đây tức là đã dựng xong, không ném.
     assert spec.queue in runner._started, "consumer không dựng được"
-    return runner._started[spec.queue][0], kenh
+    return runner._started[spec.queue][0], channels
 
 
 async def test_exchange_mac_dinh_khong_bind_va_khong_khai_bao(monkeypatch):
@@ -484,18 +484,18 @@ async def test_exchange_mac_dinh_khong_bind_va_khong_khai_bao(monkeypatch):
     @rabbitmq_subscriber("", queue="viec-nen")
     async def h(self, payload: dict) -> None: ...
 
-    hang_doi, kenh = await _chay_setup(monkeypatch, h.__rabbitmq_subscriber__)
-    assert hang_doi.da_bind == []
-    assert kenh.exchange_da_khai == []
+    queue, channels = await _chay_setup(monkeypatch, h.__rabbitmq_subscriber__)
+    assert queue.da_bind == []
+    assert channels.exchange_da_khai == []
 
 
 async def test_fanout_khai_dung_kieu_va_bind_khong_routing_key(monkeypatch):
     @rabbitmq_subscriber("broadcast", queue="q-fan", exchange_type="fanout")
     async def h(self, payload: dict) -> None: ...
 
-    hang_doi, kenh = await _chay_setup(monkeypatch, h.__rabbitmq_subscriber__)
-    assert kenh.exchange_da_khai == [("broadcast", "fanout")]
-    assert hang_doi.da_bind == [
+    queue, channels = await _chay_setup(monkeypatch, h.__rabbitmq_subscriber__)
+    assert channels.exchange_da_khai == [("broadcast", "fanout")]
+    assert queue.da_bind == [
         {"exchange": "broadcast", "routing_key": "", "arguments": None}
     ]
 
@@ -508,17 +508,17 @@ async def test_dieu_kien_header_di_toi_tan_lenh_bind(monkeypatch):
     )
     async def h(self, payload: dict) -> None: ...
 
-    hang_doi, kenh = await _chay_setup(monkeypatch, h.__rabbitmq_subscriber__)
-    assert kenh.exchange_da_khai == [("audit", "headers")]
-    assert hang_doi.da_bind[0]["arguments"] == {"x-match": "all", "vung": "hanoi"}
+    queue, channels = await _chay_setup(monkeypatch, h.__rabbitmq_subscriber__)
+    assert channels.exchange_da_khai == [("audit", "headers")]
+    assert queue.da_bind[0]["arguments"] == {"x-match": "all", "vung": "hanoi"}
 
 
 async def test_ttl_cua_consumer_di_toi_tan_lenh_khai_hang_doi(monkeypatch):
     @rabbitmq_subscriber("events", "tam.#", queue="q-het-han", message_ttl=15)
     async def h(self, payload: dict) -> None: ...
 
-    _, kenh = await _chay_setup(monkeypatch, h.__rabbitmq_subscriber__)
-    assert kenh.hang_doi["q-het-han"]["arguments"]["x-message-ttl"] == 15_000
+    _, channels = await _chay_setup(monkeypatch, h.__rabbitmq_subscriber__)
+    assert channels.queue["q-het-han"]["arguments"]["x-message-ttl"] == 15_000
 
 
 async def test_mot_exchange_hai_kieu_bi_chan_ngay_thay_vi_giet_ca_kenh(monkeypatch):
@@ -533,10 +533,10 @@ async def test_mot_exchange_hai_kieu_bi_chan_ngay_thay_vi_giet_ca_kenh(monkeypat
 async def test_ben_dang_tin_khong_phai_nhac_lai_kieu(monkeypatch):
     """Consumer đã khai fanout rồi thì publish("events", ...) dùng lại đúng kiểu
     đó — quên nhắc kiểu là chuyện chắc chắn xảy ra, và giá của nó là cả kênh."""
-    broker, kenh = _broker_gia_lap(monkeypatch)
+    broker, channels = _broker_gia_lap(monkeypatch)
     await broker.exchange("events", "fanout")
     await broker.exchange("events")          # không nhắc kiểu
-    assert kenh.exchange_da_khai == [("events", "fanout")], "không được khai lần hai"
+    assert channels.exchange_da_khai == [("events", "fanout")], "không được khai lần hai"
 
 
 def test_ttl_sai_bi_chan_ngay_luc_khai_bao():
@@ -545,7 +545,7 @@ def test_ttl_sai_bi_chan_ngay_luc_khai_bao():
     with pytest.raises(BadRequestError, match="lớn hơn 0 giây"):
 
         @rabbitmq_subscriber("events", "a.b", queue="q", message_ttl=0)
-        async def sai(self, payload: dict) -> None: ...
+        async def bad(self, payload: dict) -> None: ...
 
     with pytest.raises(BadRequestError, match="lớn hơn 0 giây"):
 
@@ -557,7 +557,7 @@ def test_ttl_sai_bi_chan_ngay_luc_khai_bao():
 @injectable
 class ResponderMau:
     @rabbitmq_responder("sum", queue="q-rpc")
-    async def cong(self, data: list[int]) -> int:
+    async def gateway(self, data: list[int]) -> int:
         return sum(data)
 
     @rabbitmq_responder({"cmd": "info"}, queue="q-rpc")
@@ -582,9 +582,9 @@ def test_khong_khai_exchange_thi_di_thang_vao_hang_doi_theo_ten():
 
 def test_nhieu_responder_chung_mot_hang_doi_la_binh_thuong():
     """Đúng mô hình NestJS: một microservice nghe một hàng đợi, tự phân theo pattern."""
-    ke_hoach = plan_queues(discover_rabbitmq_responders())
-    _, bang = ke_hoach["q-rpc"]
-    assert set(bang) >= {"sum", '{"cmd":"info"}'}
+    plan = plan_queues(discover_rabbitmq_responders())
+    _, table = plan["q-rpc"]
+    assert set(table) >= {"sum", '{"cmd":"info"}'}
 
 
 def test_trung_pattern_tren_cung_hang_doi_bi_chan():
@@ -624,12 +624,12 @@ def test_responder_phai_la_async():
 def test_hai_cach_khai_dia_chi_khong_tron_lan(monkeypatch):
     """`queue=` (kiểu NestJS) và `exchange=/routing_key=` (kiểu AMQP) loại trừ nhau."""
     broker, _ = _broker_gia_lap(monkeypatch)
-    assert broker._dia_chi("viec", "", None) == ("", "viec")
-    assert broker._dia_chi(None, "events", "a.b") == ("events", "a.b")
+    assert broker._address("viec", "", None) == ("", "viec")
+    assert broker._address(None, "events", "a.b") == ("events", "a.b")
     with pytest.raises(Exception, match="Chọn một trong hai"):
-        broker._dia_chi("viec", "events", "a.b")
+        broker._address("viec", "events", "a.b")
     with pytest.raises(Exception, match="Chưa nói gửi đi đâu"):
-        broker._dia_chi(None, "", None)
+        broker._address(None, "", None)
 
 
 async def test_emit_gui_dung_khuon_goi_nestjs(monkeypatch):

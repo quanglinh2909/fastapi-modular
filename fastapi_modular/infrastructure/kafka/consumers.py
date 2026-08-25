@@ -194,13 +194,13 @@ class KafkaRunner:
     async def _setup(self) -> None:
         """Idempotent: gọi lại bao nhiêu lần cũng không sinh consumer trùng."""
         for spec in self._specs:
-            khoa = f"{spec.group}:{spec.topic}"
-            cu = self._tasks.get(khoa)
-            if cu is not None and not cu.done():
+            key = f"{spec.group}:{spec.topic}"
+            previous = self._tasks.get(key)
+            if previous is not None and not previous.done():
                 continue
-            self._tasks[khoa] = asyncio.create_task(self._vong_doc(spec), name=f"kafka-{khoa}")
+            self._tasks[key] = asyncio.create_task(self._read_loop(spec), name=f"kafka-{key}")
 
-    async def _vong_doc(self, spec: KafkaSpec) -> None:
+    async def _read_loop(self, spec: KafkaSpec) -> None:
         """Đọc mãi. Consumer chết vì bất cứ lý do gì thì dựng lại, có backoff.
 
         Mỗi spec một consumer RIÊNG: dùng chung một consumer cho nhiều nhóm là
@@ -228,13 +228,13 @@ class KafkaRunner:
                     handler=spec.label,
                     topic=spec.topic,
                     group=spec.group,
-                    tu=spec.auto_offset_reset,
+                    from_=spec.auto_offset_reset,
                 )
                 delay = self._config.reconnect_delay_seconds
                 async for message in consumer:
                     if self._closing:
                         break
-                    await self._xu_ly(spec, message)
+                    await self._handle(spec, message)
                     await consumer.commit()
             except asyncio.CancelledError:
                 raise
@@ -256,18 +256,18 @@ class KafkaRunner:
             await asyncio.sleep(delay)
             delay = min(delay * 2, self._config.max_reconnect_delay_seconds)
 
-    async def _xu_ly(self, spec: KafkaSpec, message: Any) -> None:
+    async def _handle(self, spec: KafkaSpec, message: Any) -> None:
         """Chạy handler, thử lại tại chỗ, hết lượt thì sang <topic>.dlt.
 
         Hàm này KHÔNG được ném lỗi ra ngoài: ném là vòng đọc đứt và cả phân
         vùng dừng lại vì một tin hỏng.
         """
-        for lan in range(1, spec.max_retries + 2):
+        for attempt in range(1, spec.max_retries + 2):
             try:
-                await self._goi(spec, message, lan)
+                await self._call(spec, message, attempt)
             except PermanentMessageError as exc:
                 log.error("kafka.permanent_error", handler=spec.label, error=str(exc))
-                await self._bo_sang_dlt(spec, message, exc)
+                await self._move_to_dlt(spec, message, exc)
                 return
             except Exception as exc:
                 kafka_consume_failed.inc(topic=spec.topic)
@@ -277,18 +277,18 @@ class KafkaRunner:
                     topic=spec.topic,
                     partition=message.partition,
                     offset=message.offset,
-                    attempt=lan,
+                    attempt=attempt,
                     error=str(exc),
                 )
-                if lan > spec.max_retries:
-                    await self._bo_sang_dlt(spec, message, exc)
+                if attempt > spec.max_retries:
+                    await self._move_to_dlt(spec, message, exc)
                     return
                 await asyncio.sleep(spec.retry_delay)
             else:
                 kafka_consumed.inc(topic=spec.topic)
                 return
 
-    async def _goi(self, spec: KafkaSpec, message: Any, lan: int) -> None:
+    async def _call(self, spec: KafkaSpec, message: Any, attempt: int) -> None:
         token = set_request_id(new_request_id())
         try:
             async with request_scope():
@@ -307,7 +307,7 @@ class KafkaRunner:
                         "offset": message.offset,
                         "key": message.key.decode() if message.key else None,
                         "timestamp": message.timestamp,
-                        "attempt": lan,
+                        "attempt": attempt,
                     }
                     await spec.fn(instance, payload, meta)  # type: ignore[misc]
                 else:
@@ -315,7 +315,7 @@ class KafkaRunner:
         finally:
             reset_request_id(token)
 
-    async def _bo_sang_dlt(self, spec: KafkaSpec, message: Any, error: BaseException) -> None:
+    async def _move_to_dlt(self, spec: KafkaSpec, message: Any, error: BaseException) -> None:
         kafka_dead_lettered.inc(topic=spec.topic)
         if not spec.dead_letter:
             log.error(

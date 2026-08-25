@@ -38,7 +38,7 @@ class AlertCreated(BaseModel):
     """Khuôn của tin. Sai khuôn thì đi thẳng DLQ, không thử lại (thử cũng vẫn sai)."""
 
     message: str
-    kieu: str = Field(default="ok", description="ok | hong-tam-thoi | hong-vinh-vien")
+    kind: str = Field(default="ok", description="ok | hong-tam-thoi | hong-vinh-vien")
 
 
 @injectable
@@ -55,15 +55,15 @@ class AlertConsumer:
     @rabbitmq_subscriber(EXCHANGE, ROUTING_KEY, queue=QUEUE, max_retries=2, retry_delay=5,
                 dead_letter=True)
     async def event(self, payload: AlertCreated, meta: dict) -> None:
-        log.info("alert.nhan_duoc", kieu=payload.kieu, lan_thu=meta["attempt"])
+        log.info("alert.nhan_duoc", kind=payload.kind, lan_thu=meta["attempt"])
 
-        if payload.kieu == "hong-vinh-vien":
+        if payload.kind == "hong-vinh-vien":
             # Biết chắc thử lại vô ích: dữ liệu sai, bản ghi đã xoá, phiên bản
             # sự kiện không hỗ trợ. Ném cái này để bỏ qua mọi lượt thử còn lại.
             raise PermanentMessageError(f"Không gửi được mail cho {payload.message!r}")
 
-        if payload.kieu == "hong-tam-thoi":
+        if payload.kind == "hong-tam-thoi":
             # Giả lập lỗi mạng/SMTP chập chờn — loại đáng để thử lại.
             raise RuntimeError(f"SMTP không phản hồi (lần thử {meta['attempt']})")
 
-        log.info("alert.da_gui_mail", noi_dung=payload.message)
+        log.info("alert.da_gui_mail", content=payload.message)

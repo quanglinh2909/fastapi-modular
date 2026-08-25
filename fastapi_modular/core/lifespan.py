@@ -63,14 +63,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Import muộn: Database kéo theo factory driver, mà factory chỉ được chạm
     # tới sau khi mọi module đã nạp xong (entity phải đăng ký trước create_schema).
     from fastapi_modular.infrastructure.database import Database
-    from fastapi_modular.infrastructure.kafka import KafkaBroker, KafkaRunner
-    from fastapi_modular.infrastructure.mqtt import MqttClient, MqttRunner
+    from fastapi_modular.infrastructure.kafka import (
+        KafkaBroker,
+        KafkaResponderRunner,
+        KafkaRunner,
+    )
+    from fastapi_modular.infrastructure.mqtt import (
+        MqttClient,
+        MqttResponderRunner,
+        MqttRunner,
+    )
     from fastapi_modular.infrastructure.rabbitmq import (
         RabbitBroker,
         RabbitmqResponderRunner,
         RabbitmqRunner,
     )
-    from fastapi_modular.infrastructure.redis import RedisClient, RedisRunner
+    from fastapi_modular.infrastructure.redis import (
+        RedisClient,
+        RedisResponderRunner,
+        RedisRunner,
+    )
 
     database = container.resolve(Database)
 
@@ -100,12 +112,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await redis.startup()
     channels = container.resolve(RedisRunner)
     await channels.startup()
+    redis_responders = container.resolve(RedisResponderRunner)
+    await redis_responders.startup()
     app.state.redis = redis
 
     # MqttRunner phải chạy TRƯỚC client: nó là chỗ khai danh sách topic, mà
     # client đăng ký topic ngay trong lần bắt tay đầu tiên.
     mqtt_runner = container.resolve(MqttRunner)
     await mqtt_runner.startup()
+    mqtt_responders = container.resolve(MqttResponderRunner)
+    await mqtt_responders.startup()
     mqtt = container.resolve(MqttClient)
     await mqtt.startup()
     app.state.mqtt = mqtt
@@ -114,6 +130,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await kafka.startup()
     kafka_consumers = container.resolve(KafkaRunner)
     await kafka_consumers.startup()
+    kafka_responders = container.resolve(KafkaResponderRunner)
+    await kafka_responders.startup()
     app.state.kafka = kafka
 
     log.info(

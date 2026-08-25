@@ -47,7 +47,7 @@ def test_ten_index_qua_dai_thi_rut_gon():
 
 def test_cum_unique_chan_trung_theo_CA_CUM(client, user):
     """Cùng chủ + cùng tên -> chặn. Khác chủ + cùng tên -> cho phép."""
-    khac = client.post(
+    different = client.post(
         "/api/users", json={"email": "chu2@example.com", "full_name": "Chủ 2"}
     ).json()
 
@@ -59,7 +59,7 @@ def test_cum_unique_chan_trung_theo_CA_CUM(client, user):
 
     assert tao(user["id"], "SN-A").status_code == 201
     assert tao(user["id"], "SN-B").status_code == 409, "cùng chủ, trùng tên"
-    assert tao(khac["id"], "SN-C").status_code == 201, "khác chủ thì trùng tên vẫn được"
+    assert tao(different["id"], "SN-C").status_code == 201, "khác chủ thì trùng tên vẫn được"
     assert tao(user["id"], "SN-D", name="Cảm biến B").status_code == 201
 
 

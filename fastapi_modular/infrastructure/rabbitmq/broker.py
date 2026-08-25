@@ -116,7 +116,7 @@ def safe_url(url: str) -> str:
     return f"{scheme}://{user}:***@{host}" if user else f"{scheme}://{host}"
 
 
-def _doc_body(body: bytes) -> Any:
+def _read_body(body: bytes) -> Any:
     """Tin trong DLQ có thể sai khuôn — đó thường là lý do nó nằm ở đó."""
     try:
         return json.loads(body)
@@ -124,18 +124,18 @@ def _doc_body(body: bytes) -> Any:
         return body.decode("utf-8", errors="replace")
 
 
-def _mili_giay(giay: float, ten: str) -> int:
+def _milliseconds(seconds: float, label: str) -> int:
     """Đổi giây (đơn vị của thư viện) sang mili-giây (đơn vị của AMQP).
 
     Mọi thời lượng trong khung này tính bằng GIÂY. AMQP thì tính bằng mili-giây.
     Nhầm đơn vị ở đây không báo lỗi gì cả — chỉ là tin sống lâu gấp nghìn lần,
     hoặc chết ngay khi vừa tới. Quy đổi một chỗ duy nhất là ở đây.
     """
-    if giay <= 0:
+    if seconds <= 0:
         raise ServiceUnavailableError(
-            f"`{ten}` phải lớn hơn 0 giây (đang là {giay}). Không cần giới hạn thì bỏ hẳn tham số."
+            f"`{label}` phải lớn hơn 0 giây (đang là {seconds}). Không cần giới hạn thì bỏ hẳn tham số."
         )
-    return max(1, round(giay * 1000))
+    return max(1, round(seconds * 1000))
 
 
 @injectable
@@ -147,7 +147,7 @@ class RabbitBroker:
         self._exchanges: dict[str, Any] = {}
         self._exchange_kinds: dict[str, str] = {}
         self._rpc_channel: Any = None
-        self._so_cho = PendingReplies("RabbitMQ")
+        self._pending = PendingReplies("RabbitMQ")
         self._lock = asyncio.Lock()
         self._ready_hooks: list[Callable[[], Awaitable[None]]] = []
         self._supervisor: asyncio.Task[None] | None = None
@@ -278,7 +278,7 @@ class RabbitBroker:
         # thì câu trả lời của họ chắc chắn không bao giờ tới nữa; đánh thức ngay
         # thay vì để mỗi người đứng thêm đủ `timeout` giây.
         self._rpc_channel = None
-        self._so_cho.fail_all("kết nối RabbitMQ đứt")
+        self._pending.fail_all("kết nối RabbitMQ đứt")
 
     # ------------------------------------------------------------------ hook
     def on_ready(self, hook: Callable[[], Awaitable[None]]) -> None:
@@ -310,7 +310,7 @@ class RabbitBroker:
         self._connection = None
         self._publish_channel = None
         self._rpc_channel = None
-        self._so_cho.cancel_all()
+        self._pending.cancel_all()
         self._exchanges.clear()
         self._exchange_kinds.clear()
 
@@ -339,15 +339,15 @@ class RabbitBroker:
         if name == "":
             return self._publish_channel.default_exchange
 
-        da_khai = self._exchange_kinds.get(name)
-        if da_khai is not None:
-            if kind is not None and kind != da_khai:
+        declared_kind = self._exchange_kinds.get(name)
+        if declared_kind is not None:
+            if kind is not None and kind != declared_kind:
                 # Chặn TẠI CHỖ thay vì để broker chặn: khai lại exchange với
                 # kiểu khác là lỗi giao thức, RabbitMQ đáp PRECONDITION_FAILED
                 # rồi ĐÓNG kênh đăng tin — kéo theo mọi lời publish khác của
                 # tiến trình này, không chỉ lời gọi sai.
                 raise ServiceUnavailableError(
-                    f"Exchange '{name}' đã khai kiểu '{da_khai}', giờ lại đòi kiểu "
+                    f"Exchange '{name}' đã khai kiểu '{declared_kind}', giờ lại đòi kiểu "
                     f"'{kind}'. Một exchange chỉ có MỘT kiểu và RabbitMQ không cho "
                     "đổi — sửa cho khớp, hoặc dùng tên exchange khác."
                 )
@@ -364,7 +364,7 @@ class RabbitBroker:
             )
 
         aio_pika = _require_aio_pika()
-        kieu = kind or "topic"
+        kind = kind or "topic"
         async with self._lock:
             if name in self._exchanges:
                 # Một lời gọi khác vừa khai xong trong lúc ta chờ khoá. Kiểm lại
@@ -382,19 +382,19 @@ class RabbitBroker:
                     self._exchanges[name] = await self._publish_channel.declare_exchange(
                         # Exchange luôn bền: nó chỉ là một bảng định tuyến, không
                         # giữ dữ liệu, mà mất nó thì mọi binding mất theo.
-                        name, aio_pika.ExchangeType(kieu), durable=True
+                        name, aio_pika.ExchangeType(kind), durable=True
                     )
                 except Exception as exc:
                     if "PRECONDITION_FAILED" not in str(exc):
                         raise
                     raise ServiceUnavailableError(
                         f"Exchange '{name}' đã tồn tại trên broker với kiểu KHÁC "
-                        f"'{kieu}': {exc}. RabbitMQ không cho đổi kiểu của exchange "
+                        f"'{kind}': {exc}. RabbitMQ không cho đổi kiểu của exchange "
                         f"đã có — xoá nó (rabbitmqctl delete_exchange {name}) rồi "
                         "khởi động lại, hoặc đổi tên exchange."
                     ) from exc
-                self._exchange_kinds[name] = kieu
-                log.debug("mq.exchange_declared", exchange=name, kind=kieu)
+                self._exchange_kinds[name] = kind
+                log.debug("mq.exchange_declared", exchange=name, kind=kind)
         return self._exchanges[name]
 
     async def new_channel(self, *, prefetch: int = DEFAULT_PREFETCH) -> Any:
@@ -461,9 +461,9 @@ class RabbitBroker:
         self._ready()
         arguments: dict[str, Any] = {}
         if message_ttl is not None:
-            arguments["x-message-ttl"] = _mili_giay(message_ttl, "message_ttl")
+            arguments["x-message-ttl"] = _milliseconds(message_ttl, "message_ttl")
         if queue_expires is not None:
-            arguments["x-expires"] = _mili_giay(queue_expires, "queue_expires")
+            arguments["x-expires"] = _milliseconds(queue_expires, "queue_expires")
         if dead_letter:
             dlx = await self._declare_dead_letter(channel, name, durable=durable)
             arguments["x-dead-letter-exchange"] = dlx
@@ -548,7 +548,7 @@ class RabbitBroker:
         if not self.connected:
             return []
         channel = await self._connection.channel()
-        giu: list[Any] = []
+        kept: list[Any] = []
         found: list[dict[str, Any]] = []
         try:
             queue = await channel.declare_queue(name, passive=True)
@@ -556,19 +556,19 @@ class RabbitBroker:
                 message = await queue.get(no_ack=False, fail=False)
                 if message is None:
                     break
-                giu.append(message)
+                kept.append(message)
                 found.append(
                     {
                         "message_id": message.message_id,
                         "routing_key": message.routing_key,
                         "headers": dict(message.headers or {}),
-                        "body": _doc_body(message.body),
+                        "body": _read_body(message.body),
                     }
                 )
         except Exception as exc:  # noqa: BLE001 - soi hàng đợi không được thì trả rỗng
             log.debug("mq.peek_failed", queue=name, error=f"{type(exc).__name__}: {exc}")
         finally:
-            for message in giu:
+            for message in kept:
                 with contextlib.suppress(Exception):
                     await message.nack(requeue=True)
             with contextlib.suppress(Exception):
@@ -742,7 +742,7 @@ class RabbitBroker:
         )
 
     # ------------------------------------------------- khuôn NestJS: emit / send
-    def _dia_chi(
+    def _address(
         self, queue: str | None, exchange: str, routing_key: str | None
     ) -> tuple[str, str]:
         """Chốt (exchange, routing key) từ hai cách khai địa chỉ.
@@ -791,7 +791,7 @@ class RabbitBroker:
 
         Không có `id` trong gói, nên bên kia biết là **không phải trả lời**.
         """
-        ex, rk = self._dia_chi(queue, exchange, routing_key)
+        ex, rk = self._address(queue, exchange, routing_key)
         return await self.publish(
             exchange=ex,
             routing_key=rk,
@@ -804,7 +804,7 @@ class RabbitBroker:
             fire_and_forget=fire_and_forget,
         )
 
-    async def _kenh_rpc(self) -> Any:
+    async def _ensure_rpc_channel(self) -> Any:
         """Kênh riêng vừa nghe hàng đợi trả lời vừa gửi yêu cầu đi.
 
         Phải là MỘT kênh cho cả hai việc: `amq.rabbitmq.reply-to` là hàng đợi
@@ -816,32 +816,32 @@ class RabbitBroker:
         không để lại rác trên broker sau mỗi lần gọi — đây là cơ chế có sẵn của
         RabbitMQ, cũng chính là thứ NestJS dùng.
         """
-        kenh = self._rpc_channel
-        if kenh is not None and not kenh.is_closed:
-            return kenh
+        channels = self._rpc_channel
+        if channels is not None and not channels.is_closed:
+            return channels
 
         self._ready()
         async with self._lock:
             if self._rpc_channel is not None and not self._rpc_channel.is_closed:
                 return self._rpc_channel
-            kenh = await self._connection.channel()
+            channels = await self._connection.channel()
             # `ensure=False`: không khai báo thụ động: hàng đợi giả này không
             # tồn tại cho tới khi có người nghe, hỏi nó sẽ đóng luôn kênh.
-            hang_doi = await kenh.get_queue(RMQ_REPLY_QUEUE, ensure=False)
-            await hang_doi.consume(self._nhan_tra_loi, no_ack=True)
-            self._rpc_channel = kenh
+            queue = await channels.get_queue(RMQ_REPLY_QUEUE, ensure=False)
+            await queue.consume(self._on_reply, no_ack=True)
+            self._rpc_channel = channels
             log.debug("mq.rpc_channel_opened")
         return self._rpc_channel
 
-    async def _nhan_tra_loi(self, message: Any) -> None:
-        ma = message.correlation_id
-        if not ma:
+    async def _on_reply(self, message: Any) -> None:
+        correlation_id = message.correlation_id
+        if not correlation_id:
             log.warning("mq.reply_without_correlation_id")
             return
-        if not self._so_cho.deliver(ma, decode(message.body)):
+        if not self._pending.deliver(correlation_id, decode(message.body)):
             # Tới sau khi người gọi đã bỏ cuộc. Không phải lỗi, nhưng thấy
             # nhiều dòng này nghĩa là `timeout` đang đặt ngắn hơn thực tế.
-            log.debug("mq.reply_too_late", correlation_id=ma)
+            log.debug("mq.reply_too_late", correlation_id=correlation_id)
 
     async def send(
         self,
@@ -865,47 +865,47 @@ class RabbitBroker:
 
         Nhớ: hết giờ KHÔNG bảo đảm bên kia chưa làm gì — xem docs/rpc.md.
         """
-        ex, rk = self._dia_chi(queue, exchange, routing_key)
+        ex, rk = self._address(queue, exchange, routing_key)
         aio_pika = _require_aio_pika()
-        kenh = await self._kenh_rpc()
+        channels = await self._ensure_rpc_channel()
 
-        han = timeout or DEFAULT_RPC_TIMEOUT
+        deadline = timeout or DEFAULT_RPC_TIMEOUT
 
         # Giữ chỗ TRƯỚC khi gửi: bên kia có thể trả lời xong trước khi lệnh gửi
         # của ta kịp trả về.
-        ma, cho = self._so_cho.open()
+        correlation_id, waiter = self._pending.open()
         try:
-            goi = request_packet(pattern, data, ma)
+            packet = request_packet(pattern, data, correlation_id)
             message = aio_pika.Message(
-                body=json.dumps(goi, ensure_ascii=False, default=str).encode(),
+                body=json.dumps(packet, ensure_ascii=False, default=str).encode(),
                 content_type=CONTENT_TYPE,
                 content_encoding="utf-8",
                 message_id=uuid.uuid4().hex,
                 timestamp=utcnow(),
-                correlation_id=ma,
+                correlation_id=correlation_id,
                 reply_to=RMQ_REPLY_QUEUE,
                 headers=headers or {},
                 # Yêu cầu đang có người đứng chờ: quá `timeout` thì nó vô giá
                 # trị, đừng để broker giữ lại rồi giao cho ai đó sau này.
-                expiration=han,
+                expiration=deadline,
             )
             if ex:
-                dich_gui = await self._khai_tren_kenh(kenh, ex, exchange_type)
+                destination = await self._declare_on_channel(channels, ex, exchange_type)
             else:
-                dich_gui = kenh.default_exchange
+                destination = channels.default_exchange
             await asyncio.wait_for(
-                dich_gui.publish(message, routing_key=rk),
+                destination.publish(message, routing_key=rk),
                 self._config.publish_timeout_seconds,
             )
         except BaseException:
-            self._so_cho.deliver(ma, None)   # trả chỗ, đừng để sổ chờ phình
+            self._pending.deliver(correlation_id, None)   # trả chỗ, đừng để sổ chờ phình
             raise
 
         rabbitmq_published.inc(exchange=ex, routing_key=rk)
-        return await self._so_cho.wait(ma, cho, han, dich=normalize_pattern(pattern))
+        return await self._pending.wait(correlation_id, waiter, deadline, target=normalize_pattern(pattern))
 
-    async def _khai_tren_kenh(
-        self, kenh: Any, name: str, kind: ExchangeKind | None
+    async def _declare_on_channel(
+        self, channels: Any, name: str, kind: ExchangeKind | None
     ) -> Any:
         """Khai exchange trên ĐÚNG kênh RPC.
 
@@ -914,8 +914,8 @@ class RabbitBroker:
         `reply_to` sẽ trỏ về một kênh khác kênh đang nghe.
         """
         aio_pika = _require_aio_pika()
-        kieu = kind or self._exchange_kinds.get(name) or "topic"
-        return await kenh.declare_exchange(name, aio_pika.ExchangeType(kieu), durable=True)
+        kind = kind or self._exchange_kinds.get(name) or "topic"
+        return await channels.declare_exchange(name, aio_pika.ExchangeType(kind), durable=True)
 
     def stats(self) -> dict[str, Any]:
         return {

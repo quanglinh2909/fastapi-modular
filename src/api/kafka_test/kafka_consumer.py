@@ -26,7 +26,7 @@ DA_NHAN: list[dict] = []
 class DonHang(BaseModel):
     ma_don: str
     tien: float = 0
-    kieu: str = Field(default="ok", description="ok | hong-tam-thoi | hong-vinh-vien")
+    kind: str = Field(default="ok", description="ok | hong-tam-thoi | hong-vinh-vien")
 
 
 @injectable
@@ -39,10 +39,10 @@ class KhoVanConsumer:
         retry_delay=0.5,                # để NHỎ: thử lại làm đứng cả phân vùng
     )
     async def giao_hang(self, don: DonHang, meta: dict) -> None:
-        _ghi("kho-van", don, meta)
-        if don.kieu == "hong-vinh-vien":
+        _write("kho-van", don, meta)
+        if don.kind == "hong-vinh-vien":
             raise PermanentMessageError(f"Đơn {don.ma_don} sai vĩnh viễn")
-        if don.kieu == "hong-tam-thoi":
+        if don.kind == "hong-tam-thoi":
             raise RuntimeError(f"kho chưa phản hồi (lần {meta['attempt']})")
 
 
@@ -52,16 +52,16 @@ class KeToanConsumer:
 
     @kafka_subscriber(TOPIC, group="ke-toan", auto_offset_reset="earliest", max_retries=0)
     async def ghi_so(self, don: DonHang, meta: dict) -> None:
-        _ghi("ke-toan", don, meta)
+        _write("ke-toan", don, meta)
 
 
-def _ghi(nhom: str, don: DonHang, meta: dict) -> None:
-    log.info("kafka.nhan", nhom=nhom, ma_don=don.ma_don, offset=meta["offset"])
+def _write(groups: str, don: DonHang, meta: dict) -> None:
+    log.info("kafka.nhan", groups=groups, ma_don=don.ma_don, offset=meta["offset"])
     DA_NHAN.append(
         {
-            "nhom": nhom,
+            "nhom": groups,
             "ma_don": don.ma_don,
-            "kieu": don.kieu,
+            "kieu": don.kind,
             "partition": meta["partition"],
             "offset": meta["offset"],
             "key": meta["key"],

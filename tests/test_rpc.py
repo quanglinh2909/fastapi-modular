@@ -38,14 +38,14 @@ VECTOR = json.loads(
 
 
 # ------------------------------------------------------- chuẩn hoá pattern
-@pytest.mark.parametrize("pattern,mong_doi", VECTOR, ids=range(len(VECTOR)))
-def test_chuan_hoa_pattern_khop_nestjs(pattern, mong_doi):
+@pytest.mark.parametrize("pattern,expected_", VECTOR, ids=range(len(VECTOR)))
+def test_chuan_hoa_pattern_khop_nestjs(pattern, expected_):
     """Khớp tới từng ký tự với hàm thật của NestJS.
 
     Lệch một ký tự là bên kia không tìm thấy handler, và KHÔNG có lỗi nào được
     ném ra để mà lần — chỉ là lời gọi treo tới hết giờ.
     """
-    assert normalize_pattern(pattern) == mong_doi
+    assert normalize_pattern(pattern) == expected_
 
 
 def test_khoa_sap_theo_localecompare_chu_khong_theo_ma_ky_tu():
@@ -67,22 +67,22 @@ def test_chuan_hoa_theo_TANG_chu_khong_theo_tung_ky_tu():
 
 
 def test_pattern_qua_sau_hoac_qua_nhieu_khoa_bi_cat_dung_nhu_nestjs():
-    sau = cur = {}
+    deep = cur = {}
     for _ in range(8):
         cur["x"] = {}
         cur = cur["x"]
-    assert "[MAX_DEPTH_REACHED]" in normalize_pattern(sau)
+    assert "[MAX_DEPTH_REACHED]" in normalize_pattern(deep)
     assert normalize_pattern({f"k{i}": i for i in range(30)}) == "[TOO_MANY_KEYS]"
 
 
 # ------------------------------------------------------------------ gói tin
 def test_send_co_id_con_emit_thi_khong():
     """Chính `id` phân biệt hai loại — NestJS quyết định dựa vào đúng chỗ này."""
-    yeu_cau = request_packet("sum", [1, 2], "abc")
-    assert yeu_cau == {"pattern": "sum", "data": [1, 2], "id": "abc"}
-    su_kien = event_packet("sum", [1, 2])
-    assert su_kien == {"pattern": "sum", "data": [1, 2]}
-    assert "id" not in su_kien
+    request = request_packet("sum", [1, 2], "abc")
+    assert request == {"pattern": "sum", "data": [1, 2], "id": "abc"}
+    event = event_packet("sum", [1, 2])
+    assert event == {"pattern": "sum", "data": [1, 2]}
+    assert "id" not in event
 
 
 def test_doc_goi_nestjs():
@@ -120,31 +120,31 @@ def test_goi_tra_loi_gop_co_ket_thuc_vao_cung_mot_goi():
 
 
 def test_goi_loi_mang_du_ba_truong_nestjs_can():
-    goi = error_packet("abc", RuntimeError("hỏng"))
-    assert goi["err"] == "RuntimeError: hỏng"
-    assert goi["isDisposed"] is True and goi["status"] == "error"
+    packet = error_packet("abc", RuntimeError("hỏng"))
+    assert packet["err"] == "RuntimeError: hỏng"
+    assert packet["isDisposed"] is True and packet["status"] == "error"
     assert error_packet("abc", "chuỗi thẳng")["err"] == "chuỗi thẳng"
 
 
 # ---------------------------------------------------------------- mở trả lời
 def test_doc_tra_loi_thanh_cong():
-    assert read_reply({"response": 6, "isDisposed": True}, nguon="sum") == 6
+    assert read_reply({"response": 6, "isDisposed": True}, source="sum") == 6
 
 
 def test_loi_dang_chuoi_va_dang_object_deu_doc_duoc():
     """NestJS khi thì gửi `err` là chuỗi, khi thì là object — gặp cả hai rồi."""
     with pytest.raises(RpcRemoteError, match="hỏng cố ý"):
-        read_reply({"err": "hỏng cố ý", "isDisposed": True}, nguon="x")
+        read_reply({"err": "hỏng cố ý", "isDisposed": True}, source="x")
     with pytest.raises(RpcRemoteError, match="Internal server error"):
         read_reply(
-            {"err": {"status": "error", "message": "Internal server error"}}, nguon="x"
+            {"err": {"status": "error", "message": "Internal server error"}}, source="x"
         )
 
 
 def test_thieu_handler_dung_nguyen_van_cua_nestjs():
     """Client NestJS vốn đã biết đọc câu này — đừng dịch nó ra tiếng khác."""
     with pytest.raises(RpcRemoteError, match="no matching message handler"):
-        read_reply(error_packet("x", NO_MESSAGE_HANDLER), nguon="x")
+        read_reply(error_packet("x", NO_MESSAGE_HANDLER), source="x")
 
 
 def test_dich_vu_khong_dung_khuon_nay_van_goi_duoc():
@@ -153,8 +153,8 @@ def test_dich_vu_khong_dung_khuon_nay_van_goi_duoc():
     NestJS cũng xử đúng vậy (`IncomingResponseDeserializer.isExternal`), nhờ đó
     gọi sang được dịch vụ không dùng NestJS lẫn khung này.
     """
-    assert read_reply({"ket_qua": 9}, nguon="x") == {"ket_qua": 9}
-    assert read_reply(42, nguon="x") == 42
+    assert read_reply({"ket_qua": 9}, source="x") == {"ket_qua": 9}
+    assert read_reply(42, source="x") == 42
 
 
 def test_ma_hoa_giai_ma_chiu_duoc_chuoi_thuan():
@@ -166,43 +166,43 @@ def test_ma_hoa_giai_ma_chiu_duoc_chuoi_thuan():
 # ------------------------------------------------------------------ sổ chờ
 async def test_giu_cho_truoc_khi_gui_nen_tra_loi_som_khong_bi_lac():
     """Bên kia có thể trả lời xong trước khi lệnh gửi của ta kịp trả về."""
-    so = PendingReplies("test")
-    ma, cho = so.open()
-    assert len(so) == 1
-    so.deliver(ma, ok_packet(ma, "sớm"))          # trả lời TRƯỚC khi ai đó wait
-    assert await so.wait(ma, cho, 1.0, dich="x") == "sớm"
-    assert len(so) == 0, "chờ xong phải trả chỗ"
+    count = PendingReplies("test")
+    correlation_id, waiter = count.open()
+    assert len(count) == 1
+    count.deliver(correlation_id, ok_packet(correlation_id, "sớm"))          # trả lời TRƯỚC khi ai đó wait
+    assert await count.wait(correlation_id, waiter, 1.0, target="x") == "sớm"
+    assert len(count) == 0, "chờ xong phải trả chỗ"
 
 
 async def test_het_gio_thi_don_cho_va_noi_ro_khong_bao_dam_gi():
-    so = PendingReplies("test")
-    ma, cho = so.open()
+    count = PendingReplies("test")
+    correlation_id, waiter = count.open()
     with pytest.raises(RpcTimeoutError, match="KHÔNG bảo đảm bên kia chưa làm gì"):
-        await so.wait(ma, cho, 0.05, dich="cham")
-    assert len(so) == 0, "hết giờ cũng phải trả chỗ, nếu không sổ chờ phình mãi"
+        await count.wait(correlation_id, waiter, 0.05, target="cham")
+    assert len(count) == 0, "hết giờ cũng phải trả chỗ, nếu không sổ chờ phình mãi"
 
 
 async def test_tra_loi_toi_muon_khong_lam_sap_gi():
-    so = PendingReplies("test")
-    ma, cho = so.open()
+    count = PendingReplies("test")
+    correlation_id, waiter = count.open()
     with pytest.raises(RpcTimeoutError):
-        await so.wait(ma, cho, 0.05, dich="x")
-    assert so.deliver(ma, ok_packet(ma, 1)) is False, "không ai đợi nữa"
+        await count.wait(correlation_id, waiter, 0.05, target="x")
+    assert count.deliver(correlation_id, ok_packet(correlation_id, 1)) is False, "không ai đợi nữa"
 
 
 async def test_dut_ket_noi_danh_thuc_moi_nguoi_dang_doi():
     """Không có bước này thì mỗi lần rớt mạng là một loạt lời gọi đứng đủ timeout."""
-    so = PendingReplies("test")
-    ma, cho = so.open()
-    so.fail_all("rớt mạng")
+    count = PendingReplies("test")
+    correlation_id, waiter = count.open()
+    count.fail_all("rớt mạng")
     with pytest.raises(RpcTimeoutError, match="rớt mạng"):
-        await so.wait(ma, cho, 5.0, dich="x")
+        await count.wait(correlation_id, waiter, 5.0, target="x")
 
 
 async def test_tat_app_thi_huy_lang_le():
-    so = PendingReplies("test")
-    _, cho = so.open()
-    so.cancel_all()
-    assert cho.cancelled()
+    count = PendingReplies("test")
+    _, waiter = count.open()
+    count.cancel_all()
+    assert waiter.cancelled()
     with pytest.raises(asyncio.CancelledError):
-        await cho
+        await waiter

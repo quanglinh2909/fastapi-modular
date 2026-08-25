@@ -176,17 +176,17 @@ def rabbitmq_subscriber(
     xác nhận hàng đợi chính đã biến mất (tức không còn worker nào khác đang
     nghe) — xem `RabbitmqRunner._don_hang_doi_phu`.
     """
-    for nhan, gia_tri in (("message_ttl", message_ttl), ("queue_expires", queue_expires)):
+    for label_, value in (("message_ttl", message_ttl), ("queue_expires", queue_expires)):
         # Chặn ngay lúc khai báo chứ không đợi tới lúc dựng hàng đợi: lỗi lúc
         # dựng chỉ hiện trong log `mq.consumer_start_failed` rồi app vẫn chạy
         # tiếp — không có consumer, mà cũng không ai chết để mà nhận ra.
-        if gia_tri is not None and gia_tri <= 0:
+        if value is not None and value <= 0:
             raise BadRequestError(
-                f"`{nhan}` phải lớn hơn 0 giây (đang là {gia_tri}). "
+                f"`{label_}` phải lớn hơn 0 giây (đang là {value}). "
                 "Không cần hạn dùng thì bỏ hẳn tham số."
             )
 
-    kieu, routing_key, bind_arguments = normalize_binding(
+    kind, routing_key, bind_arguments = normalize_binding(
         exchange,
         routing_key,
         kind=exchange_type,
@@ -204,7 +204,7 @@ def rabbitmq_subscriber(
                 exchange=exchange,
                 routing_key=routing_key,
                 queue=queue,
-                exchange_type=kieu,
+                exchange_type=kind,
                 bind_arguments=bind_arguments,
                 message_ttl=message_ttl,
                 queue_expires=queue_expires,
@@ -458,10 +458,10 @@ class RabbitmqRunner:
                 log.debug("mq.consumer_cancel_failed", queue=queue_name, error=str(exc))
                 continue
             if spec.auto_delete:
-                await self._don_hang_doi_phu(spec)
+                await self._clean_side_queues(spec)
         self._started.clear()
 
-    async def _don_hang_doi_phu(self, spec: RabbitmqSpec) -> None:
+    async def _clean_side_queues(self, spec: RabbitmqSpec) -> None:
         """Xoá `<queue>.retry` và `<queue>.dlq` khi hàng đợi chính đã tự xoá.
 
         Phải hỏi lại broker chứ không suy đoán: nhiều worker cùng nghe một hàng
@@ -474,14 +474,14 @@ class RabbitmqRunner:
             log.debug("mq.auto_delete_hoan", queue=spec.queue, hint="còn worker khác đang nghe")
             return
 
-        phu = [f"{spec.queue}.retry"] if spec.max_retries > 0 else []
+        extra = [f"{spec.queue}.retry"] if spec.max_retries > 0 else []
         if spec.dead_letter:
-            phu.append(f"{spec.queue}.dlq")
-        for ten in phu:
+            extra.append(f"{spec.queue}.dlq")
+        for field in extra:
             # if_unused=True: hàng đợi phụ vốn không ai nghe, nhưng để broker
             # tự chốt vẫn hơn là tự tin.
-            if await self._broker.delete_queue(ten, if_unused=True):
-                log.info("mq.queue_deleted", queue=ten, handler=spec.label)
+            if await self._broker.delete_queue(field, if_unused=True):
+                log.info("mq.queue_deleted", queue=field, handler=spec.label)
 
     def stats(self) -> dict[str, Any]:
         return {

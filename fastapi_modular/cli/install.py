@@ -17,7 +17,7 @@ import sys
 
 # Nguồn sự thật là `[project.optional-dependencies]` trong pyproject.toml.
 # `test_extras_khop_pyproject` giữ hai chỗ này không lệch nhau.
-GOI: dict[str, list[str]] = {
+PACKAGE: dict[str, list[str]] = {
     "sqlite": ["sqlalchemy[asyncio]>=2.0.30,<3.0.0", "aiosqlite>=0.20.0", "alembic>=1.13.0"],
     "postgres": ["sqlalchemy[asyncio]>=2.0.30,<3.0.0", "asyncpg>=0.29.0", "alembic>=1.13.0"],
     "mongodb": ["motor>=3.6.0,<4.0.0"],
@@ -31,7 +31,7 @@ GOI: dict[str, list[str]] = {
 # Thành phần -> khối .env tương ứng. `ws-redis` dùng chung thư viện với `redis`
 # nhưng ghi khối cấu hình khác: một bên là lớp cache/pub-sub, một bên là adapter
 # phát tin WebSocket xuyên worker.
-KHOI_ENV: dict[str, str] = {
+ENV_BLOCK: dict[str, str] = {
     "sqlite": "sqlite",
     "postgres": "postgres",
     "mongodb": "mongodb",
@@ -44,40 +44,40 @@ KHOI_ENV: dict[str, str] = {
 
 _ALIAS = {"mongo": "mongodb", "ws-redis": "redis", "postgresql": "postgres"}
 
-THANH_PHAN = sorted({*GOI, *KHOI_ENV, "all"})
+COMPONENTS = sorted({*PACKAGE, *ENV_BLOCK, "all"})
 
 
-def install(ten: str, *, ghi_env: bool = True, env_file: object = None) -> int:
+def install(name: str, *, write_env: bool = True, env_file: object = None) -> int:
     from pathlib import Path
 
-    if ten not in THANH_PHAN:
-        print(f"Không biết thành phần {ten!r}. Chọn một trong: {', '.join(THANH_PHAN)}")
+    if name not in COMPONENTS:
+        print(f"Không biết thành phần {name!r}. Chọn một trong: {', '.join(COMPONENTS)}")
         return 1
 
-    goi_can = (
-        sorted({g for k, v in GOI.items() if k != "dev" for g in v})
-        if ten == "all"
-        else GOI[_ALIAS.get(ten, ten)]
+    missing = (
+        sorted({g for k, v in PACKAGE.items() if k != "dev" for g in v})
+        if name == "all"
+        else PACKAGE[_ALIAS.get(name, name)]
     )
 
-    print(f"Cài {len(goi_can)} gói cho '{ten}':")
-    for g in goi_can:
+    print(f"Cài {len(missing)} gói cho '{name}':")
+    for g in missing:
         print(f"    {g}")
-    ma = subprocess.call([sys.executable, "-m", "pip", "install", *goi_can])
-    if ma != 0:
+    exit_code = subprocess.call([sys.executable, "-m", "pip", "install", *missing])
+    if exit_code != 0:
         print(
-            f"\npip thoát với mã {ma}. Cài tay:\n"
-            f"    {sys.executable} -m pip install {' '.join(goi_can)}"
+            f"\npip thoát với mã {exit_code}. Cài tay:\n"
+            f"    {sys.executable} -m pip install {' '.join(missing)}"
         )
-        return ma
+        return exit_code
 
-    khoi = KHOI_ENV.get(ten)
-    if not ghi_env or khoi is None:
-        if khoi is None and ghi_env:
-            print(f"\n'{ten}' không có biến cấu hình riêng — không ghi .env.")
+    block = ENV_BLOCK.get(name)
+    if not write_env or block is None:
+        if block is None and write_env:
+            print(f"\n'{name}' không có biến cấu hình riêng — không ghi .env.")
         return 0
 
     from fastapi_modular.cli.configure_env import main as ghi
 
     print()
-    return ghi(khoi, Path(env_file) if env_file else Path(".env"))
+    return ghi(block, Path(env_file) if env_file else Path(".env"))

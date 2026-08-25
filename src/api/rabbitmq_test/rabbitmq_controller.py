@@ -22,7 +22,7 @@ class RabbitMQTestController:
         self._broker = broker
 
     @post("/gui", summary="Đăng một tin thử — kieu quyết định nó đi đường nào")
-    async def gui(self, payload: AlertCreated) -> dict[str, object]:
+    async def send(self, payload: AlertCreated) -> dict[str, object]:
         await self._broker.publish(EXCHANGE, ROUTING_KEY, payload.model_dump())
         di_dau = {
             "ok": f"{QUEUE} -> handler chạy xong -> ack",
@@ -33,11 +33,11 @@ class RabbitMQTestController:
             "da_dang": True,
             "exchange": EXCHANGE,
             "routing_key": ROUTING_KEY,
-            "duong_di_du_kien": di_dau.get(payload.kieu, "payload sai khuôn -> .dlq ngay"),
+            "duong_di_du_kien": di_dau.get(payload.kind, "payload sai khuôn -> .dlq ngay"),
         }
 
     @get("/hang-doi", summary="Ba hàng đợi đang có gì, và tin nào nằm trong DLQ")
-    async def hang_doi(
+    async def queue(
         self, limit: Annotated[int, Query(ge=1, le=50)] = 10
     ) -> dict[str, object]:
         return {

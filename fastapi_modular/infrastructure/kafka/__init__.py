@@ -16,11 +16,19 @@ from fastapi_modular.infrastructure.kafka.consumers import (
     discover_kafka_subscribers,
     kafka_subscriber,
 )
+from fastapi_modular.infrastructure.kafka.responders import (
+    KafkaResponderRunner,
+    discover_kafka_responders,
+    kafka_responder,
+)
 
 __all__ = [
     "KafkaBroker",
+    "KafkaResponderRunner",
     "KafkaRunner",
     "PermanentMessageError",
+    "discover_kafka_responders",
     "discover_kafka_subscribers",
+    "kafka_responder",
     "kafka_subscriber",
 ]

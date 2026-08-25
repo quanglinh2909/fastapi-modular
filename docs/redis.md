@@ -16,6 +16,10 @@ mọi worker** (`publish` + `@redis_subscriber`).
 
 ---
 
+
+> Cần gửi rồi **chờ trả lời** (kiểu `client.send` / `@MessagePattern` của
+> NestJS)? Đó là `redis.send()` và `@redis_responder` — [docs/rpc.md](rpc.md).
+
 ## Cấu hình
 
 | Biến | Bắt buộc | Mặc định | Ý nghĩa |

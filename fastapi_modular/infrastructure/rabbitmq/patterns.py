@@ -39,7 +39,7 @@ EXCHANGE_KINDS: tuple[str, ...] = ("topic", "direct", "fanout", "headers", "defa
 # Kiểu nào KHÔNG nhìn tới routing key. Khai routing key cho chúng thì hoặc
 # bạn hiểu nhầm cách nó chọn hàng đợi, hoặc bạn chọn nhầm kiểu — cả hai đều
 # đáng báo lỗi ngay lúc khởi động, thay vì để tin lặng lẽ đi sai chỗ.
-_KHONG_DUNG_ROUTING_KEY = {
+_IGNORES_ROUTING_KEY = {
     "fanout": "fanout phát cho MỌI hàng đợi đã bind, không lọc gì cả",
     "headers": "headers lọc bằng `headers_match`, không phải routing key",
     "default": "exchange mặc định route theo đúng TÊN hàng đợi",
@@ -125,11 +125,11 @@ def normalize_binding(
         )
 
     routing_key = routing_key.strip()
-    ly_do = _KHONG_DUNG_ROUTING_KEY.get(kind)
-    if ly_do and routing_key:
+    reason = _IGNORES_ROUTING_KEY.get(kind)
+    if reason and routing_key:
         raise BadRequestError(
             f"Exchange kiểu '{kind}' không dùng routing key, nhưng bạn đưa "
-            f"'{routing_key}'. Bỏ nó đi: {ly_do}."
+            f"'{routing_key}'. Bỏ nó đi: {reason}."
         )
     if kind != "headers" and headers_match:
         raise BadRequestError(

@@ -12,6 +12,10 @@ Hai việc làm được: **gửi tin** (`MqttClient.publish`) và **nghe topic*
 
 ---
 
+
+> Cần gửi rồi **chờ trả lời** (kiểu `client.send` / `@MessagePattern` của
+> NestJS)? Đó là `mqtt.send()` và `@mqtt_responder` — [docs/rpc.md](rpc.md).
+
 ## Cấu hình
 
 | Biến | Bắt buộc | Mặc định | Ý nghĩa |

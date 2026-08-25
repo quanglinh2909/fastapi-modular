@@ -150,9 +150,9 @@ class RedisRunner:
     async def _setup(self) -> None:
         if self._task is not None and not self._task.done():
             return              # đã có vòng đọc đang chạy, đừng nhân đôi
-        self._task = asyncio.create_task(self._vong_doc(), name="redis-pubsub")
+        self._task = asyncio.create_task(self._read_loop(), name="redis-pubsub")
 
-    async def _vong_doc(self) -> None:
+    async def _read_loop(self) -> None:
         """Đăng ký kênh rồi đọc mãi. Đứt thì tự đăng ký lại từ đầu.
 
         Vòng nối lại nằm ở đây chứ không dựa vào redis-py: pool của nó tự mở
@@ -162,7 +162,7 @@ class RedisRunner:
         delay = self._config.reconnect_delay_seconds
         while not self._closing:
             try:
-                await self._nghe()
+                await self._listen()
                 delay = self._config.reconnect_delay_seconds
             except asyncio.CancelledError:
                 raise
@@ -173,20 +173,20 @@ class RedisRunner:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, self._config.max_reconnect_delay_seconds)
 
-    async def _nghe(self) -> None:
-        pubsub = self._client.raw().pubsub(ignore_subscribe_messages=True)
+    async def _listen(self) -> None:
+        pubsub = self._client.pubsub_client().pubsub(ignore_subscribe_messages=True)
         self._pubsub = pubsub
         try:
-            kenh = [s for s in self._specs if not s.is_pattern]
-            mau = [s for s in self._specs if s.is_pattern]
-            if kenh:
-                await pubsub.subscribe(*{self._client.key(s.channel) for s in kenh})
-            if mau:
-                await pubsub.psubscribe(*{self._client.key(s.channel) for s in mau})
+            channels = [s for s in self._specs if not s.is_pattern]
+            patterns = [s for s in self._specs if s.is_pattern]
+            if channels:
+                await pubsub.subscribe(*{self._client.key(s.channel) for s in channels})
+            if patterns:
+                await pubsub.psubscribe(*{self._client.key(s.channel) for s in patterns})
             log.info(
                 "redis.pubsub_started",
-                channels=sorted({s.channel for s in kenh}),
-                patterns=sorted({s.channel for s in mau}),
+                channels=sorted({s.channel for s in channels}),
+                patterns=sorted({s.channel for s in patterns}),
             )
 
             async for message in pubsub.listen():
@@ -194,22 +194,22 @@ class RedisRunner:
                     return
                 if message.get("type") not in ("message", "pmessage"):
                     continue
-                await self._giao(message)
+                await self._dispatch(message)
         finally:
             with contextlib.suppress(Exception):
                 await pubsub.aclose()
             self._pubsub = None
 
-    async def _giao(self, message: dict) -> None:
-        kenh = str(message["channel"])
-        mau = message.get("pattern")
+    async def _dispatch(self, message: dict) -> None:
+        channels = str(message["channel"])
+        patterns = message.get("pattern")
         for spec in self._specs:
-            dich = self._client.key(spec.channel)
-            khop = dich == str(mau) if mau else dich == kenh
-            if khop:
-                await self._chay(spec, kenh, message["data"])
+            target = self._client.key(spec.channel)
+            matched = target == str(patterns) if patterns else target == channels
+            if matched:
+                await self._run(spec, channels, message["data"])
 
-    async def _chay(self, spec: RedisSpec, kenh: str, raw: Any) -> None:
+    async def _run(self, spec: RedisSpec, channels: str, raw: Any) -> None:
         redis_received.inc(channel=spec.channel)
         token = set_request_id(new_request_id())
         try:
@@ -226,7 +226,7 @@ class RedisRunner:
 
                 instance = container.resolve(spec.cls)      # type: ignore[arg-type]
                 if spec.wants_meta:
-                    meta = {"channel": kenh, "pattern": spec.channel if spec.is_pattern else None}
+                    meta = {"channel": channels, "pattern": spec.channel if spec.is_pattern else None}
                     await spec.fn(instance, payload, meta)  # type: ignore[misc]
                 else:
                     await spec.fn(instance, payload)        # type: ignore[misc]

@@ -18,18 +18,18 @@ from fastapi_modular.core.exceptions import BadRequestError
 def validate_topic_filter(topic_filter: str) -> None:
     if not topic_filter:
         raise BadRequestError("Topic MQTT không được rỗng")
-    tang = topic_filter.split("/")
-    for i, phan in enumerate(tang):
-        if "#" in phan:
-            if phan != "#":
+    levels = topic_filter.split("/")
+    for i, level in enumerate(levels):
+        if "#" in level:
+            if level != "#":
                 raise BadRequestError(
                     f"Topic {topic_filter!r} sai: '#' phải chiếm trọn một tầng (vd 'nha/#')"
                 )
-            if i != len(tang) - 1:
+            if i != len(levels) - 1:
                 raise BadRequestError(
                     f"Topic {topic_filter!r} sai: '#' phải nằm ở cuối cùng"
                 )
-        elif "+" in phan and phan != "+":
+        elif "+" in level and level != "+":
             raise BadRequestError(
                 f"Topic {topic_filter!r} sai: '+' phải chiếm trọn một tầng (vd 'nha/+/den')"
             )
@@ -48,27 +48,27 @@ def validate_topic(topic: str) -> None:
 
 def matches(topic_filter: str, topic: str) -> bool:
     """Topic cụ thể có khớp bộ lọc không."""
-    loc = topic_filter.split("/")
-    that = topic.split("/")
+    wanted = topic_filter.split("/")
+    actual = topic.split("/")
 
     # Theo chuẩn MQTT, ký tự đại diện ở tầng đầu KHÔNG chạm tới topic hệ thống
     # ($SYS/...). Không có luật này thì một handler nghe "#" sẽ hút cả số liệu
     # nội bộ của broker.
-    if that and that[0].startswith("$") and loc[0] in ("+", "#"):
+    if actual and actual[0].startswith("$") and wanted[0] in ("+", "#"):
         return False
 
-    for i, phan in enumerate(loc):
-        if phan == "#":
+    for i, level in enumerate(wanted):
+        if level == "#":
             return True                      # nuốt mọi tầng còn lại, kể cả không còn tầng nào
-        if i >= len(that):
+        if i >= len(actual):
             return False
-        if phan != "+" and phan != that[i]:
+        if level != "+" and level != actual[i]:
             return False
-    return len(loc) == len(that)
+    return len(wanted) == len(actual)
 
 
-def covers(rong: str, hep: str) -> bool:
-    """Bộ lọc `rong` có bao trọn `hep` không — tức mọi topic khớp `hep` đều khớp `rong`.
+def covers(wider: str, narrower: str) -> bool:
+    """Bộ lọc `wider` có bao trọn `narrower` không — mọi topic khớp `narrower` đều khớp `wider`.
 
     Cần để KHÔNG đăng ký hai bộ lọc chồng nhau lên broker. Đăng ký cả
     "thiet-bi/#" lẫn "thiet-bi/+/nhiet-do" thì mosquitto giao MỘT tin thành HAI
@@ -81,36 +81,36 @@ def covers(rong: str, hep: str) -> bool:
     True vì nó coi "#" là một tầng chữ thường, trong khi "a/+" hoàn toàn KHÔNG
     bao được "a/#" (thiếu "a/b/c").
     """
-    a = rong.split("/")
-    b = hep.split("/")
-    for i, phan in enumerate(a):
-        if phan == "#":
+    a = wider.split("/")
+    b = narrower.split("/")
+    for i, level in enumerate(a):
+        if level == "#":
             return True                     # nuốt trọn phần còn lại của b
         if i >= len(b):
             return False                    # a còn đòi thêm tầng, b hết
         if b[i] == "#":
             return False                    # b rộng hơn ở đây (a không phải "#")
-        if phan == "+":
+        if level == "+":
             continue                        # + bao được mọi tầng đơn, kể cả "+"
-        if phan != b[i]:
+        if level != b[i]:
             return False
     return len(a) == len(b)
 
 
-def narrow_filters(loc: dict[str, int]) -> dict[str, int]:
+def narrow_filters(subscriptions: dict[str, int]) -> dict[str, int]:
     """Bỏ bộ lọc bị bộ lọc khác bao trọn; QoS dồn về cái còn lại (lấy mức cao nhất).
 
     Vào:  {"thiet-bi/#": 0, "thiet-bi/+/nhiet-do": 1}
     Ra:   {"thiet-bi/#": 1}
     """
-    con: dict[str, int] = {}
-    for hep, qos in sorted(loc.items()):
-        bao = next(
-            (r for r in loc if r != hep and covers(r, hep)),
+    narrowed: dict[str, int] = {}
+    for narrower, qos in sorted(subscriptions.items()):
+        covering = next(
+            (r for r in subscriptions if r != narrower and covers(r, narrower)),
             None,
         )
-        if bao is None:
-            con[hep] = max(con.get(hep, 0), qos)
+        if covering is None:
+            narrowed[narrower] = max(narrowed.get(narrower, 0), qos)
         else:
-            con[bao] = max(con.get(bao, 0), qos, loc[bao])
-    return con
+            narrowed[covering] = max(narrowed.get(covering, 0), qos, subscriptions[covering])
+    return narrowed

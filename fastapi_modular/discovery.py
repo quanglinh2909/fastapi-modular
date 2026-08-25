@@ -73,13 +73,13 @@ def load_all_modules(package: str = DEFAULT_PACKAGE) -> None:
 
 def _iter_packages(package: str) -> list[str]:
     """Tên các module con, đã nạp xong, theo thứ tự alphabet."""
-    goc = _package_dir(package)
+    root = _package_dir(package)
     names: list[str] = []
-    for info in sorted(pkgutil.iter_modules([str(goc)]), key=lambda i: i.name):
+    for info in sorted(pkgutil.iter_modules([str(root)]), key=lambda i: i.name):
         if not info.ispkg or info.name.startswith("_"):
             continue
         import_module(f"{package}.{info.name}")
-        _import_submodules(f"{package}.{info.name}", goc / info.name)
+        _import_submodules(f"{package}.{info.name}", root / info.name)
         names.append(info.name)
     return names
 

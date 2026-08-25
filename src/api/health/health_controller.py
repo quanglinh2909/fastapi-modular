@@ -65,7 +65,7 @@ class HealthController:
         # thái vẫn được trả ra để cảnh báo dựa vào đó.
         # Cùng lý do đó cho Redis/MQTT/Kafka: tất cả đều là thành phần phụ,
         # tắt cả API vì một trong số chúng rớt là đổi sự cố nhỏ lấy sự cố lớn.
-        phu = {
+        extra = {
             "rabbitmq": self._broker.stats() if self._broker.enabled else None,
             "redis": self._redis.stats() if self._redis.enabled else None,
             "mqtt": self._mqtt.stats() if self._mqtt.enabled else None,
@@ -77,7 +77,7 @@ class HealthController:
             "status": "ready" if database_ok else "unavailable",
             "driver": self._database.driver,
             "database": database_ok,
-            **{ten: stats for ten, stats in phu.items() if stats},
+            **{name_: stats for name_, stats in extra.items() if stats},
             **({"circuit": circuit} if circuit else {}),
             **({"detail": detail} if detail else {}),
         }

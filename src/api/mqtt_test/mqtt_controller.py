@@ -14,7 +14,7 @@ from src.api.mqtt_test.mqtt_listener import DA_NHAN
 
 class TinGui(BaseModel):
     topic: str = Field(default="thiet-bi/bep/nhiet-do", description="Không được chứa + hoặc #")
-    payload: dict | str = Field(default_factory=lambda: {"gia_tri": 28.5})
+    payload: dict | str = Field(default_factory=lambda: {"value": 28.5})
     qos: int = Field(default=1, ge=0, le=2)
     retain: bool = False
 
@@ -25,7 +25,7 @@ class MqttTestController:
         self._mqtt = mqtt
 
     @post("/gui", summary="Gửi một tin lên broker")
-    async def gui(self, tin: TinGui) -> dict[str, object]:
+    async def send(self, tin: TinGui) -> dict[str, object]:
         da_gui = await self._mqtt.publish(
             tin.topic, tin.payload, qos=tin.qos, retain=tin.retain
         )

@@ -31,10 +31,13 @@ import pytest
 
 from fastapi_modular.core.config import KafkaSettings, Settings
 from fastapi_modular.core.container import injectable
+from fastapi_modular.core.rpc import RpcRemoteError
 from fastapi_modular.infrastructure.kafka import (
     KafkaBroker,
+    KafkaResponderRunner,
     KafkaRunner,
     PermanentMessageError,
+    kafka_responder,
     kafka_subscriber,
 )
 
@@ -93,9 +96,9 @@ async def kafka(kafka_settings: Settings):
         await broker.shutdown()
 
 
-async def _cho(so_tin: int, giay: float = 20.0) -> None:
-    han = time.monotonic() + giay
-    while time.monotonic() < han and len(DA_NHAN) < so_tin:
+async def _pending(so_tin: int, seconds: float = 20.0) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline and len(DA_NHAN) < so_tin:
         await anyio.sleep(0.1)
 
 
@@ -103,10 +106,10 @@ async def test_hai_nhom_deu_nhan_du_moi_tin(kafka: KafkaBroker):
     """Đây là điểm khác hàng đợi: tin không bị lấy đi, mỗi nhóm một con trỏ."""
     DA_NHAN.clear()
     assert await kafka.publish(TOPIC, {"ma": "D1", "kieu": "ok"}, key="D1") is True
-    await _cho(2)
+    await _pending(2)
 
-    nhan = sorted((t["nhom"], t["ma"]) for t in DA_NHAN)
-    assert nhan == [("a", "D1"), ("b", "D1")]
+    label_ = sorted((t["nhom"], t["ma"]) for t in DA_NHAN)
+    assert label_ == [("a", "D1"), ("b", "D1")]
     assert next(t for t in DA_NHAN if t["nhom"] == "a")["key"] == "D1"
 
 
@@ -114,7 +117,7 @@ async def test_thu_lai_roi_sang_topic_chet(kafka: KafkaBroker):
     """Thử lại NGAY TẠI CHỖ (làm đứng phân vùng), hết lượt thì sao sang .dlt."""
     DA_NHAN.clear()
     await kafka.publish(TOPIC, {"ma": "D2", "kieu": "hong-tam-thoi"}, key="D2")
-    await _cho(4)
+    await _pending(4)
 
     lan_thu_a = sorted(t["lan_thu"] for t in DA_NHAN if t["nhom"] == "a")
     assert lan_thu_a == [1, 2, 3], "1 lần đầu + 2 lần thử lại"
@@ -130,7 +133,7 @@ async def test_thu_lai_roi_sang_topic_chet(kafka: KafkaBroker):
 async def test_loi_vinh_vien_khong_thu_lai_lan_nao(kafka: KafkaBroker):
     DA_NHAN.clear()
     await kafka.publish(TOPIC, {"ma": "D3", "kieu": "hong-vinh-vien"}, key="D3")
-    await _cho(2)
+    await _pending(2)
     assert [t["lan_thu"] for t in DA_NHAN if t["nhom"] == "a"] == [1]
 
 
@@ -148,11 +151,46 @@ async def _doc_dlt(topic: str, so_tin: int) -> list:
     await consumer.start()
     try:
         found = []
-        han = time.monotonic() + 15
-        while time.monotonic() < han and len(found) < so_tin:
-            lo = await consumer.getmany(timeout_ms=1000)
-            for tin in lo.values():
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and len(found) < so_tin:
+            batch = await consumer.getmany(timeout_ms=1000)
+            for tin in batch.values():
                 found.extend(tin)
         return found
     finally:
         await consumer.stop()
+
+
+# ============================================== emit / send (khuôn NestJS)
+RPC_TOPIC = "kiem-tra-rpc"
+
+
+@injectable
+class KafkaRpcService:
+    @kafka_responder(RPC_TOPIC, group="kiem-tra-rpc-group")
+    async def cong(self, data: dict) -> int:
+        if data.get("no"):
+            raise RuntimeError("hỏng cố ý")
+        return data["a"] + data["b"]
+
+
+@pytest.fixture
+async def rpc_kafka(kafka_settings: Settings):
+    broker = KafkaBroker(kafka_settings)
+    await broker.startup()
+    runner = KafkaResponderRunner(broker, kafka_settings)
+    await runner.startup()
+    await anyio.sleep(3)            # chờ consumer vào nhóm xong
+    yield broker
+    await runner.shutdown()
+    await broker.shutdown()
+
+
+async def test_send_nhan_lai_gia_tri(rpc_kafka: KafkaBroker):
+    """Gán phân vùng tay thay vì vào consumer group, nên không phải chờ cân bằng."""
+    assert await rpc_kafka.send(RPC_TOPIC, {"a": 4, "b": 6}, timeout=25) == 10
+
+
+async def test_handler_hong_thi_bao_qua_header_nest_err(rpc_kafka: KafkaBroker):
+    with pytest.raises(RpcRemoteError, match="hỏng cố ý"):
+        await rpc_kafka.send(RPC_TOPIC, {"a": 1, "b": 1, "no": True}, timeout=25)

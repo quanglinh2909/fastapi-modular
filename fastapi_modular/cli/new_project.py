@@ -23,11 +23,11 @@ import re
 import unicodedata
 from pathlib import Path
 
-TEN_HOP_LE = re.compile(r"^[a-z][a-z0-9_-]*$")
+VALID_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 REPO = "https://github.com/quanglinh2909/fastapi-modular"
 
-GOC = '''"""Ứng dụng — code của bạn.
+ROOT = '''"""Ứng dụng — code của bạn.
 
     src/main.py     điểm vào: lắp ráp app, sửa thoải mái
     src/core/       thứ dùng chung của ứng dụng (config, helper, guard riêng)
@@ -187,7 +187,7 @@ class HealthController:
         return {"status": "ok", "service": self._settings.name}
 '''
 
-ENV = """APP_NAME={ten}
+ENV = """APP_NAME={name}
 APP_ENV=local
 APP_DEBUG=true
 APP_HOST=0.0.0.0
@@ -281,7 +281,7 @@ Desktop.ini
 node_modules/
 """
 
-README = """# {ten}
+README = """# {name}
 
 Dựng bằng [fastapi-modular]({repo}) — FastAPI theo kiến trúc module kiểu NestJS.
 
@@ -385,66 +385,66 @@ Redis, MQTT, Kafka, cấu hình, vận hành.
 """
 
 
-def lam_sach_ten(tho: str) -> str:
+def clean_name(raw_: str) -> str:
     """Tên thư mục -> tên dự án dùng được: "Dự Án Mới" -> "du-an-moi"."""
-    bo_dau = unicodedata.normalize("NFD", tho).encode("ascii", "ignore").decode()
-    gon = re.sub(r"[^a-zA-Z0-9]+", "-", bo_dau).strip("-").lower()
-    return gon or "app"
+    strip_accents = unicodedata.normalize("NFD", raw_).encode("ascii", "ignore").decode()
+    narrowed = re.sub(r"[^a-zA-Z0-9]+", "-", strip_accents).strip("-").lower()
+    return narrowed or "app"
 
 
-def tao_du_an(ten: str, root: Path) -> int:
+def create_project(name: str, root: Path) -> int:
     """`new`: tạo thư mục mới rồi đổ file vào."""
-    if not TEN_HOP_LE.match(ten):
-        print(f"Tên dự án không hợp lệ: {ten!r}. Chữ thường, số, gạch ngang hoặc gạch dưới.")
+    if not VALID_NAME.match(name):
+        print(f"Tên dự án không hợp lệ: {name!r}. Chữ thường, số, gạch ngang hoặc gạch dưới.")
         return 1
 
-    dich = root / ten
-    if dich.exists() and any(dich.iterdir()):
+    target = root / name
+    if target.exists() and any(target.iterdir()):
         print(
-            f"{dich} đã tồn tại và không rỗng — chọn tên khác, xoá nó trước, "
+            f"{target} đã tồn tại và không rỗng — chọn tên khác, xoá nó trước, "
             f"hoặc vào trong đó chạy `fam init`."
         )
         return 1
 
-    so = _ghi(dich, ten, ghi_de=True)
-    print(f"Đã tạo {dich}/ với {so} file:")
-    _in_cay(dich, ten)
-    print(f"\nChạy thử:\n    cd {ten}\n    pip install fastapi-modular\n    fam dev")
+    count = _write(target, name, overwrite=True)
+    print(f"Đã tạo {target}/ với {count} file:")
+    _print_tree(target, name)
+    print(f"\nChạy thử:\n    cd {name}\n    pip install fastapi-modular\n    fam dev")
     print("\nRồi mở http://localhost:8000/docs")
     return 0
 
 
-def init_du_an(root: Path, ten: str | None = None) -> int:
+def init_project(root: Path, name: str | None = None) -> int:
     """`init`: đổ file vào THƯ MỤC HIỆN TẠI, không tạo thêm một cấp.
 
     Không ghi đè file nào đã có — thư mục đang có code vẫn chạy được lệnh này.
     """
-    dich = root.resolve()
-    ten = ten or lam_sach_ten(dich.name)
-    if not TEN_HOP_LE.match(ten):
-        print(f"Tên dự án không hợp lệ: {ten!r}. Dùng --name để đặt tên khác.")
+    target = root.resolve()
+    name = name or clean_name(target.name)
+    if not VALID_NAME.match(name):
+        print(f"Tên dự án không hợp lệ: {name!r}. Dùng --name để đặt tên khác.")
         return 1
 
-    da_co = [d for d in _noi_dung(ten) if (dich / d).exists()]
-    so = _ghi(dich, ten, ghi_de=False)
+    existing = [d for d in _content(name) if (target / d).exists()]
+    count = _write(target, name, overwrite=False)
 
-    if not so:
-        print(f"{dich} đã có đủ file rồi, không phải làm gì.")
+    if not count:
+        print(f"{target} đã có đủ file rồi, không phải làm gì.")
         return 0
 
-    print(f"Đã thêm {so} file vào {dich} (tên dự án: {ten}):")
-    _in_cay(dich, ten, bo_qua=set(da_co))
-    if da_co:
+    print(f"Đã thêm {count} file vào {target} (tên dự án: {name}):")
+    _print_tree(target, name, skipped=set(existing))
+    if existing:
         print("\nGiữ nguyên file đã có, KHÔNG ghi đè:")
-        for d in da_co:
+        for d in existing:
             print(f"    {d}")
     print("\nChạy thử:\n    pip install fastapi-modular\n    fam dev")
     return 0
 
 
-def _noi_dung(ten: str) -> dict[str, str]:
+def _content(name: str) -> dict[str, str]:
     return {
-        "src/__init__.py": GOC,
+        "src/__init__.py": ROOT,
         "src/main.py": MAIN,
         "src/core/__init__.py": '"""Thứ dùng chung của ứng dụng: config, helper, guard riêng."""\n',
         "src/core/config.py": CONFIG,
@@ -452,26 +452,26 @@ def _noi_dung(ten: str) -> dict[str, str]:
         "src/api/__init__.py": '"""Các module nghiệp vụ; mỗi thư mục con là một module."""\n',
         "src/api/health/__init__.py": '"""Module health."""\n',
         "src/api/health/health_controller.py": HEALTH,
-        ".env": ENV.format(ten=ten),
+        ".env": ENV.format(name=name),
         ".gitignore": GITIGNORE,
-        "README.md": README.format(ten=ten, vi_du="alerts", repo=REPO),
+        "README.md": README.format(name=name, vi_du="alerts", repo=REPO),
     }
 
 
-def _ghi(dich: Path, ten: str, *, ghi_de: bool) -> int:
+def _write(target: Path, name: str, *, overwrite: bool) -> int:
     """Ghi file, trả về số file thật sự được tạo."""
-    so = 0
-    for duong_dan, noi_dung in _noi_dung(ten).items():
-        f = dich / duong_dan
-        if f.exists() and not ghi_de:
+    count = 0
+    for path, content in _content(name).items():
+        f = target / path
+        if f.exists() and not overwrite:
             continue
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(noi_dung, encoding="utf-8")
-        so += 1
-    return so
+        f.write_text(content, encoding="utf-8")
+        count += 1
+    return count
 
 
-def _in_cay(dich: Path, ten: str, bo_qua: set[str] | None = None) -> None:
-    for duong_dan in _noi_dung(ten):
-        if not bo_qua or duong_dan not in bo_qua:
-            print(f"    {duong_dan}")
+def _print_tree(target: Path, name: str, skipped: set[str] | None = None) -> None:
+    for path in _content(name):
+        if not skipped or path not in skipped:
+            print(f"    {path}")

@@ -410,13 +410,13 @@ class Settings(BaseSettings):
 # Biến môi trường đã đổi tên. Đặt tên cũ thì pydantic lặng lẽ bỏ qua và dùng
 # giá trị mặc định — nghĩa là app chạy sai mà không báo gì. Bảng này để phát
 # hiện và nói thẳng phải sửa thành gì.
-_TEN_CU: dict[str, str] = {
+_OLD_NAMES: dict[str, str] = {
     "APP_MQ__": "APP_RABBITMQ__",
 }
 
 # Biến đã bỏ hẳn. Để trong .env thì vô hại nhưng gây hiểu nhầm là nó còn tác
 # dụng — nói rõ để người ta xoá đi.
-_DA_BO: frozenset[str] = frozenset(
+_REMOVED: frozenset[str] = frozenset(
     {
         "BRIDGE_ENABLED",                 # cầu nối RabbitMQ -> WebSocket, đã gỡ
         "MAX_SUBSCRIPTIONS_PER_SOCKET",   # nt
@@ -450,16 +450,16 @@ def check_deprecated_env(env_file: str = ".env") -> list[str]:
     for name in sorted(names):
         # Kiểm tra "đã bỏ" TRƯỚC "đổi tên": một biến vừa mang tên cũ vừa không
         # còn dùng thì lời khuyên đúng là xoá đi, không phải đổi tên.
-        if name.rpartition("__")[2] in _DA_BO and name.startswith(("APP_MQ__", "APP_RABBITMQ__")):
+        if name.rpartition("__")[2] in _REMOVED and name.startswith(("APP_MQ__", "APP_RABBITMQ__")):
             problems.append(f"{name} -> không còn dùng, xoá dòng này")
             continue
-        for cu, moi in _TEN_CU.items():
-            if name.startswith(cu):
-                problems.append(f"{name} -> đổi thành {name.replace(cu, moi, 1)}")
+        for previous, fresh in _OLD_NAMES.items():
+            if name.startswith(previous):
+                problems.append(f"{name} -> đổi thành {name.replace(previous, fresh, 1)}")
     return problems
 
 
-_LOP_SETTINGS: type[Settings] = Settings
+_SETTINGS_CLASS: type[Settings] = Settings
 
 
 def use_settings(cls: type[Settings]) -> None:
@@ -473,17 +473,17 @@ def use_settings(cls: type[Settings]) -> None:
         use_settings(AppSettings)
         settings = get_settings()      # giờ trả về AppSettings
     """
-    global _LOP_SETTINGS
+    global _SETTINGS_CLASS
     if not (isinstance(cls, type) and issubclass(cls, Settings)):
         raise TypeError(f"{cls!r} phải là lớp con của Settings")
-    if cls is not _LOP_SETTINGS:
-        _LOP_SETTINGS = cls
+    if cls is not _SETTINGS_CLASS:
+        _SETTINGS_CLASS = cls
         get_settings.cache_clear()
 
 
 def settings_class() -> type[Settings]:
     """Lớp đang được dùng để dựng cấu hình."""
-    return _LOP_SETTINGS
+    return _SETTINGS_CLASS
 
 
 @lru_cache(maxsize=1)
@@ -492,4 +492,4 @@ def get_settings() -> Settings:
 
     Trả về lớp đã khai bằng `use_settings()`, mặc định là `Settings`.
     """
-    return _LOP_SETTINGS()
+    return _SETTINGS_CLASS()

@@ -35,50 +35,50 @@ from pathlib import Path
 from fastapi_modular import __version__
 
 
-def giai_nghia(tu: str, lua_chon: list[str], nhan: str) -> str:
+def explain(typed: str, options: list[str], what: str) -> str:
     """Đổi một từ viết tắt thành lựa chọn đầy đủ, nếu chỉ có đúng một khả năng.
 
     Trả về nguyên `tu` khi nó đã là lựa chọn đầy đủ hoặc không khớp gì — để
     argparse tự báo lỗi theo cách của nó. Chỉ ném lỗi khi NHẬP NHẰNG, vì đó là
     trường hợp duy nhất mà im lặng đoán bừa sẽ chạy nhầm việc.
     """
-    if tu in lua_chon:
-        return tu
-    khop = [c for c in lua_chon if c.startswith(tu)]
-    if len(khop) == 1:
-        return khop[0]
-    if len(khop) > 1:
+    if typed in options:
+        return typed
+    matched = [c for c in options if c.startswith(typed)]
+    if len(matched) == 1:
+        return matched[0]
+    if len(matched) > 1:
         raise SystemExit(
-            f"fam: {nhan} {tu!r} chưa rõ — khớp với {', '.join(sorted(khop))}. "
+            f"fam: {what} {typed!r} chưa rõ — khớp với {', '.join(sorted(matched))}. "
             "Gõ thêm vài chữ cho rõ."
         )
-    return tu
+    return typed
 
 
-def _mo_rong_vietat(argv: list[str], lenh: list[str]) -> list[str]:
+def _expand_abbrev(argv: list[str], command: list[str]) -> list[str]:
     """Mở rộng từ viết tắt ở vị trí TÊN LỆNH, và ở tham số dạng danh sách."""
-    vi_tri = next((i for i, t in enumerate(argv) if not t.startswith("-")), None)
-    if vi_tri is None:
+    position = next((i for i, t in enumerate(argv) if not t.startswith("-")), None)
+    if position is None:
         return argv
 
     argv = list(argv)
-    argv[vi_tri] = giai_nghia(argv[vi_tri], lenh, "lệnh")
+    argv[position] = explain(argv[position], command, "lệnh")
 
-    ke_tiep = next(
-        (i for i in range(vi_tri + 1, len(argv)) if not argv[i].startswith("-")), None
+    next_delay = next(
+        (i for i in range(position + 1, len(argv)) if not argv[i].startswith("-")), None
     )
-    if ke_tiep is None:
+    if next_delay is None:
         return argv
 
-    if argv[vi_tri] in ("install", "env"):
+    if argv[position] in ("install", "env"):
         from fastapi_modular.cli.configure_env import BLOCKS
-        from fastapi_modular.cli.install import THANH_PHAN
+        from fastapi_modular.cli.install import COMPONENTS
 
-        chon = THANH_PHAN if argv[vi_tri] == "install" else sorted(BLOCKS)
-        argv[ke_tiep] = giai_nghia(argv[ke_tiep], chon, "thành phần")
-    elif argv[vi_tri] == "migrate":
-        argv[ke_tiep] = giai_nghia(
-            argv[ke_tiep], ["up", "down", "history", "sql", "create"], "việc"
+        chosen = COMPONENTS if argv[position] == "install" else sorted(BLOCKS)
+        argv[next_delay] = explain(argv[next_delay], chosen, "thành phần")
+    elif argv[position] == "migrate":
+        argv[next_delay] = explain(
+            argv[next_delay], ["up", "down", "history", "sql", "create"], "việc"
         )
     return argv
 
@@ -103,20 +103,20 @@ def _main(argv: list[str] | None = None) -> int:
         description="FastAPI theo kiến trúc module kiểu NestJS (gõ đầy đủ: fastapi-modular)",
     )
     parser.add_argument("--version", action="version", version=f"fastapi-modular {__version__}")
-    lenh = parser.add_subparsers(dest="lenh", required=True)
+    command = parser.add_subparsers(dest="command", required=True)
 
-    p_init = lenh.add_parser(
+    p_init = command.add_parser(
         "init", help="dựng dự án ngay trong thư mục hiện tại (không tạo thêm cấp)"
     )
     p_init.add_argument("--name", help="tên dự án; mặc định lấy theo tên thư mục")
     p_init.add_argument("--root", type=Path, default=Path("."), help="thư mục đích")
 
-    p_new = lenh.add_parser("new", help="dựng dự án trong một thư mục MỚI")
-    p_new.add_argument("ten", help="tên thư mục dự án")
+    p_new = command.add_parser("new", help="dựng dự án trong một thư mục MỚI")
+    p_new.add_argument("name", help="tên thư mục dự án")
     p_new.add_argument("--root", type=Path, default=Path("."), help="tạo ở đâu (mặc định: .)")
 
-    p_mod = lenh.add_parser("module", help="sinh module nghiệp vụ")
-    p_mod.add_argument("ten", help="tên module, dạng số nhiều viết thường: alerts")
+    p_mod = command.add_parser("module", help="sinh module nghiệp vụ")
+    p_mod.add_argument("name", help="tên module, dạng số nhiều viết thường: alerts")
     p_mod.add_argument("--entity", help="tên entity dạng số ít; mặc định đoán từ tên module")
     p_mod.add_argument(
         "--root", type=Path, default=Path("src/api"), help="thư mục chứa các module"
@@ -126,31 +126,31 @@ def _main(argv: list[str] | None = None) -> int:
     p_mod.add_argument("--consumer", action="store_true", help="tạo kèm consumer RabbitMQ")
     p_mod.add_argument("--consumer-only", action="store_true")
 
-    p_prov = lenh.add_parser("provider", help="sinh provider cắm được (họ + năng lực)")
+    p_prov = command.add_parser("provider", help="sinh provider cắm được (họ + năng lực)")
     p_prov.add_argument("family", help="tên họ: payment, sms, device")
-    p_prov.add_argument("ten", help="tên provider: vnpay, viettel, dahua")
+    p_prov.add_argument("name", help="tên provider: vnpay, viettel, dahua")
     p_prov.add_argument(
         "--root", type=Path, default=Path("src/providers"), help="thư mục chứa các họ"
     )
 
-    p_dev = lenh.add_parser("dev", help="chạy kèm autoreload")
-    p_run = lenh.add_parser("run", help="chạy chế độ production, nhiều worker")
-    for p_chay in (p_dev, p_run):
-        p_chay.add_argument("--app", default="src.main:app", help="điểm vào ASGI")
-        p_chay.add_argument("--host", help="mặc định lấy APP_HOST")
-        p_chay.add_argument("--port", type=int, help="mặc định lấy APP_PORT")
+    p_dev = command.add_parser("dev", help="chạy kèm autoreload")
+    p_run = command.add_parser("run", help="chạy chế độ production, nhiều worker")
+    for p_serve in (p_dev, p_run):
+        p_serve.add_argument("--app", default="src.main:app", help="điểm vào ASGI")
+        p_serve.add_argument("--host", help="mặc định lấy APP_HOST")
+        p_serve.add_argument("--port", type=int, help="mặc định lấy APP_PORT")
     p_run.add_argument("--workers", type=int, default=4)
 
-    lenh.add_parser("info", help="cấu hình đang dùng và thư viện đã cài")
+    command.add_parser("info", help="cấu hình đang dùng và thư viện đã cài")
 
-    p_test = lenh.add_parser("test", help="chạy pytest")
+    p_test = command.add_parser("test", help="chạy pytest")
     p_test.add_argument("them", nargs="*", help="tham số truyền thẳng cho pytest")
 
-    p_lint = lenh.add_parser("lint", help="soi lỗi tĩnh bằng ruff")
+    p_lint = command.add_parser("lint", help="soi lỗi tĩnh bằng ruff")
     p_lint.add_argument("--fix", action="store_true", help="tự sửa những lỗi sửa được")
     p_lint.add_argument("duong_dan", nargs="*", default=["src"], help="mặc định: src")
 
-    p_mig = lenh.add_parser("migrate", help="chạy migration (Alembic)")
+    p_mig = command.add_parser("migrate", help="chạy migration (Alembic)")
     p_mig.add_argument(
         "viec",
         nargs="?",
@@ -160,100 +160,100 @@ def _main(argv: list[str] | None = None) -> int:
     )
     p_mig.add_argument("-m", "--message", help="mô tả, dùng với `create`")
 
-    from fastapi_modular.cli.install import THANH_PHAN
+    from fastapi_modular.cli.install import COMPONENTS
 
-    p_ins = lenh.add_parser(
+    p_ins = command.add_parser(
         "install", help="cài thư viện của một thành phần rồi ghi biến vào .env"
     )
-    p_ins.add_argument("thanh_phan", choices=THANH_PHAN, metavar="thành-phần",
-                       help=" | ".join(THANH_PHAN))
+    p_ins.add_argument("thanh_phan", choices=COMPONENTS, metavar="thành-phần",
+                       help=" | ".join(COMPONENTS))
     p_ins.add_argument("--no-env", action="store_true", help="chỉ cài, đừng đụng .env")
     p_ins.add_argument("--file", type=Path, default=Path(".env"))
 
-    lenh.add_parser("clean", help="xoá cache và bản dựng (không đụng dữ liệu)")
+    command.add_parser("clean", help="xoá cache và bản dựng (không đụng dữ liệu)")
 
-    p_build = lenh.add_parser("build", help="dựng wheel + sdist vào dist/")
+    p_build = command.add_parser("build", help="dựng wheel + sdist vào dist/")
     p_build.add_argument("--no-clean", action="store_true", help="giữ dist/ cũ")
 
-    p_pub = lenh.add_parser("publish", help="đẩy gói lên PyPI")
+    p_pub = command.add_parser("publish", help="đẩy gói lên PyPI")
     p_pub.add_argument("--test", action="store_true", help="đẩy lên TestPyPI trước")
 
-    p_env = lenh.add_parser("env", help="ghi biến cấu hình của một thành phần vào .env")
+    p_env = command.add_parser("env", help="ghi biến cấu hình của một thành phần vào .env")
     p_env.add_argument("thanh_phan", help="sqlite | postgres | mongodb | redis | "
                                           "rabbitmq | mqtt | kafka | ws-redis")
     p_env.add_argument("--file", type=Path, default=Path(".env"))
 
     args = parser.parse_args(
-        _mo_rong_vietat(list(argv if argv is not None else sys.argv[1:]), list(lenh.choices))
+        _expand_abbrev(list(argv if argv is not None else sys.argv[1:]), list(command.choices))
     )
 
     # Import muộn: `fastapi-modular new` không cần kéo theo bộ sinh module, và
     # `--version` thì không cần kéo theo gì cả.
-    if args.lenh == "init":
-        from fastapi_modular.cli.new_project import init_du_an
+    if args.command == "init":
+        from fastapi_modular.cli.new_project import init_project
 
-        return init_du_an(args.root, args.name)
+        return init_project(args.root, args.name)
 
-    if args.lenh == "new":
-        from fastapi_modular.cli.new_project import tao_du_an
+    if args.command == "new":
+        from fastapi_modular.cli.new_project import create_project
 
-        return tao_du_an(args.ten, args.root)
+        return create_project(args.name, args.root)
 
-    if args.lenh == "module":
+    if args.command == "module":
         from fastapi_modular.cli.new_module import main as sinh_module
 
-        argv2 = [args.ten, "--root", str(args.root)]
+        argv2 = [args.name, "--root", str(args.root)]
         if args.entity:
             argv2 += ["--entity", args.entity]
-        for co, ten_co in (
+        for has, existing_names in (
             (args.gateway, "--gateway"),
             (args.gateway_only, "--gateway-only"),
             (args.consumer, "--consumer"),
             (args.consumer_only, "--consumer-only"),
         ):
-            if co:
-                argv2.append(ten_co)
+            if has:
+                argv2.append(existing_names)
         return sinh_module(argv2)
 
-    if args.lenh == "provider":
+    if args.command == "provider":
         from fastapi_modular.cli.new_provider import main as sinh_provider
 
-        return sinh_provider([args.family, args.ten, "--root", str(args.root)])
+        return sinh_provider([args.family, args.name, "--root", str(args.root)])
 
-    if args.lenh in ("dev", "run"):
+    if args.command in ("dev", "run"):
         from fastapi_modular.cli.serve import serve
 
         return serve(
             target=args.app,
-            reload=args.lenh == "dev",
+            reload=args.command == "dev",
             workers=getattr(args, "workers", None),
             host=args.host,
             port=args.port,
         )
 
-    if args.lenh == "info":
+    if args.command == "info":
         from fastapi_modular.cli.info import info
 
         return info()
 
-    if args.lenh == "install":
+    if args.command == "install":
         from fastapi_modular.cli.install import install
 
-        return install(args.thanh_phan, ghi_env=not args.no_env, env_file=args.file)
+        return install(args.thanh_phan, write_env=not args.no_env, env_file=args.file)
 
-    if args.lenh == "clean":
+    if args.command == "clean":
         from fastapi_modular.cli.clean import clean
 
         return clean()
 
-    if args.lenh in ("test", "lint", "migrate", "build", "publish"):
-        from fastapi_modular.cli.cong_cu import chay_cong_cu
+    if args.command in ("test", "lint", "migrate", "build", "publish"):
+        from fastapi_modular.cli.tools import run_tool
 
-        return chay_cong_cu(args)
+        return run_tool(args)
 
-    from fastapi_modular.cli.configure_env import main as ghi_env
+    from fastapi_modular.cli.configure_env import main as write_env
 
-    return ghi_env(args.thanh_phan, args.file)
+    return write_env(args.thanh_phan, args.file)
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@ DEFAULT_ROOT = Path("src/api")
 
 
 # Đuôi kết thúc bằng "s" nhưng KHÔNG phải số nhiều: status, class, analysis...
-_KHONG_PHAI_SO_NHIEU = ("ss", "us", "is", "as", "os")
+_NOT_PLURAL = ("ss", "us", "is", "as", "os")
 
 
 def singular(plural: str) -> str:
@@ -29,7 +29,7 @@ def singular(plural: str) -> str:
         return plural[:-3] + "y"
     if plural.endswith(("ses", "xes", "zes", "ches", "shes")):
         return plural[:-2]
-    if plural.endswith("s") and not plural.endswith(_KHONG_PHAI_SO_NHIEU):
+    if plural.endswith("s") and not plural.endswith(_NOT_PLURAL):
         return plural[:-1]
     return plural
 
@@ -440,13 +440,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Chưa có module {target}. Tạo trước bằng: fam module {module}")
             return 1
         files = render_gateway(module, entity) if args.gateway_only else render_consumer(module, entity)
-        trung = [rel for rel in files if (target / rel).exists()]
-        if trung:
-            print(f"Đã có sẵn: {', '.join(str(target / rel) for rel in trung)}")
+        duplicate = [rel for rel in files if (target / rel).exists()]
+        if duplicate:
+            print(f"Đã có sẵn: {', '.join(str(target / rel) for rel in duplicate)}")
             return 1
         _write(target, files)
-        loai = "gateway WebSocket" if args.gateway_only else "consumer RabbitMQ"
-        print(f"Đã thêm {loai} vào module '{module}':")
+        kind = "gateway WebSocket" if args.gateway_only else "consumer RabbitMQ"
+        print(f"Đã thêm {kind} vào module '{module}':")
         for relative in sorted(files):
             print(f"    {target / relative}")
         print()

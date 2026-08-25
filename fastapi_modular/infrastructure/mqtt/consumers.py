@@ -141,33 +141,33 @@ class MqttRunner:
         # topic — và mọi lần nối lại sau đó cũng dùng đúng danh sách này.
         for spec in self._specs:
             self._client.subscribe_topic(spec.topic, spec.qos)
-        self._client.set_router(self._giao)
+        self._client.set_router(self._dispatch)
         log.info(
             "mqtt.listeners_registered",
             count=len(self._specs),
             topics=sorted({s.topic for s in self._specs}),
         )
 
-    async def _giao(self, message: Any) -> None:
+    async def _dispatch(self, message: Any) -> None:
         topic = str(message.topic)
         mqtt_received.inc(topic=topic)
 
-        khop = [spec for spec in self._specs if matches(spec.topic, topic)]
-        if not khop:
+        matched = [spec for spec in self._specs if matches(spec.topic, topic)]
+        if not matched:
             # Broker giao một topic không ai nghe: gần như luôn là đăng ký thừa
             # hoặc gõ nhầm bộ lọc. Im lặng ở đây thì không cách nào biết.
             mqtt_unrouted.inc(topic=topic)
             log.debug("mqtt.unrouted", topic=topic)
             return
 
-        for spec in khop:
-            await self._chay(spec, topic, message)
+        for spec in matched:
+            await self._run(spec, topic, message)
 
-    async def _chay(self, spec: MqttSpec, topic: str, message: Any) -> None:
+    async def _run(self, spec: MqttSpec, topic: str, message: Any) -> None:
         token = set_request_id(new_request_id())
         try:
             async with request_scope():
-                payload = _doc(message.payload)
+                payload = _read(message.payload)
                 if spec.model is not None:
                     try:
                         payload = spec.model.model_validate(payload)
@@ -210,7 +210,7 @@ class MqttRunner:
         }
 
 
-def _doc(payload: Any) -> Any:
+def _read(payload: Any) -> Any:
     """Thiết bị hay gửi chuỗi thuần ("ON", "23.5") chứ không phải JSON."""
     raw = payload.decode("utf-8", errors="replace") if isinstance(payload, bytes) else str(payload)
     try:

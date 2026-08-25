@@ -15,55 +15,55 @@ from pathlib import Path
 
 DEFAULT_ROOT = Path("src/providers")
 
-TEN_HOP_LE = re.compile(r"^[a-z][a-z0-9_-]*$")
+VALID_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 
 def pascal(name: str) -> str:
-    return "".join(phan.capitalize() for phan in re.split(r"[-_]", name) if phan)
+    return "".join(parts.capitalize() for parts in re.split(r"[-_]", name) if parts)
 
 
-def _capabilities_trong(duong_dan: Path) -> list[tuple[str, list[str]]]:
+def _capabilities_in(path: Path) -> list[tuple[str, list[str]]]:
     """Đọc capabilities.py -> [(tên lớp, [tên method abstract])].
 
     Đọc bằng `ast` chứ không import: file có thể đang viết dở, và sinh code
     không nên chạy code của người dùng.
     """
-    if not duong_dan.exists():
+    if not path.exists():
         return []
 
-    cay = ast.parse(duong_dan.read_text(encoding="utf-8"))
-    ket_qua: list[tuple[str, list[str]]] = []
-    for node in cay.body:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    result: list[tuple[str, list[str]]] = []
+    for node in tree.body:
         if not isinstance(node, ast.ClassDef):
             continue
         if not any(getattr(b, "id", "") == "ABC" for b in node.bases):
             continue
         methods = [
-            con.name
-            for con in node.body
-            if isinstance(con, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and any(getattr(d, "id", "") == "abstractmethod" for d in con.decorator_list)
+            child.name
+            for child in node.body
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and any(getattr(d, "id", "") == "abstractmethod" for d in child.decorator_list)
         ]
-        ket_qua.append((node.name, methods))
-    return ket_qua
+        result.append((node.name, methods))
+    return result
 
 
-def _chu_ky(duong_dan: Path, lop: str, method: str) -> tuple[str, bool]:
+def _signature(path: Path, cls_name: str, method: str) -> tuple[str, bool]:
     """Lấy lại nguyên chữ ký của method abstract, để stub khớp 100%."""
-    cay = ast.parse(duong_dan.read_text(encoding="utf-8"))
-    for node in cay.body:
-        if isinstance(node, ast.ClassDef) and node.name == lop:
-            for con in node.body:
-                if isinstance(con, (ast.FunctionDef, ast.AsyncFunctionDef)) and con.name == method:
-                    args = ast.unparse(con.args)
-                    kieu = f" -> {ast.unparse(con.returns)}" if con.returns else ""
-                    return f"({args}){kieu}", isinstance(con, ast.AsyncFunctionDef)
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == cls_name:
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name == method:
+                    args = ast.unparse(child.args)
+                    kind = f" -> {ast.unparse(child.returns)}" if child.returns else ""
+                    return f"({args}){kind}", isinstance(child, ast.AsyncFunctionDef)
     return "(self)", True
 
 
 def render_family(family: str) -> dict[str, str]:
     """Hai file khung của một họ mới."""
-    nang_luc = f"{pascal(family)}Basic"
+    capability_names = f"{pascal(family)}Basic"
 
     init = f'''"""Họ provider **{family}** — các bản hiện thực cắm được.
 
@@ -72,7 +72,7 @@ không sửa service, không sửa main.py, không có danh sách import nào ph
 
 Service khai ĐÚNG năng lực nó cần:
 
-    def __init__(self, x: Providers[{nang_luc}]) -> None: ...
+    def __init__(self, x: Providers[{capability_names}]) -> None: ...
 """
 '''
 
@@ -87,7 +87,7 @@ method rỗng chỉ để thoả ABC.
 from abc import ABC, abstractmethod
 
 
-class {nang_luc}(ABC):
+class {capability_names}(ABC):
     """Việc mà MỌI provider {family} đều phải làm được."""
 
     @abstractmethod
@@ -108,9 +108,9 @@ class {nang_luc}(ABC):
     return {"__init__.py": init, "capabilities.py": caps}
 
 
-def render_provider(family: str, name: str, caps: list[tuple[str, list[str]]], goc: Path) -> str:
-    lop = f"{pascal(name)}{pascal(family)}"
-    tep_caps = goc / family / "capabilities.py"
+def render_provider(family: str, name: str, caps: list[tuple[str, list[str]]], root: Path) -> str:
+    cls_name = f"{pascal(name)}{pascal(family)}"
+    capabilities_file = root / family / "capabilities.py"
 
     if not caps:
         return f'''"""Provider `{name}` của họ {family}."""
@@ -119,20 +119,20 @@ from fastapi_modular import provider
 
 
 @provider("{name}")
-class {lop}:
+class {cls_name}:
     """Chưa kế thừa năng lực nào — thêm interface từ capabilities.py vào đây."""
 '''
 
-    ten_caps = [ten for ten, _ in caps]
-    than: list[str] = []
-    for ten_cap, methods in caps:
-        than.append(f"    # ---- {ten_cap} " + "-" * max(0, 60 - len(ten_cap)))
+    capability_names_ = [name for name, _ in caps]
+    body: list[str] = []
+    for capability_name, methods in caps:
+        body.append(f"    # ---- {capability_name} " + "-" * max(0, 60 - len(capability_name)))
         for method in methods:
-            chu_ky, la_async = _chu_ky(tep_caps, ten_cap, method)
-            tu_khoa = "async def" if la_async else "def"
-            than.append(
-                f"    {tu_khoa} {method}{chu_ky}:\n"
-                f'        raise NotImplementedError("{lop}.{method} chưa được viết")\n'
+            signature_text, is_async = _signature(capabilities_file, capability_name, method)
+            keyword = "async def" if is_async else "def"
+            body.append(
+                f"    {keyword} {method}{signature_text}:\n"
+                f'        raise NotImplementedError("{cls_name}.{method} chưa được viết")\n'
             )
 
     return f'''"""Provider `{name}` của họ {family}.
@@ -144,24 +144,24 @@ làm được việc nào thì **bỏ interface đó khỏi danh sách kế th�
 
 from fastapi_modular import provider
 
-from {str(goc).replace("/", ".")}.{family}.capabilities import (
-    {", ".join(ten_caps)},
+from {str(root).replace("/", ".")}.{family}.capabilities import (
+    {", ".join(capability_names_)},
 )
 
 
 @provider("{name}")
-class {lop}({", ".join(ten_caps)}):
+class {cls_name}({", ".join(capability_names_)}):
     """Bản hiện thực {name}."""
 
-{chr(10).join(than)}'''
+{chr(10).join(body)}'''
 
 
 def _write(target: Path, files: dict[str, str]) -> None:
     target.mkdir(parents=True, exist_ok=True)
     for relative, content in files.items():
-        duong_dan = target / relative
-        duong_dan.parent.mkdir(parents=True, exist_ok=True)
-        duong_dan.write_text(content, encoding="utf-8")
+        path = target / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -174,41 +174,41 @@ def main(argv: list[str] | None = None) -> int:
     family = args.family.strip().lower().replace("-", "_")
     name = args.name.strip().lower()
 
-    for nhan, gia_tri in (("họ", family), ("provider", name)):
-        if not TEN_HOP_LE.match(gia_tri):
-            print(f"Tên {nhan} không hợp lệ: {gia_tri!r}. Chữ thường, số, gạch ngang hoặc _.")
+    for label_, value in (("họ", family), ("provider", name)):
+        if not VALID_NAME.match(value):
+            print(f"Tên {label_} không hợp lệ: {value!r}. Chữ thường, số, gạch ngang hoặc _.")
             return 1
 
-    goc: Path = args.root
-    thu_muc = goc / family
-    ho_moi = not thu_muc.exists()
+    root: Path = args.root
+    directory = root / family
+    is_new_family = not directory.exists()
 
-    tep_provider = thu_muc / f"{name}.py"
-    if tep_provider.exists():
-        print(f"Đã có {tep_provider} rồi. Xoá đi hoặc chọn tên khác.")
+    provider_file = directory / f"{name}.py"
+    if provider_file.exists():
+        print(f"Đã có {provider_file} rồi. Xoá đi hoặc chọn tên khác.")
         return 1
 
-    if not (goc / "__init__.py").exists():
-        _write(goc, {"__init__.py": '"""Các provider cắm được, nhóm theo họ."""\n'})
+    if not (root / "__init__.py").exists():
+        _write(root, {"__init__.py": '"""Các provider cắm được, nhóm theo họ."""\n'})
 
-    if ho_moi:
-        _write(thu_muc, render_family(family))
+    if is_new_family:
+        _write(directory, render_family(family))
 
-    caps = _capabilities_trong(thu_muc / "capabilities.py")
-    _write(thu_muc, {f"{name}.py": render_provider(family, name, caps, goc)})
+    caps = _capabilities_in(directory / "capabilities.py")
+    _write(directory, {f"{name}.py": render_provider(family, name, caps, root)})
 
-    if ho_moi:
+    if is_new_family:
         print(f"Đã tạo họ '{family}' và provider '{name}':")
-        for ten in ("__init__.py", "capabilities.py", f"{name}.py"):
-            print(f"    {thu_muc / ten}")
+        for filename in ("__init__.py", "capabilities.py", f"{name}.py"):
+            print(f"    {directory / filename}")
         print()
         print("Việc tiếp theo:")
-        print(f"  1. Sửa {thu_muc / 'capabilities.py'} cho đúng nghiệp vụ của bạn")
-        print(f"  2. Viết thân các method trong {tep_provider}")
+        print(f"  1. Sửa {directory / 'capabilities.py'} cho đúng nghiệp vụ của bạn")
+        print(f"  2. Viết thân các method trong {provider_file}")
         print(f"  3. Service nhận sổ: def __init__(self, x: Providers[{pascal(family)}Basic])")
     else:
         print(f"Đã thêm provider '{name}' vào họ '{family}':")
-        print(f"    {tep_provider}")
+        print(f"    {provider_file}")
         if caps:
             print(f"  (sinh sẵn stub cho {', '.join(t for t, _ in caps)})")
         print()

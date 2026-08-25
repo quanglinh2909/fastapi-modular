@@ -139,13 +139,13 @@ def test_tham_so_thuong_co_mac_dinh_thi_giu_nguyen():
 
     @injectable
     class CoThamSoThuong:
-        def __init__(self, nguong: int = 5, nhan: str | None = None) -> None:
+        def __init__(self, nguong: int = 5, label_: str | None = None) -> None:
             self.nguong = nguong
-            self.nhan = nhan
+            self.label_ = label_
 
     instance = Container().resolve(CoThamSoThuong)
     assert instance.nguong == 5
-    assert instance.nhan is None
+    assert instance.label_ is None
 
 
 def test_thieu_provider_va_khong_co_mac_dinh_van_bao_loi():

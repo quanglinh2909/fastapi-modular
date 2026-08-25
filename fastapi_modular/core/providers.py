@@ -61,10 +61,10 @@ C = TypeVar("C")
 DEFAULT_PROVIDERS_PACKAGE = "src.providers"
 
 #: Thuộc tính đánh dấu do @provider gắn lên class.
-_TEN_PROVIDER = "__provider_name__"
+_PROVIDER_NAME = "__provider_name__"
 _SCOPE_PROVIDER = "__provider_scope__"
 
-_TEN_HOP_LE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+_VALID_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 class ProviderNotFoundError(AppError):
@@ -97,13 +97,13 @@ def provider(name: str, *, scope: Scope = Scope.SINGLETON) -> Callable[[T], T]:
     service khác. Nhưng KHÔNG vào sổ `_REGISTRY` toàn cục: sổ đó tra theo tên
     class, mà hai họ có quyền cùng có một `OryzaProvider`.
     """
-    if not _TEN_HOP_LE.match(name):
+    if not _VALID_NAME.match(name):
         raise ValueError(
             f"Tên provider không hợp lệ: {name!r}. Chữ thường, số, gạch ngang hoặc gạch dưới."
         )
 
     def decorate(target: T) -> T:
-        setattr(target, _TEN_PROVIDER, name)
+        setattr(target, _PROVIDER_NAME, name)
         setattr(target, _SCOPE_PROVIDER, scope)
         return target
 
@@ -138,8 +138,8 @@ class Providers(Generic[C]):
         self._classes = classes
 
     def __repr__(self) -> str:
-        ten = ", ".join(self.names()) or "rỗng"
-        return f"<Providers[{self._capability.__name__}] (họ {self._family}): {ten}>"
+        provider_name = ", ".join(self.names()) or "rỗng"
+        return f"<Providers[{self._capability.__name__}] (họ {self._family}): {provider_name}>"
 
     @property
     def family(self) -> str:
@@ -159,16 +159,16 @@ class Providers(Generic[C]):
         """
         provider_cls = self._classes.get(name)
         if provider_cls is None:
-            co = ", ".join(sorted(self._classes)) or "(chưa có cái nào)"
+            has = ", ".join(sorted(self._classes)) or "(chưa có cái nào)"
             raise ProviderNotFoundError(
-                f"Không có provider '{name}' trong họ '{self._family}'. Đang có: {co}"
+                f"Không có provider '{name}' trong họ '{self._family}'. Đang có: {has}"
             )
 
         if not issubclass(provider_cls, self._capability):
-            lam_duoc = ", ".join(capabilities_of(provider_cls)) or "(không có năng lực nào)"
+            supported = ", ".join(capabilities_of(provider_cls)) or "(không có năng lực nào)"
             raise CapabilityNotSupportedError(
                 f"Provider '{name}' (họ '{self._family}') không hỗ trợ "
-                f"{self._capability.__name__}. Nó làm được: {lam_duoc}"
+                f"{self._capability.__name__}. Nó làm được: {supported}"
             )
 
         return container.build(
@@ -193,7 +193,7 @@ class Providers(Generic[C]):
         "mọi cổng thanh toán" — thường đúng thứ endpoint cần trả về.
         """
         return sorted(
-            ten for ten, cls in self._classes.items() if issubclass(cls, self._capability)
+            provider_name for provider_name, cls in self._classes.items() if issubclass(cls, self._capability)
         )
 
     def all_names(self) -> list[str]:
@@ -210,7 +210,7 @@ class Providers(Generic[C]):
 
     def describe(self) -> list[dict[str, Any]]:
         """Bảng tóm tắt — trả thẳng ra endpoint liệt kê được."""
-        return [{"name": ten, "capabilities": self.capabilities(ten)} for ten in self.names()]
+        return [{"name": provider_name, "capabilities": self.capabilities(provider_name)} for provider_name in self.names()]
 
 
 def register_providers(package: str = DEFAULT_PROVIDERS_PACKAGE) -> dict[str, Providers]:
@@ -233,68 +233,68 @@ def register_providers(package: str = DEFAULT_PROVIDERS_PACKAGE) -> dict[str, Pr
     log = get_logger(__name__)
 
     try:
-        goc = importlib.import_module(package)
+        root = importlib.import_module(package)
     except ModuleNotFoundError:
         return {}
 
-    duong_dan = getattr(goc, "__path__", None)
-    if duong_dan is None:
+    path = getattr(root, "__path__", None)
+    if path is None:
         raise RuntimeError(f"'{package}' phải là một package (có __init__.py), không phải module.")
 
-    so: dict[str, Providers] = {}
-    ho_cua_nang_luc: dict[str, str] = {}
+    count: dict[str, Providers] = {}
+    family_of_capability: dict[str, str] = {}
 
-    for info in pkgutil.iter_modules(list(duong_dan)):
+    for info in pkgutil.iter_modules(list(path)):
         if not info.ispkg or info.name.startswith("_"):
             continue
 
         family = info.name
-        goi_ho = f"{package}.{family}"
+        call_for_me = f"{package}.{family}"
         classes: dict[str, type] = {}
-        nang_luc: dict[str, type] = {}
+        capability_names: dict[str, type] = {}
 
-        for con in pkgutil.walk_packages([f"{p}/{family}" for p in duong_dan], prefix=f"{goi_ho}."):
-            if con.name.rsplit(".", 1)[-1].startswith("_"):
+        for child in pkgutil.walk_packages([f"{p}/{family}" for p in path], prefix=f"{call_for_me}."):
+            if child.name.rsplit(".", 1)[-1].startswith("_"):
                 continue
-            module = importlib.import_module(con.name)
-            for doi_tuong in vars(module).values():
-                if not isinstance(doi_tuong, type):
+            module = importlib.import_module(child.name)
+            for obj in vars(module).values():
+                if not isinstance(obj, type):
                     continue
                 # Chỉ nhận thứ ĐỊNH NGHĨA ở module này. Không lọc thì một class
                 # được import sang file khác sẽ bị đếm hai lần.
-                if doi_tuong.__module__ != con.name:
+                if obj.__module__ != child.name:
                     continue
 
-                ten = getattr(doi_tuong, _TEN_PROVIDER, None)
-                if ten is not None:
-                    truoc = classes.get(ten)
-                    if truoc is not None and truoc is not doi_tuong:
+                provider_name = getattr(obj, _PROVIDER_NAME, None)
+                if provider_name is not None:
+                    before = classes.get(provider_name)
+                    if before is not None and before is not obj:
                         raise RuntimeError(
-                            f"Họ '{family}' có hai provider cùng tên '{ten}': "
-                            f"{truoc.__module__}.{truoc.__qualname__} và "
-                            f"{doi_tuong.__module__}.{doi_tuong.__qualname__}. Đổi tên một cái."
+                            f"Họ '{family}' có hai provider cùng tên '{provider_name}': "
+                            f"{before.__module__}.{before.__qualname__} và "
+                            f"{obj.__module__}.{obj.__qualname__}. Đổi tên một cái."
                         )
-                    classes[ten] = doi_tuong
-                elif ABC in doi_tuong.__mro__ and doi_tuong is not ABC:
-                    nang_luc[doi_tuong.__name__] = doi_tuong
+                    classes[provider_name] = obj
+                elif ABC in obj.__mro__ and obj is not ABC:
+                    capability_names[obj.__name__] = obj
 
-        for ten_cap, cap in nang_luc.items():
-            truoc_ho = ho_cua_nang_luc.get(ten_cap)
-            if truoc_ho is not None:
+        for capability_name, level in capability_names.items():
+            family_prefix = family_of_capability.get(capability_name)
+            if family_prefix is not None:
                 raise RuntimeError(
-                    f"Hai họ cùng khai năng lực tên '{ten_cap}': '{truoc_ho}' và '{family}'. "
+                    f"Hai họ cùng khai năng lực tên '{capability_name}': '{family_prefix}' và '{family}'. "
                     "Container tra theo TÊN LỚP nên phải đặt khác nhau."
                 )
-            ho_cua_nang_luc[ten_cap] = family
-            so_cua_cap = Providers(family, cap, classes)
-            so[ten_cap] = so_cua_cap
-            container.override(f"Providers[{ten_cap}]", so_cua_cap)
+            family_of_capability[capability_name] = family
+            registry_of = Providers(family, level, classes)
+            count[capability_name] = registry_of
+            container.override(f"Providers[{capability_name}]", registry_of)
 
-    if so:
+    if count:
         log.info(
             "providers.registered",
             package=package,
-            families=sorted(set(ho_cua_nang_luc.values())),
-            capabilities=sorted(so),
+            families=sorted(set(family_of_capability.values())),
+            capabilities=sorted(count),
         )
-    return so
+    return count

@@ -53,10 +53,10 @@ def bind_settings(settings: Settings | None = None) -> Settings:
     else:
         use_settings(type(settings))
 
-    for lop in type(settings).__mro__:
-        if not (isinstance(lop, type) and issubclass(lop, Settings)):
+    for cls_name in type(settings).__mro__:
+        if not (isinstance(cls_name, type) and issubclass(cls_name, Settings)):
             break
-        container.override(lop, settings)
+        container.override(cls_name, settings)
     return settings
 
 
@@ -68,7 +68,7 @@ def new_fastapi(settings: Settings, **kwargs: Any) -> FastAPI:
 
     `kwargs` truyền thẳng cho FastAPI, và ĐÈ được mọi giá trị ở trên.
     """
-    mac_dinh: dict[str, Any] = {
+    default_value: dict[str, Any] = {
         "title": settings.name,
         "version": settings.version,
         "debug": settings.debug,
@@ -77,7 +77,7 @@ def new_fastapi(settings: Settings, **kwargs: Any) -> FastAPI:
         "redoc_url": settings.redoc_url,
         "openapi_url": settings.openapi_url,
     }
-    return FastAPI(**{**mac_dinh, **kwargs})
+    return FastAPI(**{**default_value, **kwargs})
 
 
 def add_middleware(app: FastAPI, settings: Settings) -> None:
@@ -123,8 +123,8 @@ def create_app(
 
     # Provider phải có mặt TRƯỚC khi route được dựng: controller nhận service,
     # service nhận Providers["..."] qua __init__.
-    goc, _, _ = package.rpartition(".")
-    register_providers(providers_package or (f"{goc}.providers" if goc else "providers"))
+    root, _, _ = package.rpartition(".")
+    register_providers(providers_package or (f"{root}.providers" if root else "providers"))
 
     register_routes(app, prefix=settings.api_prefix, package=package)
 

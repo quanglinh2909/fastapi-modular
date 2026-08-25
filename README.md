@@ -268,10 +268,13 @@ async def add(self, data: list[int]) -> int:
 total = await self._mq.send("sum", [1, 2, 3, 4], queue="math")   # -> 10
 ```
 
+Available on **all four**: `@rabbitmq_responder`, `@redis_responder`,
+`@mqtt_responder`, `@kafka_responder`.
+
 The packet layout is taken from `@nestjs/microservices` source, so a NestJS
 microservice and a service built on this library talk to each other with no
-translation layer — verified both ways against NestJS 11.2.1. Object patterns
-(`{"cmd": "sum"}`) included, key ordering and all.
+translation layer — verified both ways, on all four transports, against NestJS
+11.2.1. Object patterns (`{"cmd": "sum"}`) included, key ordering and all.
 
 `send` turns a queue into a network call, which brings back everything queues
 exist to avoid — [docs/rpc.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rpc.md)
@@ -328,7 +331,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              556 tests that need no infrastructure, 52 more when servers exist
+tests/              568 tests that need no infrastructure, 62 more when servers exist
 docs/               reference documentation (Vietnamese)
 ```
 

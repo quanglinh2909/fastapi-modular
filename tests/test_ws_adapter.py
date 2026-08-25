@@ -32,9 +32,9 @@ REDIS_URL = os.getenv("TEST_REDIS_URL")
 @pytest.mark.skipif(CO_REDIS, reason="chỉ kiểm tra được khi CHƯA cài thư viện redis")
 async def test_chua_cai_redis_thi_bao_ro_cach_khac_phuc():
     adapter = RedisAdapter("redis://localhost:6379/0", "ws:test")
-    with pytest.raises(ComponentNotEnabledError) as loi:
+    with pytest.raises(ComponentNotEnabledError) as error:
         await adapter.start(lambda _: None)
-    assert "make install-redis" in str(loi.value)
+    assert "make install-redis" in str(error.value)
 
 
 class _WsGia:
@@ -71,10 +71,10 @@ def _gan_socket(server: WebSocketServer, room: str) -> Socket:
     return socket
 
 
-async def _cho(socket: Socket, expected: int, timeout: float = 3.0) -> int:
+async def _pending(socket: Socket, expected: int, timeout: float = 3.0) -> int:
     """Pub/sub là bất đồng bộ — chờ tới khi tin sang tới worker kia."""
-    han = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < han:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
         if socket.pending >= expected:
             break
         await asyncio.sleep(0.02)
@@ -93,9 +93,9 @@ async def test_tin_di_duoc_sang_worker_khac():
 
     try:
         assert await worker_a.emit("e", {"x": 1}, namespace="/ws/chat", room="r") == 1
-        assert await _cho(socket_b, 1) == 1, "worker B phải nhận được tin của worker A"
+        assert await _pending(socket_b, 1) == 1, "worker B phải nhận được tin của worker A"
         # Không được nhận lại tin của chính mình: đã gửi tại chỗ rồi.
-        assert await _cho(socket_a, 2, timeout=0.5) == 1
+        assert await _pending(socket_a, 2, timeout=0.5) == 1
     finally:
         await worker_a.shutdown()
         await worker_b.shutdown()
@@ -113,7 +113,7 @@ async def test_kenh_khac_nhau_khong_nghe_nham_cua_nhau():
 
     try:
         await worker_a.emit("e", 1, namespace="/ws/chat", room="r")
-        assert await _cho(socket_b, 1, timeout=0.7) == 0
+        assert await _pending(socket_b, 1, timeout=0.7) == 0
     finally:
         await worker_a.shutdown()
         await worker_b.shutdown()
@@ -133,7 +133,7 @@ async def test_gui_thang_cho_mot_nguoi_cung_di_xuyen_worker():
 
     try:
         assert await worker_a.to_user("an", "e", {"x": 1}, namespace="/ws/chat") == 0
-        assert await _cho(socket, 1) == 1
+        assert await _pending(socket, 1) == 1
     finally:
         await worker_a.shutdown()
         await worker_b.shutdown()

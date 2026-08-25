@@ -201,7 +201,7 @@ class Container:
 
         cls = _REGISTRY.get(name)
         if cls is None:
-            raise RuntimeError(_khong_co_provider(name))
+            raise RuntimeError(_no_provider(name))
 
         if key in self._building:
             chain = " -> ".join([*self._building, key])
@@ -377,7 +377,7 @@ def Inject(token: type[T] | str) -> Any:
     return Depends(_provide)
 
 
-def _khong_co_provider(name: str) -> str:
+def _no_provider(name: str) -> str:
     """Thông báo cho lỗi tra cứu hỏng — nói đúng nguyên nhân hay gặp nhất.
 
     Token của một họ provider (`DeviceProviders`) không nằm trong `_REGISTRY`;

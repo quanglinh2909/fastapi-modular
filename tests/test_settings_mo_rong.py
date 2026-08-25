@@ -51,13 +51,13 @@ def test_di_tra_ve_cung_mot_doi_tuong_cho_ca_hai_kieu():
 
 def test_create_app_ghi_nho_lop_cho_cho_khac_trong_khung():
     """Alembic và gateway tự gọi get_settings() — phải ra đúng lớp của bạn."""
-    goc = settings_class()
+    root = settings_class()
     try:
         create_app(AppSettings())
         assert settings_class() is AppSettings
         assert isinstance(get_settings(), AppSettings)
     finally:
-        use_settings(goc)
+        use_settings(root)
 
 
 def test_lop_khong_ke_thua_settings_bi_tu_choi():
@@ -74,8 +74,8 @@ def test_ke_thua_nhieu_tang_van_cam_duoc_vao_container():
 
     settings = TangHai()
     create_app(settings)
-    for kieu in (Settings, AppSettings, TangHai):
-        assert container.resolve(kieu) is settings
+    for kind in (Settings, AppSettings, TangHai):
+        assert container.resolve(kind) is settings
 
     use_settings(AppSettings)                # trả lại cho các test sau
 
@@ -120,10 +120,10 @@ def test_lap_rap_tay_ra_ket_qua_y_het_create_app():
     register_error_handlers(bang_tay, debug=settings.debug)
     register_routes(bang_tay, prefix=settings.api_prefix)
 
-    def duong_dan(app) -> set[str]:
+    def path(app) -> set[str]:
         return {getattr(r, "path", None) for r in app.routes} - {None, "/"}
 
-    assert duong_dan(bang_tay) == duong_dan(tu_dong)
+    assert path(bang_tay) == path(tu_dong)
     assert [m.cls.__name__ for m in bang_tay.user_middleware] == [
         m.cls.__name__ for m in tu_dong.user_middleware
     ]

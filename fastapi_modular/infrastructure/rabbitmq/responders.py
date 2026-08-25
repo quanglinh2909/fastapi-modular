@@ -110,17 +110,17 @@ def rabbitmq_responder(
     KHÔNG có `max_retries`/`dead_letter` ở đây, và đó là cố ý — xem docstring
     của module.
     """
-    ten_pattern = normalize_pattern(pattern)
-    if not ten_pattern:
+    pattern_name = normalize_pattern(pattern)
+    if not pattern_name:
         raise BadRequestError("`pattern` không được để trống")
 
-    kieu, rk, bind_arguments = normalize_binding(
+    kind, rk, bind_arguments = normalize_binding(
         exchange,
         routing_key if routing_key is not None else "",
         kind=exchange_type,
     )
     # Exchange mặc định giao theo TÊN hàng đợi, nên routing key chính là nó.
-    if kieu == "default":
+    if kind == "default":
         rk = queue
 
     def decorate(fn: Callable) -> Callable:
@@ -130,11 +130,11 @@ def rabbitmq_responder(
             fn,
             _SPEC_ATTR,
             RabbitmqResponderSpec(
-                pattern=ten_pattern,
+                pattern=pattern_name,
                 queue=queue,
                 exchange=exchange,
                 routing_key=rk,
-                exchange_type=kieu,
+                exchange_type=kind,
                 bind_arguments=bind_arguments,
                 prefetch=prefetch,
                 durable=durable,
@@ -187,32 +187,32 @@ def plan_queues(
     2. Hai responder cùng hàng đợi và TRÙNG pattern: một trong hai sẽ không bao
        giờ được gọi, và không có gì báo cho biết là cái nào.
     """
-    ke_hoach: dict[str, tuple[RabbitmqResponderSpec, dict[str, RabbitmqResponderSpec]]] = {}
+    plan: dict[str, tuple[RabbitmqResponderSpec, dict[str, RabbitmqResponderSpec]]] = {}
     for spec in specs:
-        if spec.queue not in ke_hoach:
-            ke_hoach[spec.queue] = (spec, {})
-        dau, bang = ke_hoach[spec.queue]
+        if spec.queue not in plan:
+            plan[spec.queue] = (spec, {})
+        first, table = plan[spec.queue]
 
-        khac = [
-            ten
-            for ten in ("exchange", "routing_key", "exchange_type", "prefetch",
+        different = [
+            field
+            for field in ("exchange", "routing_key", "exchange_type", "prefetch",
                         "durable", "auto_delete")
-            if getattr(dau, ten) != getattr(spec, ten)
+            if getattr(first, field) != getattr(spec, field)
         ]
-        if khac:
+        if different:
             raise RuntimeError(
-                f"{spec.label} và {dau.label} cùng dùng hàng đợi '{spec.queue}' nhưng khai "
-                f"khác nhau ở: {', '.join(khac)}. Một hàng đợi chỉ dựng được một lần — "
+                f"{spec.label} và {first.label} cùng dùng hàng đợi '{spec.queue}' nhưng khai "
+                f"khác nhau ở: {', '.join(different)}. Một hàng đợi chỉ dựng được một lần — "
                 "cho hai bên khai giống hệt nhau, hoặc tách ra hai hàng đợi."
             )
-        if spec.pattern in bang:
+        if spec.pattern in table:
             raise RuntimeError(
                 f"Hàng đợi '{spec.queue}' đã có responder cho pattern '{spec.pattern}' "
-                f"({bang[spec.pattern].label}). {spec.label} sẽ không bao giờ được gọi — "
+                f"({table[spec.pattern].label}). {spec.label} sẽ không bao giờ được gọi — "
                 "đổi pattern, hoặc đổi hàng đợi."
             )
-        bang[spec.pattern] = spec
-    return ke_hoach
+        table[spec.pattern] = spec
+    return plan
 
 
 @injectable
@@ -222,7 +222,7 @@ class RabbitmqResponderRunner:
     def __init__(self, broker: RabbitBroker, settings: Settings) -> None:
         self._broker = broker
         self._config = settings.rabbitmq
-        self._ke_hoach: dict[str, tuple[RabbitmqResponderSpec, dict[str, RabbitmqResponderSpec]]] = {}
+        self._plan: dict[str, tuple[RabbitmqResponderSpec, dict[str, RabbitmqResponderSpec]]] = {}
         self._started: dict[str, Any] = {}
 
     async def startup(self) -> None:
@@ -231,7 +231,7 @@ class RabbitmqResponderRunner:
         specs = discover_rabbitmq_responders()
         if not specs:
             return
-        self._ke_hoach = plan_queues(specs)
+        self._plan = plan_queues(specs)
 
         self._broker.on_ready(self._setup)
         if self._broker.connected:
@@ -239,44 +239,44 @@ class RabbitmqResponderRunner:
 
     async def _setup(self) -> None:
         """Idempotent: gọi lại bao nhiêu lần cũng không sinh consumer trùng."""
-        for ten_hang_doi, (dau, bang) in self._ke_hoach.items():
-            if ten_hang_doi in self._started:
+        for queue_name, (first, table) in self._plan.items():
+            if queue_name in self._started:
                 continue
             try:
-                channel = await self._broker.new_channel(prefetch=dau.prefetch)
+                channel = await self._broker.new_channel(prefetch=first.prefetch)
                 queue = await self._broker.durable_queue(
                     channel,
-                    ten_hang_doi,
-                    durable=dau.durable,
-                    auto_delete=dau.auto_delete,
+                    queue_name,
+                    durable=first.durable,
+                    auto_delete=first.auto_delete,
                 )
-                if dau.exchange_type != "default":
+                if first.exchange_type != "default":
                     await queue.bind(
-                        await self._broker.exchange(dau.exchange, dau.exchange_type),
-                        routing_key=dau.routing_key,
-                        arguments=dau.bind_arguments,
+                        await self._broker.exchange(first.exchange, first.exchange_type),
+                        routing_key=first.routing_key,
+                        arguments=first.bind_arguments,
                     )
-                tag = await queue.consume(self._lam_callback(ten_hang_doi, bang))
-                self._started[ten_hang_doi] = (queue, tag)
+                tag = await queue.consume(self._make_responder_callback(queue_name, table))
+                self._started[queue_name] = (queue, tag)
                 log.info(
                     "mq.responder_started",
-                    queue=ten_hang_doi,
-                    patterns=sorted(bang),
-                    exchange=dau.exchange or "(mặc định)",
+                    queue=queue_name,
+                    patterns=sorted(table),
+                    exchange=first.exchange or "(mặc định)",
                 )
             except Exception as exc:
                 log.exception(
-                    "mq.responder_start_failed", queue=ten_hang_doi, error=str(exc)
+                    "mq.responder_start_failed", queue=queue_name, error=str(exc)
                 )
 
-    def _lam_callback(
-        self, ten_hang_doi: str, bang: dict[str, RabbitmqResponderSpec]
+    def _make_responder_callback(
+        self, queue_name: str, table: dict[str, RabbitmqResponderSpec]
     ) -> Callable:
         async def callback(message: Any) -> None:
             token = set_request_id(new_request_id())
             try:
                 async with request_scope():
-                    await self._giao(ten_hang_doi, bang, message)
+                    await self._dispatch(queue_name, table, message)
             finally:
                 reset_request_id(token)
                 # Luôn ack: yêu cầu đã được trả lời (kể cả trả lời là lỗi), và
@@ -285,52 +285,52 @@ class RabbitmqResponderRunner:
 
         return callback
 
-    async def _giao(
-        self, ten_hang_doi: str, bang: dict[str, RabbitmqResponderSpec], message: Any
+    async def _dispatch(
+        self, queue_name: str, table: dict[str, RabbitmqResponderSpec], message: Any
     ) -> None:
-        goi = read_packet(decode(message.body))
-        if goi is None:
+        packet = read_packet(decode(message.body))
+        if packet is None:
             log.warning(
                 "mq.responder_bad_packet",
-                queue=ten_hang_doi,
+                queue=queue_name,
                 hint="tin không theo khuôn {pattern, data, id} — người gửi có dùng "
                      "emit()/send() hay ClientProxy của NestJS không?",
             )
             return
 
-        pattern, data, ma = goi
-        spec = bang.get(pattern)
+        pattern, data, correlation_id = packet
+        spec = table.get(pattern)
         if spec is None:
             # Nói thẳng cho người gọi thay vì để họ đợi hết giờ. Dùng NGUYÊN VĂN
             # thông báo của NestJS, vì client NestJS vốn đã biết đọc câu này.
-            log.warning("mq.no_responder", queue=ten_hang_doi, pattern=pattern,
-                        co=sorted(bang))
-            if ma:
-                await self._tra_loi(message, ma, loi=NO_MESSAGE_HANDLER)
+            log.warning("mq.no_responder", queue=queue_name, pattern=pattern,
+                        has=sorted(table))
+            if correlation_id:
+                await self._reply(message, correlation_id, error=NO_MESSAGE_HANDLER)
             return
 
         try:
-            ket_qua = await self._chay(spec, data, message, pattern)
+            result = await self._run(spec, data, message, pattern)
         except Exception as exc:
-            rabbitmq_consume_failed.inc(queue=ten_hang_doi)
+            rabbitmq_consume_failed.inc(queue=queue_name)
             log.exception(
                 "mq.responder_failed", handler=spec.label, pattern=pattern, error=str(exc)
             )
-            if ma:
-                await self._tra_loi(message, ma, loi=exc)
+            if correlation_id:
+                await self._reply(message, correlation_id, error=exc)
             return
 
-        rabbitmq_consumed.inc(queue=ten_hang_doi)
-        if ma:
-            await self._tra_loi(message, ma, ket_qua=ket_qua)
-        elif ket_qua is not None:
+        rabbitmq_consumed.inc(queue=queue_name)
+        if correlation_id:
+            await self._reply(message, correlation_id, result=result)
+        elif result is not None:
             # Tin không có `id` là SỰ KIỆN (NestJS `emit()`): không ai chờ kết
             # quả. Nói ra để không ai ngồi tìm xem câu trả lời đi đâu mất.
             log.debug(
                 "mq.responder_result_dropped", handler=spec.label, pattern=pattern
             )
 
-    async def _chay(
+    async def _run(
         self, spec: RabbitmqResponderSpec, data: Any, message: Any, pattern: str
     ) -> Any:
         if spec.model is not None:
@@ -351,38 +351,38 @@ class RabbitmqResponderRunner:
             return await spec.fn(instance, data, meta)   # type: ignore[misc]
         return await spec.fn(instance, data)             # type: ignore[misc]
 
-    async def _tra_loi(
+    async def _reply(
         self,
         message: Any,
         correlation_id: str,
         *,
-        ket_qua: Any = None,
-        loi: BaseException | str | None = None,
+        result: Any = None,
+        error: BaseException | str | None = None,
     ) -> None:
         """Gửi câu trả lời về `reply_to`, và nuốt lỗi nếu đường về hỏng.
 
         Ném tiếp sẽ khiến hạ tầng coi như tin xử lý hỏng — mà việc thì đã làm
         xong rồi. Không đáng làm lại chỉ vì đường về nghẽn.
         """
-        dia_chi = message.reply_to
-        if not dia_chi:
+        address = message.reply_to
+        if not address:
             log.warning(
                 "mq.reply_to_missing",
                 hint="tin có `id` nhưng không có `reply_to`; người gọi sẽ đợi tới hết giờ",
             )
             return
 
-        goi = error_packet(correlation_id, loi) if loi is not None else ok_packet(
-            correlation_id, ket_qua
+        packet = error_packet(correlation_id, error) if error is not None else ok_packet(
+            correlation_id, result
         )
         try:
             await self._broker.publish_to_queue(
-                dia_chi, encode(goi), persistent=False, correlation_id=correlation_id
+                address, encode(packet), persistent=False, correlation_id=correlation_id
             )
         except Exception as exc:  # noqa: BLE001 - việc đã xong, đường về hỏng không làm lại
             log.warning(
                 "rpc.reply_failed",
-                reply_to=dia_chi,
+                reply_to=address,
                 error=f"{type(exc).__name__}: {exc}",
             )
 
@@ -392,7 +392,7 @@ class RabbitmqResponderRunner:
     def stats(self) -> dict[str, Any]:
         return {
             "responders": [
-                {"queue": ten, "patterns": sorted(bang), "running": ten in self._started}
-                for ten, (_, bang) in sorted(self._ke_hoach.items())
+                {"queue": field, "patterns": sorted(table), "running": field in self._started}
+                for field, (_, table) in sorted(self._plan.items())
             ]
         }

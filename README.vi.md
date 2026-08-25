@@ -264,10 +264,13 @@ async def cong(self, data: list[int]) -> int:
 tong = await self._mq.send("sum", [1, 2, 3, 4], queue="math")   # -> 10
 ```
 
+Có ở **cả bốn hạ tầng**: `@rabbitmq_responder`, `@redis_responder`,
+`@mqtt_responder`, `@kafka_responder`.
+
 Khuôn gói tin lấy từ chính mã nguồn `@nestjs/microservices`, nên một
 microservice NestJS và một service viết bằng khung này nói chuyện được với nhau
-mà không cần lớp dịch — đã chạy thật hai chiều với NestJS 11.2.1, kể cả pattern
-dạng object (`{"cmd": "sum"}`) và luật sắp xếp khoá của nó.
+mà không cần lớp dịch — đã chạy thật hai chiều, trên cả bốn hạ tầng, với NestJS
+11.2.1, kể cả pattern dạng object (`{"cmd": "sum"}`) và luật sắp xếp khoá.
 
 `send` biến hàng đợi thành lời gọi qua mạng, kéo theo đúng những thứ hàng đợi
 vốn dựng lên để tránh — [docs/rpc.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rpc.md)
@@ -329,7 +332,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              556 test chạy không cần hạ tầng, 52 test nữa bật khi có server thật
+tests/              568 test chạy không cần hạ tầng, 62 test nữa bật khi có server thật
 docs/               tài liệu tra cứu
 ```
 

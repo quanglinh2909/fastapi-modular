@@ -25,7 +25,7 @@ DA_NHAN: list[dict] = []
 
 
 class GiaMoi(BaseModel):
-    ma: str
+    code: str
     gia: float
 
 
@@ -35,8 +35,8 @@ class GiaListener:
     # đúng một kênh.
     @redis_subscriber("gia:*")
     async def doi_gia(self, payload: GiaMoi, meta: dict) -> None:
-        log.info("redis.gia_moi", kenh=meta["channel"], ma=payload.ma, gia=payload.gia)
-        DA_NHAN.append({"channel": meta["channel"], "ma": payload.ma, "gia": payload.gia})
+        log.info("redis.gia_moi", channels=meta["channel"], code=payload.code, gia=payload.gia)
+        DA_NHAN.append({"channel": meta["channel"], "ma": payload.code, "gia": payload.gia})
         del DA_NHAN[:-20]
 
 
@@ -48,14 +48,14 @@ class BaoCaoService:
         self._redis = redis
         self.lan_tinh = 0
 
-    async def tinh_that(self, ma: str) -> dict:
+    async def tinh_that(self, code: str) -> dict:
         self.lan_tinh += 1
         await asyncio.sleep(0.4)          # giả lập truy vấn nặng
-        return {"ma": ma, "so_don": 1234, "lan_tinh_that": self.lan_tinh}
+        return {"ma": code, "so_don": 1234, "lan_tinh_that": self.lan_tinh}
 
-    async def bao_cao(self, ma: str) -> dict:
+    async def bao_cao(self, code: str) -> dict:
         # cached(): trúng thì trả ngay, trượt thì gọi factory rồi ghi lại 30s.
         # Redis chết thì hàm này KHÔNG ném lỗi — nó gọi thẳng tinh_that().
         return await self._redis.cached(
-            f"bao-cao:{ma}", lambda: self.tinh_that(ma), ttl=30
+            f"bao-cao:{code}", lambda: self.tinh_that(code), ttl=30
         )

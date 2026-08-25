@@ -47,7 +47,7 @@ DA_NHAN: list[dict] = []
 @injectable
 class ConsumerNhanTin:
     @rabbitmq_subscriber("events", "relay.#", queue=NHAN_QUEUE)
-    async def nhan(self, payload: dict, meta: dict) -> None:
+    async def label_(self, payload: dict, meta: dict) -> None:
         DA_NHAN.append({"payload": payload, "routing_key": meta["routing_key"]})
 
 
@@ -56,7 +56,7 @@ class ConsumerDayDu:
     """Bật cả thử lại lẫn hàng đợi chết -> mọc thêm hai hàng đợi phụ."""
 
     @rabbitmq_subscriber("events", "daydu.#", queue=DAY_DU_QUEUE, max_retries=3, dead_letter=True)
-    async def nhan(self, payload: dict) -> None: ...
+    async def label_(self, payload: dict) -> None: ...
 
 
 @injectable
@@ -125,14 +125,14 @@ def test_exchange_tu_khai_luc_dung(mq_client: TestClient):
     - "audit" không ai khai trước, được khai lúc publish lần đầu.
     """
 
-    def da_khai() -> list[str]:
+    def declared_kind() -> list[str]:
         return mq_client.get("/api/health/ready").json()["rabbitmq"]["exchanges"]
 
-    assert "events" in da_khai(), "consumer phải tự khai exchange của nó lúc boot"
-    assert "audit" not in da_khai(), "chưa ai dùng thì chưa khai"
+    assert "events" in declared_kind(), "consumer phải tự khai exchange của nó lúc boot"
+    assert "audit" not in declared_kind(), "chưa ai dùng thì chưa khai"
 
     publish(mq_client, "user.login.web", {"u": "an"}, exchange="audit")
-    assert "audit" in da_khai(), "khai lúc dùng lần đầu"
+    assert "audit" in declared_kind(), "khai lúc dùng lần đầu"
 
 
 # ------------------------------------------------------------ consumer nền
@@ -140,8 +140,8 @@ async def test_consumer_nen_nhan_duoc_tin(mq_client: TestClient):
     DA_NHAN.clear()
     publish(mq_client, "relay.created.hanoi", {"id": "A9"})
 
-    han = time.monotonic() + 10
-    while time.monotonic() < han and not DA_NHAN:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not DA_NHAN:
         await anyio.sleep(0.1)
 
     assert DA_NHAN == [{"payload": {"id": "A9"}, "routing_key": "relay.created.hanoi"}]
@@ -187,8 +187,8 @@ async def test_tin_hong_di_qua_retry_roi_vao_hang_doi_chet(mq_client: TestClient
     publish(mq_client, "hong.mot", {"x": 1})
 
     # 1 lần đầu + 1 lần thử lại = 2, rồi tin phải nằm ở <queue>.dlq.
-    han = time.monotonic() + 15
-    while time.monotonic() < han and ConsumerHayHong.lan_goi < 2:
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and ConsumerHayHong.lan_goi < 2:
         await anyio.sleep(0.2)
     assert ConsumerHayHong.lan_goi == 2, "phải thử lại đúng một lần rồi thôi"
 
@@ -214,8 +214,8 @@ async def test_loi_vinh_vien_khong_thu_lai_lan_nao(mq_client: TestClient, mq_set
     broker = RabbitBroker(mq_settings)
     await broker.startup()
     try:
-        han = time.monotonic() + 15
-        while time.monotonic() < han:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
             info = await broker.queue_info(f"{VINH_VIEN_QUEUE}.dlq")
             if info and info["messages"] >= 1:
                 break
@@ -297,7 +297,7 @@ class ConsumerTrungKhit:
     @rabbitmq_subscriber(
         "test-cmd", "device.reboot", queue=DIRECT_QUEUE, exchange_type="direct", **_TAM
     )
-    async def nhan(self, payload: dict) -> None:
+    async def label_(self, payload: dict) -> None:
         DA_NHAN_DIRECT.append(payload)
 
 
@@ -306,13 +306,13 @@ class ConsumerVaoThang:
     """exchange mặc định: tin đi thẳng vào hàng đợi trùng tên, không bind gì."""
 
     @rabbitmq_subscriber("", queue=THANG_QUEUE, **_TAM)
-    async def nhan(self, payload: dict) -> None:
+    async def label_(self, payload: dict) -> None:
         DA_NHAN_THANG.append(payload)
 
 
-async def _cho(dieu_kien, giay: float = 10) -> None:
-    han = time.monotonic() + giay
-    while time.monotonic() < han and not dieu_kien():
+async def _pending(dieu_kien, seconds: float = 10) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline and not dieu_kien():
         await anyio.sleep(0.1)
 
 
@@ -322,7 +322,7 @@ async def test_fanout_moi_hang_doi_mot_ban_sao(mq_client: TestClient, mq_setting
     await broker.startup()
     try:
         await broker.publish("test-broadcast", payload={"id": 1}, exchange_type="fanout")
-        await _cho(lambda: len(DA_NHAN_FANOUT) >= 2)
+        await _pending(lambda: len(DA_NHAN_FANOUT) >= 2)
     finally:
         await broker.shutdown()
 
@@ -339,7 +339,7 @@ async def test_headers_chi_toi_hang_doi_khop_header(mq_client: TestClient, mq_se
             "test-headers", payload={"id": "H1"},
             exchange_type="headers", headers={"vung": "hanoi"},
         )
-        await _cho(lambda: DA_NHAN_HEADER)
+        await _pending(lambda: DA_NHAN_HEADER)
         await anyio.sleep(0.5)      # để hàng đợi kia có cơ hội nhận nhầm
     finally:
         await broker.shutdown()
@@ -354,7 +354,7 @@ async def test_direct_khong_khop_mau_nao_ca(mq_client: TestClient, mq_settings: 
     try:
         await broker.publish("test-cmd", "device.reboot.gap", {"sai": True}, exchange_type="direct")
         await broker.publish("test-cmd", "device.reboot", {"dung": True}, exchange_type="direct")
-        await _cho(lambda: DA_NHAN_DIRECT)
+        await _pending(lambda: DA_NHAN_DIRECT)
         await anyio.sleep(0.5)
     finally:
         await broker.shutdown()
@@ -371,7 +371,7 @@ async def test_exchange_mac_dinh_di_thang_vao_hang_doi(
     await broker.startup()
     try:
         await broker.publish("", THANG_QUEUE, {"id": "T1"})
-        await _cho(lambda: DA_NHAN_THANG)
+        await _pending(lambda: DA_NHAN_THANG)
     finally:
         await broker.shutdown()
 
@@ -382,53 +382,53 @@ async def test_exchange_mac_dinh_di_thang_vao_hang_doi(
 async def test_tin_qua_han_o_hang_doi_thi_roi_vao_dlq(mq_settings: Settings):
     """TTL chỉ có ý nghĩa khi KHÔNG ai đang nghe — có consumer thì tin được lấy
     ngay, chẳng bao giờ kịp hết hạn. Nên hàng đợi này cố ý không có consumer."""
-    ten = "test-ttl-hang-doi"
+    label = "test-ttl-hang-doi"
     broker = RabbitBroker(mq_settings)
     await broker.startup()
     try:
         channel = await broker.new_channel()
-        await broker.durable_queue(channel, ten, message_ttl=1, dead_letter=True)
-        await broker.publish("", ten, {"x": 1})
+        await broker.durable_queue(channel, label, message_ttl=1, dead_letter=True)
+        await broker.publish("", label, {"x": 1})
 
-        han = time.monotonic() + 10
-        while time.monotonic() < han:
-            dlq = await broker.queue_info(f"{ten}.dlq")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            dlq = await broker.queue_info(f"{label}.dlq")
             if dlq and dlq["messages"] >= 1:
                 break
             await anyio.sleep(0.2)
 
-        assert (await broker.queue_info(f"{ten}.dlq"))["messages"] >= 1, "hết hạn mà không vào .dlq"
-        assert (await broker.queue_info(ten))["messages"] == 0, "tin phải rời hàng đợi chính"
+        assert (await broker.queue_info(f"{label}.dlq"))["messages"] >= 1, "hết hạn mà không vào .dlq"
+        assert (await broker.queue_info(label))["messages"] == 0, "tin phải rời hàng đợi chính"
     finally:
-        await broker.delete_queue(ten)
-        await broker.delete_queue(f"{ten}.dlq")
+        await broker.delete_queue(label)
+        await broker.delete_queue(f"{label}.dlq")
         await broker.shutdown()
 
 
 async def test_ttl_dat_rieng_cho_mot_tin(mq_settings: Settings):
     """`publish(ttl=…)` đặt hạn cho RIÊNG tin đó, không đụng tới hàng đợi — nên
     đổi lúc nào cũng được, không dính PRECONDITION_FAILED như TTL của hàng đợi."""
-    ten = "test-ttl-mot-tin"
+    label = "test-ttl-mot-tin"
     broker = RabbitBroker(mq_settings)
     await broker.startup()
     try:
         channel = await broker.new_channel()
-        await broker.durable_queue(channel, ten, dead_letter=True)   # hàng đợi KHÔNG có TTL
-        await broker.publish("", ten, {"x": 1}, ttl=1)
-        await broker.publish("", ten, {"x": 2})                      # tin này ở lại
+        await broker.durable_queue(channel, label, dead_letter=True)   # hàng đợi KHÔNG có TTL
+        await broker.publish("", label, {"x": 1}, ttl=1)
+        await broker.publish("", label, {"x": 2})                      # tin này ở lại
 
-        han = time.monotonic() + 10
-        while time.monotonic() < han:
-            dlq = await broker.queue_info(f"{ten}.dlq")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            dlq = await broker.queue_info(f"{label}.dlq")
             if dlq and dlq["messages"] >= 1:
                 break
             await anyio.sleep(0.2)
 
-        assert (await broker.queue_info(f"{ten}.dlq"))["messages"] == 1
-        assert (await broker.queue_info(ten))["messages"] == 1, "tin không đặt hạn phải ở lại"
+        assert (await broker.queue_info(f"{label}.dlq"))["messages"] == 1
+        assert (await broker.queue_info(label))["messages"] == 1, "tin không đặt hạn phải ở lại"
     finally:
-        await broker.delete_queue(ten)
-        await broker.delete_queue(f"{ten}.dlq")
+        await broker.delete_queue(label)
+        await broker.delete_queue(f"{label}.dlq")
         await broker.shutdown()
 
 
@@ -450,7 +450,7 @@ DA_NHAN_SU_KIEN: list[dict] = []
 @injectable
 class DichVuTraLoi:
     @rabbitmq_responder("sum", queue=RPC_QUEUE, durable=False)
-    async def cong(self, data: list[int]) -> int:
+    async def gateway(self, data: list[int]) -> int:
         return sum(data)
 
     @rabbitmq_responder({"cmd": "info"}, queue=RPC_QUEUE, durable=False)
@@ -528,7 +528,7 @@ async def test_het_gio_thi_nem_504_va_khong_de_lai_rac(mq_client, mq_settings):
         with pytest.raises(RpcTimeoutError):
             await broker.send("cham", {}, queue=RPC_QUEUE, timeout=0.5)
         # Sổ chờ phải sạch, nếu không mỗi lời gọi hỏng để lại một chỗ vĩnh viễn.
-        assert len(broker._so_cho) == 0
+        assert len(broker._pending) == 0
     finally:
         await broker.shutdown()
 
@@ -540,8 +540,8 @@ async def test_emit_khong_cho_va_ket_qua_bi_bo(mq_client, mq_settings):
     await broker.startup()
     try:
         await broker.emit("ghi-nhan", {"tu": "test"}, queue=RPC_QUEUE)
-        han = time.monotonic() + 10
-        while time.monotonic() < han and not DA_NHAN_SU_KIEN:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not DA_NHAN_SU_KIEN:
             await anyio.sleep(0.1)
     finally:
         await broker.shutdown()
@@ -561,6 +561,6 @@ async def test_goi_nhieu_lan_khong_de_lai_cho_cho_nao(mq_client, mq_settings):
     try:
         for i in range(5):
             assert await broker.send("sum", [i, i], queue=RPC_QUEUE) == i * 2
-            assert len(broker._so_cho) == 0
+            assert len(broker._pending) == 0
     finally:
         await broker.shutdown()

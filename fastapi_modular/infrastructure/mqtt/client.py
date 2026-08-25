@@ -31,6 +31,15 @@ from fastapi_modular.core.config import Settings
 from fastapi_modular.core.container import injectable
 from fastapi_modular.core.exceptions import ComponentNotEnabledError, ServiceUnavailableError
 from fastapi_modular.core.logging import get_logger
+from fastapi_modular.core.rpc import (
+    DEFAULT_RPC_TIMEOUT,
+    PendingReplies,
+    decode,
+    event_packet,
+    normalize_pattern,
+    reply_topic_mqtt,
+    request_packet,
+)
 from fastapi_modular.infrastructure.mqtt.metrics import mqtt_publish_failed, mqtt_published
 from fastapi_modular.infrastructure.mqtt.patterns import narrow_filters, validate_topic
 
@@ -69,8 +78,8 @@ def safe_url(url: str) -> str:
     parsed = urlparse(url)
     if not parsed.password:
         return url
-    cong = f":{parsed.port}" if parsed.port else ""
-    return f"{parsed.scheme}://{parsed.username or ''}:***@{parsed.hostname}{cong}"
+    gateway = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{parsed.username or ''}:***@{parsed.hostname}{gateway}"
 
 
 @injectable
@@ -81,9 +90,12 @@ class MqttClient:
         self._task: asyncio.Task[None] | None = None
         self._closing = False
         self._connected = asyncio.Event()
-        self._dang_ky: dict[str, int] = {}          # topic -> qos
+        self._subscriptions: dict[str, int] = {}          # topic -> qos
         self._router: Callable[[Any], Awaitable[None]] | None = None
-        self._lan_dut = 0
+        self._routers: list[Callable[[Any], Awaitable[None]]] = []
+        self._drop_count = 0
+        self._pending = PendingReplies("MQTT")
+        self._reply_topics: set[str] = set()
 
     # ------------------------------------------------------------- vòng đời
     @property
@@ -109,9 +121,9 @@ class MqttClient:
         QoS 0 rồi lại đòi QoS 1 thì broker giao theo mức đã đăng ký, tin sẽ
         lặng lẽ mất khi mạng chớp.
         """
-        self._dang_ky[topic] = max(self._dang_ky.get(topic, 0), qos)
+        self._subscriptions[topic] = max(self._subscriptions.get(topic, 0), qos)
 
-    def _de_dang_ky(self) -> dict[str, int]:
+    def _to_subscribe(self) -> dict[str, int]:
         """Danh sách thật sự gửi lên broker: đã bỏ bộ lọc bị bộ lọc khác bao trọn.
 
         Đăng ký chồng nhau ("thiet-bi/#" và "thiet-bi/+/nhiet-do") thì broker
@@ -119,14 +131,36 @@ class MqttClient:
         sẽ chạy hai lượt. Đo trên mosquitto: gửi 1 tin, handler chạy 4 lượt.
         Đăng ký cái rộng nhất rồi tự chia tin trong tiến trình thì đúng một lượt.
         """
-        gon = narrow_filters(self._dang_ky)
-        if bo := sorted(set(self._dang_ky) - set(gon)):
-            log.debug("mqtt.subscription_gop", bo_qua=bo, giu=sorted(gon))
-        return gon
+        narrowed = narrow_filters(self._subscriptions)
+        if dropped := sorted(set(self._subscriptions) - set(narrowed)):
+            log.debug("mqtt.subscription_gop", skipped=dropped, kept=sorted(narrowed))
+        return narrowed
 
     def set_router(self, router: Callable[[Any], Awaitable[None]]) -> None:
         """Ai nhận tin về: `MqttRunner` cắm vào đây."""
         self._router = router
+        self.add_router(router)
+
+    def add_router(self, router: Callable[[Any], Awaitable[None]]) -> None:
+        """Thêm một bên nhận tin nữa.
+
+        MQTT chỉ có MỘT luồng tin về cho cả tiến trình, mà nay có ba bên cần
+        đọc nó: `@mqtt_subscriber`, `@mqtt_responder`, và chỗ nhận câu trả lời
+        cho `send()`. Ai không quan tâm tin nào thì tự bỏ qua.
+        """
+        if router not in self._routers:
+            self._routers.append(router)
+
+    async def _dispatch_to_routers(self, message: Any) -> None:
+        for router in list(self._routers):
+            try:
+                await router(message)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.exception(
+                    "mqtt.router_failed", error=f"{type(exc).__name__}: {exc}"
+                )
 
     async def startup(self) -> None:
         if not self._config.enabled:
@@ -145,7 +179,7 @@ class MqttClient:
             )
 
         self._closing = False
-        self._task = asyncio.create_task(self._vong_ket_noi(), name="mqtt-connection")
+        self._task = asyncio.create_task(self._connection_loop(), name="mqtt-connection")
 
         # Chờ một nhịp cho lần nối đầu, để log khởi động nói đúng trạng thái.
         with contextlib.suppress(*TimeoutErrors):
@@ -159,44 +193,43 @@ class MqttClient:
                 hint="app vẫn chạy; sẽ nối lại ngầm cho tới khi được",
             )
 
-    async def _vong_ket_noi(self) -> None:
+    async def _connection_loop(self) -> None:
         """Nối, đăng ký, đọc tới khi đứt, chờ rồi làm lại. Không bao giờ bỏ cuộc."""
         aiomqtt = _require_aiomqtt()
-        tham_so = parse_url(self._config.url)
-        tls = tham_so.pop("tls")
+        connect_kwargs = parse_url(self._config.url)
+        tls = connect_kwargs.pop("tls")
         delay = self._config.reconnect_delay_seconds
-        ma_so = self.client_id
+        identifier = self.client_id
 
         while not self._closing:
             try:
                 async with aiomqtt.Client(
-                    **tham_so,
-                    identifier=ma_so,
+                    **connect_kwargs,
+                    identifier=identifier,
                     keepalive=self._config.keepalive_seconds,
                     clean_session=self._config.clean_session,
                     tls_context=_tls_context() if tls else None,
                 ) as client:
                     self._client = client
-                    dang_ky = self._de_dang_ky()
-                    for topic, qos in sorted(dang_ky.items()):
+                    subscriptions = self._to_subscribe()
+                    for topic, qos in sorted(subscriptions.items()):
                         await client.subscribe(topic, qos=qos)
                     self._connected.set()
                     delay = self._config.reconnect_delay_seconds
                     log.info(
                         "mqtt.connected",
                         url=self.url,
-                        client_id=ma_so,
-                        topics=sorted(dang_ky),
+                        client_id=identifier,
+                        topics=sorted(subscriptions),
                     )
                     async for message in client.messages:
-                        if self._router is not None:
-                            await self._router(message)
+                        await self._dispatch_to_routers(message)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - đứt kiểu gì cũng nối lại
                 if self._closing:
                     return
-                self._lan_dut += 1
+                self._drop_count += 1
                 log.warning(
                     "mqtt.connection_lost",
                     url=self.url,
@@ -206,6 +239,10 @@ class MqttClient:
             finally:
                 self._connected.clear()
                 self._client = None
+                # Câu trả lời đang trên đường chắc chắn không tới nữa: đăng ký
+                # mất theo phiên. Đánh thức ngay thay vì để mỗi người đứng đủ
+                # `timeout` giây.
+                self._pending.fail_all("kết nối MQTT đứt")
 
             if self._closing:
                 return
@@ -274,15 +311,74 @@ class MqttClient:
         log.debug("mqtt.published", topic=topic, qos=qos, retain=retain)
         return True
 
+    # ------------------------------------------------- khuôn NestJS: emit / send
+    async def emit(self, pattern: Any, data: Any = None, *, qos: int = 1) -> bool:
+        """Bắn một SỰ KIỆN theo khuôn NestJS — tương đương `client.emit()`.
+
+        Topic chính là `pattern`, thân tin là gói `{"pattern", "data"}`.
+        """
+        topic_name = normalize_pattern(pattern)
+        return await self.publish(topic_name, event_packet(pattern, data), qos=qos)
+
+    async def send(
+        self, pattern: Any, data: Any = None, *, qos: int = 1, timeout: float | None = None
+    ) -> Any:
+        """Gửi YÊU CẦU rồi chờ trả lời — tương đương `client.send()`.
+
+        Topic trả lời là `<pattern>/reply`, đúng quy ước của `ClientMqtt`.
+
+        MQTT không đếm được người nghe, nên gọi một pattern không ai trả lời
+        chỉ có thể phát hiện bằng cách hết giờ — khác Redis, nơi biết ngay.
+        """
+        topic_name = normalize_pattern(pattern)
+        deadline = timeout or DEFAULT_RPC_TIMEOUT
+        await self._listen_for_replies(reply_topic_mqtt(topic_name), qos)
+
+        # Giữ chỗ TRƯỚC khi gửi: bên kia có thể trả lời xong trước khi lệnh gửi
+        # của ta kịp trả về.
+        correlation_id, waiter = self._pending.open()
+        try:
+            await self.publish(topic_name, request_packet(pattern, data, correlation_id), qos=qos)
+        except BaseException:
+            self._pending.deliver(correlation_id, None)
+            raise
+        return await self._pending.wait(correlation_id, waiter, deadline, target=topic_name)
+
+    async def _listen_for_replies(self, topic: str, qos: int) -> None:
+        """Đăng ký topic trả lời TRƯỚC khi gửi yêu cầu, và nhớ nó cho lần nối lại."""
+        if topic not in self._reply_topics:
+            self._reply_topics.add(topic)
+            # Ghi vào sổ đăng ký để lần nối lại sau vẫn có, chứ không chỉ
+            # subscribe một lần rồi mất khi rớt mạng.
+            self.subscribe_topic(topic, qos)
+            self.add_router(self._on_reply)
+        client = self._client
+        if client is not None:
+            await client.subscribe(topic, qos=qos)
+
+    async def _on_reply(self, message: Any) -> None:
+        topic = str(message.topic)
+        if topic not in self._reply_topics:
+            return
+        packet = decode(message.payload)
+        correlation_id = packet.get("id") if isinstance(packet, dict) else None
+        if not isinstance(correlation_id, str):
+            log.warning("mqtt.reply_without_id", topic=topic)
+            return
+        if not self._pending.deliver(correlation_id, packet):
+            # Topic trả lời dùng chung cho mọi người gọi cùng pattern (đúng quy
+            # ước NestJS), nên tin của người khác đi qua đây là bình thường.
+            log.debug("mqtt.reply_not_mine", correlation_id=correlation_id)
+
     def stats(self) -> dict[str, Any]:
         return {
             "enabled": self._config.enabled,
             "connected": self.connected,
             "url": self.url if self._config.enabled else None,
             "client_id": self._config.client_id or "(tự sinh)",
-            "topics": sorted(self._de_dang_ky()),
-            "listeners": sorted(self._dang_ky),
-            "disconnects": self._lan_dut,
+            "topics": sorted(self._to_subscribe()),
+            "listeners": sorted(self._subscriptions),
+            "disconnects": self._drop_count,
         }
 
 

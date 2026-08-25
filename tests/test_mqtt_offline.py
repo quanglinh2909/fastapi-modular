@@ -10,7 +10,9 @@ from fastapi_modular.core.exceptions import BadRequestError, ComponentNotEnabled
 from fastapi_modular.infrastructure.mqtt import (
     MqttClient,
     covers,
+    discover_mqtt_responders,
     matches,
+    mqtt_responder,
     mqtt_subscriber,
     narrow_filters,
 )
@@ -37,7 +39,7 @@ def test_app_van_chay_binh_thuong_khi_khong_co_mqtt(client):
 
 
 @pytest.mark.parametrize(
-    ("loc", "topic", "mong"),
+    ("filtered", "topic", "expected"),
     [
         ("nha/+/den", "nha/bep/den", True),
         ("nha/+/den", "nha/bep/tang2/den", False),   # + đúng MỘT tầng
@@ -49,8 +51,8 @@ def test_app_van_chay_binh_thuong_khi_khong_co_mqtt(client):
         ("a/b", "a/b/c", False),
     ],
 )
-def test_khop_topic(loc: str, topic: str, mong: bool):
-    assert matches(loc, topic) is mong
+def test_khop_topic(filtered: str, topic: str, expected: bool):
+    assert matches(filtered, topic) is expected
 
 
 @pytest.mark.parametrize("xau", ["nha/#/den", "nha#", "a/b+", ""])
@@ -103,4 +105,48 @@ def test_qos_sai_bi_tu_choi():
     with pytest.raises(ValueError, match="qos"):
 
         @mqtt_subscriber("a/b", qos=3)
-        async def sai(self, payload: dict) -> None: ...
+        async def bad(self, payload: dict) -> None: ...
+
+
+# -------------------------------------------------- @mqtt_responder (send)
+@injectable
+class MqttResponderMau:
+    @mqtt_responder("thiet-bi/dahua-01/trang-thai")
+    async def trang_thai(self, data: dict) -> dict:
+        return {"online": True}
+
+
+def test_responder_quet_duoc_va_dang_ky_topic():
+    patterns = {s.pattern for s in discover_mqtt_responders()}
+    assert "thiet-bi/dahua-01/trang-thai" in patterns
+
+
+def test_bo_loc_bi_tu_choi():
+    """Topic trả lời là `<pattern>/reply` — bộ lọc thì không nói được trả về đâu."""
+    for bad in ("thiet-bi/+/trang-thai", "thiet-bi/#"):
+        with pytest.raises(BadRequestError, match="bộ lọc"):
+
+            @mqtt_responder(bad)
+            async def sai(self, data) -> None: ...
+
+
+def test_qos_sai_bi_chan():
+    with pytest.raises(BadRequestError, match="qos"):
+
+        @mqtt_responder("a/b", qos=3)
+        async def sai(self, data) -> None: ...
+
+
+async def test_responder_dang_ky_topic_va_cam_router_vao_client():
+    """Runner phải chạy TRƯỚC client: danh sách topic gửi lên trong lần bắt tay đầu."""
+    from fastapi_modular.infrastructure.mqtt import MqttResponderRunner
+
+    settings = Settings(APP_MQTT=MqttSettings(enabled=True))
+    client = MqttClient(settings)
+    runner = MqttResponderRunner(client, settings)
+    await runner.startup()
+
+    # Chỉ soi phần của test này: các module test khác cũng đăng ký responder,
+    # và sổ đăng ký là toàn cục.
+    assert "thiet-bi/dahua-01/trang-thai" in client.stats()["topics"]
+    assert "thiet-bi/dahua-01/trang-thai" in runner.stats()["responders"]

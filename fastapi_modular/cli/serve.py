@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 
-def _chuan_bi_sys_path() -> None:
+def _prepare_sys_path() -> None:
     """Thêm thư mục hiện tại vào sys.path.
 
     Lệnh `uvicorn` tự làm việc này, nhưng khi gọi uvicorn từ trong một
@@ -23,10 +23,10 @@ def _chuan_bi_sys_path() -> None:
         sys.path.insert(0, cwd)
 
 
-def _thieu_app(target: str) -> int:
-    ten_module = target.split(":")[0]
+def _missing_app(target: str) -> int:
+    module_name = target.split(":")[0]
     print(
-        f"Không import được {ten_module!r} từ {Path.cwd()}.\n"
+        f"Không import được {module_name!r} từ {Path.cwd()}.\n"
         "Đứng ở thư mục gốc dự án (chỗ có app/), hoặc chỉ đường bằng --app.\n"
         "Chưa có dự án thì tạo bằng: fam init"
     )
@@ -35,7 +35,7 @@ def _thieu_app(target: str) -> int:
 
 def serve(*, target: str, reload: bool, workers: int | None, host: str | None,
           port: int | None) -> int:
-    _chuan_bi_sys_path()
+    _prepare_sys_path()
 
     import uvicorn
 
@@ -45,15 +45,15 @@ def serve(*, target: str, reload: bool, workers: int | None, host: str | None,
     host = host or settings.host
     port = port or settings.port
 
-    ten_module = target.split(":")[0]
-    goc = ten_module.split(".")[0]
-    if not (Path.cwd() / goc).exists() and not (Path.cwd() / f"{goc}.py").exists():
-        return _thieu_app(target)
+    module_name = target.split(":")[0]
+    root = module_name.split(".")[0]
+    if not (Path.cwd() / root).exists() and not (Path.cwd() / f"{root}.py").exists():
+        return _missing_app(target)
 
     if reload:
         # Chỉ theo dõi package ứng dụng: theo dõi cả cây thư mục sẽ khiến mỗi
         # lần ghi file .db hay .env cũng khởi động lại server.
-        uvicorn.run(target, host=host, port=port, reload=True, reload_dirs=[goc])
+        uvicorn.run(target, host=host, port=port, reload=True, reload_dirs=[root])
     else:
         uvicorn.run(target, host=host, port=port, workers=workers or 4)
     return 0

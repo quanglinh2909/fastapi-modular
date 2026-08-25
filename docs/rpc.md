@@ -15,9 +15,18 @@ chạy thật hai chiều với `@nestjs/microservices` 11.2.1 — xem [mục cu
 |---|---|
 | `client.emit(pattern, data)` | `await broker.emit(pattern, data, queue="…")` |
 | `await firstValueFrom(client.send(pattern, data))` | `await broker.send(pattern, data, queue="…")` |
-| `@EventPattern('x')` | `@rabbitmq_responder("x", queue="…")` — trả về gì cũng bị bỏ |
-| `@MessagePattern('x')` | `@rabbitmq_responder("x", queue="…")` — **giá trị trả về được gửi ngược** |
-| `@MessagePattern({ cmd: 'sum' })` | `@rabbitmq_responder({"cmd": "sum"}, queue="…")` |
+| `@EventPattern('x')` | `@<hạ tầng>_responder("x")` — trả về gì cũng bị bỏ |
+| `@MessagePattern('x')` | `@<hạ tầng>_responder("x")` — **giá trị trả về được gửi ngược** |
+| `@MessagePattern({ cmd: 'sum' })` | `@<hạ tầng>_responder({"cmd": "sum"})` |
+
+Đủ **bốn hạ tầng**, mỗi cái một cặp:
+
+| Hạ tầng | Gọi | Trả lời |
+|---|---|---|
+| RabbitMQ | `broker.emit/send(p, d, queue="…")` | `@rabbitmq_responder(p, queue="…")` |
+| Redis | `redis.emit/send(p, d)` | `@redis_responder(p)` |
+| MQTT | `mqtt.emit/send(p, d)` | `@mqtt_responder(p)` |
+| Kafka | `kafka.emit/send(p, d)` | `@kafka_responder(p, group="…")` |
 
 Một decorator lo cả hai, vì bên nhận không tự chọn được: **tin có `id` thì phải
 trả lời, không có `id` thì không**. Người GỬI quyết định điều đó bằng cách gọi
@@ -216,6 +225,108 @@ Cái giá của nó: hàng đợi giả gắn liền với **một kênh AMQP**,
 gửi trên đúng kênh đang nghe nó. Khung tự mở và giữ kênh riêng đó; bạn không
 phải làm gì. Kênh chết theo kết nối, nên khi rớt mạng thì mọi lời gọi đang chờ
 được **đánh thức ngay** thay vì phải đứng đủ `timeout` giây.
+
+---
+
+## Bốn hạ tầng khác nhau chỗ nào
+
+Khuôn gói tin giống nhau, nhưng **đường về** và **cái giá khi hỏng** thì khác
+hẳn. Bảng này là thứ đáng đọc nhất trang:
+
+| | RabbitMQ | Redis | MQTT | Kafka |
+|---|---|---|---|---|
+| Địa chỉ trả lời | `amq.rabbitmq.reply-to` (có sẵn) | kênh `<p>.reply` | topic `<p>/reply` | topic `<p>.reply` |
+| Mã đối chiếu đi đâu | thuộc tính AMQP | trong thân tin | trong thân tin | **header** |
+| Yêu cầu có được giữ lại | **có** — nằm trong hàng đợi | không, mất luôn | không, mất luôn | có — nằm trong nhật ký |
+| Gọi mà không ai trả lời | 502 kèm câu của NestJS | **503 ngay lập tức** | 504 sau khi hết giờ | 504 sau khi hết giờ |
+| Phải tạo gì trước | không | không | không | **topic `<p>.reply`** |
+| Nên dùng khi | mặc định, hầu hết trường hợp | nội bộ, siêu nhẹ | hỏi thiết bị đang online | gần như không bao giờ |
+
+**RabbitMQ là lựa chọn mặc định.** Nó là hạ tầng duy nhất trong bốn cái vừa giữ
+được yêu cầu khi bên trả lời đang chết, vừa có sẵn đường trả lời không để lại
+rác, vừa nói được "không có handler nào khớp" thay vì bắt đợi hết giờ.
+
+### Redis — biết ngay khi không ai nghe
+
+```python
+@redis_responder("tim-nguoi-dung")
+async def tim(self, data: dict) -> dict:
+    return {"id": data["id"], "ten": "An"}
+
+ket_qua = await self._redis.send("tim-nguoi-dung", {"id": 9})
+```
+
+Pub/sub **không lưu gì**: responder chưa khởi động thì yêu cầu bay mất. Đổi lại,
+Redis đếm được số người nghe, nên khung báo `ServiceUnavailableError` **ngay lập
+tức** thay vì bắt bạn đợi hết `timeout`:
+
+```
+Redis: không có ai đang nghe kênh 'tim-nguoi-dung' nên yêu cầu này mất luôn.
+```
+
+Đây là chỗ khung **làm tốt hơn NestJS**, vốn để người gọi đợi hết giờ rồi mới báo.
+
+`@redis_responder` không nhận ký tự đại diện (`gia.*`): kênh trả lời suy ra từ
+pattern, mà một mẫu thì không nói được phải trả về đâu. Cần nghe nhiều kênh mà
+không trả lời thì dùng [`@redis_subscriber`](redis.md).
+
+> `APP_REDIS__KEY_PREFIX` áp cho cả kênh RPC. Nói chuyện với NestJS thì để trống,
+> vì `ClientRedis` không biết tiền tố của bạn.
+
+### MQTT — hỏi trạng thái thiết bị
+
+```python
+@mqtt_responder("thiet-bi/dahua-01/trang-thai")
+async def trang_thai(self, data: dict) -> dict:
+    return {"online": True, "nhiet_do": 41.2}
+
+tin = await self._mqtt.send("thiet-bi/dahua-01/trang-thai", {})
+```
+
+`pattern` phải là topic **cụ thể**, không có `+` hay `#`, vì topic trả lời là
+`<pattern>/reply`.
+
+MQTT không đếm được người nghe, nên gọi một pattern không ai trả lời chỉ phát
+hiện được bằng cách hết giờ. Và thiết bị MQTT thường ở xa, mạng chập chờn —
+hợp để hỏi trạng thái một thiết bị đang online, không hợp với việc nào mà mất
+câu trả lời là hỏng nghiệp vụ.
+
+`MqttResponderRunner` phải khởi động **trước** `MqttClient`, giống `MqttRunner`:
+danh sách topic được gửi lên broker ngay trong lần bắt tay đầu tiên. `create_app`
+đã lo đúng thứ tự đó.
+
+### Kafka — dùng được, nhưng hãy cân nhắc
+
+```python
+@kafka_responder("tinh-diem", group="scoring")
+async def tinh(self, data: dict) -> int:
+    return data["a"] + data["b"]
+
+diem = await self._kafka.send("tinh-diem", {"a": 4, "b": 6})
+```
+
+Kafka là hạ tầng khác biệt nhất, và NestJS cũng đối xử với nó khác:
+
+- **Không có gói `{pattern, data, id}`.** Topic chính là pattern, `value` là data
+  thô, mã đối chiếu nằm ở header `kafka_correlationId`.
+- **Yêu cầu và sự kiện phân biệt bằng HEADER**, không phải bằng `id`: thiếu
+  `kafka_correlationId` hoặc `kafka_replyTopic` thì là sự kiện.
+- **Topic `<pattern>.reply` phải tồn tại trước.** Kafka không tự sinh chỗ chứa
+  như hàng đợi tạm của RabbitMQ; cụm không bật auto-create thì tạo tay:
+
+```bash
+kafka-topics.sh --create --topic tinh-diem.reply --partitions 1 --replication-factor 1
+```
+
+Khung **không** dùng consumer group cho phía nhận trả lời: nó gán phân vùng bằng
+tay rồi nhảy tới cuối. Vào group thì phải qua một vòng cân bằng lại (vài giây,
+có khi lâu hơn) trước khi đọc được tin nào — mà người gọi chỉ chờ vài giây. Nhờ
+gán tay, một lượt đi-về đo được khoảng **0,02–0,04s** trên cụm một node.
+
+Dù vậy: Kafka là **nhật ký để đọc lại**, không phải đường gọi hàm. Mỗi lần
+`send` để lại một bản ghi vĩnh viễn trong nhật ký ở cả hai topic, và
+`auto_offset_reset="earliest"` sẽ khiến responder khởi động lại đi trả lời cả
+những yêu cầu từ tuần trước. Cần gọi rồi chờ thì RabbitMQ gần như luôn đúng hơn.
 
 ---
 

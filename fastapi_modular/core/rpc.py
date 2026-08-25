@@ -138,16 +138,16 @@ def _to_route(pattern: Any, depth: int) -> str:
     if len(pattern) > _MAX_KEYS:
         return "[TOO_MANY_KEYS]"
 
-    phan = []
-    for khoa in sorted(pattern, key=lambda k: _collate(str(k))):
-        gia_tri = pattern[khoa]
-        ve_phai = (
-            f'"{_escape(_to_route(gia_tri, depth + 1))}"'
-            if isinstance(gia_tri, str)
-            else _to_route(gia_tri, depth + 1)
+    parts = []
+    for key in sorted(pattern, key=lambda k: _collate(str(k))):
+        value = pattern[key]
+        rendered = (
+            f'"{_escape(_to_route(value, depth + 1))}"'
+            if isinstance(value, str)
+            else _to_route(value, depth + 1)
         )
-        phan.append(f'"{_escape(str(khoa))}":{ve_phai}')
-    return "{" + ",".join(phan) + "}"
+        parts.append(f'"{_escape(str(key))}":{rendered}')
+    return "{" + ",".join(parts) + "}"
 
 
 def _escape(s: str) -> str:
@@ -169,14 +169,14 @@ _ICU_ASCII = (
 )
 
 #: ký tự -> (trọng số CHỮ, trọng số HOA/THƯỜNG). "a" và "A" cùng trọng số chữ.
-_TRONG_SO: dict[str, tuple[int, int]] = {}
+_WEIGHTS: dict[str, tuple[int, int]] = {}
 for _i, _ch in enumerate(_ICU_ASCII):
     if _ch.isalpha():
         # Cặp aA, bB... nằm liền nhau: cùng bậc chữ, khác bậc hoa/thường.
-        _bac = len(_ICU_ASCII) + (ord(_ch.lower()) - ord("a"))
-        _TRONG_SO[_ch] = (_bac, 1 if _ch.isupper() else 0)
+        _rank = len(_ICU_ASCII) + (ord(_ch.lower()) - ord("a"))
+        _WEIGHTS[_ch] = (_rank, 1 if _ch.isupper() else 0)
     else:
-        _TRONG_SO[_ch] = (_i, 0)
+        _WEIGHTS[_ch] = (_i, 0)
 del _i, _ch
 
 
@@ -192,18 +192,18 @@ def _collate(s: str) -> tuple[tuple[int, ...], tuple[int, ...]]:
     gần như luôn thuần ASCII; muốn khớp tuyệt đối cho mọi chữ Unicode thì phải
     kéo cả bảng đối chiếu ICU vào, cái giá không đáng cho phần được thêm.
     """
-    ngoai_bang = len(_ICU_ASCII) * 4
-    chu: list[int] = []
-    hoa: list[int] = []
+    off_table = len(_ICU_ASCII) * 4
+    letters: list[int] = []
+    case_weights: list[int] = []
     for ch in s:
-        bac = _TRONG_SO.get(ch)
-        if bac is None:
-            chu.append(ngoai_bang + ord(ch))
-            hoa.append(0)
+        weight = _WEIGHTS.get(ch)
+        if weight is None:
+            letters.append(off_table + ord(ch))
+            case_weights.append(0)
         else:
-            chu.append(bac[0])
-            hoa.append(bac[1])
-    return tuple(chu), tuple(hoa)
+            letters.append(weight[0])
+            case_weights.append(weight[1])
+    return tuple(letters), tuple(case_weights)
 
 
 # ------------------------------------------------------------------ gói tin
@@ -232,10 +232,10 @@ def read_packet(raw: Any) -> tuple[str, Any, str | None] | None:
     pattern = raw["pattern"]
     if not isinstance(pattern, (str, dict, int, float)):
         return None
-    ma = raw.get("id")
-    if ma is not None and not isinstance(ma, str):
+    correlation_id = raw.get("id")
+    if correlation_id is not None and not isinstance(correlation_id, str):
         return None
-    return normalize_pattern(pattern), raw["data"], ma
+    return normalize_pattern(pattern), raw["data"], correlation_id
 
 
 def ok_packet(correlation_id: str | None, data: Any) -> dict[str, Any]:
@@ -245,13 +245,13 @@ def ok_packet(correlation_id: str | None, data: Any) -> dict[str, Any]:
     `send()` ở `server/server.js` gộp cờ kết thúc vào gói dữ liệu cuối cùng
     thay vì gửi thêm một gói rỗng.
     """
-    goi: dict[str, Any] = {"response": data, "isDisposed": True}
+    packet: dict[str, Any] = {"response": data, "isDisposed": True}
     if correlation_id is not None:
-        goi["id"] = correlation_id
-    return goi
+        packet["id"] = correlation_id
+    return packet
 
 
-def error_packet(correlation_id: str | None, loi: BaseException | str) -> dict[str, Any]:
+def error_packet(correlation_id: str | None, error: BaseException | str) -> dict[str, Any]:
     """Gói trả lời lỗi.
 
     Gửi lỗi về chứ không im lặng: im lặng thì người gọi phải đợi hết `timeout`
@@ -261,17 +261,17 @@ def error_packet(correlation_id: str | None, loi: BaseException | str) -> dict[s
     Chỉ gửi thông điệp, KHÔNG gửi traceback — traceback thuộc về log của bên xử
     lý, không phải thứ để đẩy qua mạng cho bên gọi đọc.
     """
-    if isinstance(loi, str):
-        mo_ta = loi
+    if isinstance(error, str):
+        description = error
     else:
-        mo_ta = f"{type(loi).__name__}: {loi}" if str(loi) else type(loi).__name__
-    goi: dict[str, Any] = {"err": mo_ta, "isDisposed": True, "status": "error"}
+        description = f"{type(error).__name__}: {error}" if str(error) else type(error).__name__
+    packet: dict[str, Any] = {"err": description, "isDisposed": True, "status": "error"}
     if correlation_id is not None:
-        goi["id"] = correlation_id
-    return goi
+        packet["id"] = correlation_id
+    return packet
 
 
-def read_reply(raw: Any, *, nguon: str) -> Any:
+def read_reply(raw: Any, *, source: str) -> Any:
     """Mở gói trả lời. Ném RpcRemoteError nếu bên kia báo hỏng.
 
     Gói không mang khoá nào của NestJS (`err`/`response`/`isDisposed`) thì coi
@@ -284,11 +284,11 @@ def read_reply(raw: Any, *, nguon: str) -> Any:
     if not ({"err", "response", "isDisposed"} & set(raw)):
         return raw
     if raw.get("err"):
-        raise RpcRemoteError(f"'{nguon}' báo lỗi: {_mo_ta_loi(raw['err'])}")
+        raise RpcRemoteError(f"'{source}' báo lỗi: {_describe_error(raw['err'])}")
     return raw.get("response")
 
 
-def _mo_ta_loi(err: Any) -> str:
+def _describe_error(err: Any) -> str:
     """NestJS gửi `err` khi thì là chuỗi, khi thì là object.
 
     Handler ném `RpcException` thì `err` là nguyên đối tượng lỗi
@@ -297,12 +297,32 @@ def _mo_ta_loi(err: Any) -> str:
     trúc JSON vào mặt người đọc log, nên lấy phần đọc được nếu có.
     """
     if isinstance(err, dict):
-        for khoa in ("message", "error", "err"):
-            gia_tri = err.get(khoa)
-            if isinstance(gia_tri, str) and gia_tri:
-                return gia_tri
+        for key in ("message", "error", "err"):
+            value = err.get(key)
+            if isinstance(value, str) and value:
+                return value
         return json.dumps(err, ensure_ascii=False)
     return str(err)
+
+
+def reply_channel(pattern: str) -> str:
+    """Kênh trả lời của Redis và Kafka: `<pattern>.reply`.
+
+    Quy ước của NestJS (`ClientRedis.getReplyPattern`,
+    `ClientKafka.getResponsePatternName`). Kênh này dùng CHUNG cho mọi người
+    gọi cùng một pattern, nên ai cũng thấy câu trả lời của người khác và phải
+    tự lọc theo mã đối chiếu — đó là lý do `PendingReplies.deliver` trả về False
+    một cách bình thường thay vì coi đó là lỗi.
+    """
+    return f"{pattern}.reply"
+
+
+def reply_topic_mqtt(pattern: str) -> str:
+    """Topic trả lời của MQTT: `<pattern>/reply` (`ClientMqtt.getResponsePattern`).
+
+    Khác Redis/Kafka ở dấu ngăn, vì MQTT ngăn cấp bằng `/` chứ không phải `.`.
+    """
+    return f"{pattern}/reply"
 
 
 def encode(payload: Any) -> bytes:
@@ -333,14 +353,14 @@ class PendingReplies:
     `deliver()`; người đang treo ở `wait()` tỉnh dậy.
     """
 
-    __slots__ = ("_cho", "_ten")
+    __slots__ = ("_name", "_pending")
 
-    def __init__(self, ten: str) -> None:
-        self._ten = ten
-        self._cho: dict[str, asyncio.Future[Any]] = {}
+    def __init__(self, label: str) -> None:
+        self._name = label
+        self._pending: dict[str, asyncio.Future[Any]] = {}
 
     def __len__(self) -> int:
-        return len(self._cho)
+        return len(self._pending)
 
     def open(self) -> tuple[str, asyncio.Future[Any]]:
         """Giữ chỗ TRƯỚC khi gửi tin đi.
@@ -350,59 +370,59 @@ class PendingReplies:
         thua là câu trả lời rơi vào hư không, và triệu chứng thì trông hệt như
         "bên kia không trả lời".
         """
-        ma = new_correlation_id()
-        self._cho[ma] = asyncio.get_running_loop().create_future()
-        return ma, self._cho[ma]
+        correlation_id = new_correlation_id()
+        self._pending[correlation_id] = asyncio.get_running_loop().create_future()
+        return correlation_id, self._pending[correlation_id]
 
-    def deliver(self, ma: str, goi: Any) -> bool:
+    def deliver(self, correlation_id: str, packet: Any) -> bool:
         """Giao câu trả lời. False nếu không ai đợi mã này."""
-        future = self._cho.pop(ma, None)
+        future = self._pending.pop(correlation_id, None)
         if future is None or future.done():
             # Tới muộn sau khi người gọi đã bỏ cuộc, hoặc là câu trả lời dành
             # cho tiến trình khác (Kafka phát mọi câu trả lời cho mọi instance).
             return False
-        future.set_result(goi)
+        future.set_result(packet)
         return True
 
-    async def wait(self, ma: str, future: asyncio.Future[Any], timeout: float, *, dich: str) -> Any:
+    async def wait(self, correlation_id: str, future: asyncio.Future[Any], timeout: float, *, target: str) -> Any:
         """Treo tới khi có trả lời, hoặc ném RpcTimeoutError."""
         try:
-            goi = await asyncio.wait_for(future, timeout)
+            packet = await asyncio.wait_for(future, timeout)
         except (TimeoutError, asyncio.TimeoutError) as exc:
             raise RpcTimeoutError(
-                f"{self._ten}: chờ {timeout}s mà '{dich}' không trả lời. Bên kia có thể "
+                f"{self._name}: chờ {timeout}s mà '{target}' không trả lời. Bên kia có thể "
                 "đang chết, đang chậm, hoặc không có ai nghe địa chỉ này. Lưu ý: hết giờ "
                 "KHÔNG bảo đảm bên kia chưa làm gì."
             ) from exc
         finally:
             # Dọn cả khi hết giờ lẫn khi bị huỷ: sổ chờ không được phình lên
             # theo số lời gọi hỏng.
-            self._cho.pop(ma, None)
-        return read_reply(goi, nguon=dich)
+            self._pending.pop(correlation_id, None)
+        return read_reply(packet, source=target)
 
-    def fail_all(self, ly_do: str) -> None:
+    def fail_all(self, reason: str) -> None:
         """Đứt kết nối: đánh thức mọi người đang đợi thay vì để họ treo hết giờ.
 
         Không có bước này thì mỗi lần rớt mạng là một loạt lời gọi đứng đủ
         `timeout` giây — dù ta đã biết chắc câu trả lời không bao giờ tới.
         """
-        cho, self._cho = self._cho, {}
-        for future in cho.values():
+        waiter, self._pending = self._pending, {}
+        for future in waiter.values():
             if not future.done():
                 future.set_exception(
-                    RpcTimeoutError(f"{self._ten}: mất kết nối khi đang chờ trả lời ({ly_do})")
+                    RpcTimeoutError(f"{self._name}: mất kết nối khi đang chờ trả lời ({reason})")
                 )
 
     def cancel_all(self) -> None:
         """Tắt app: huỷ lặng lẽ, không dựng thêm lỗi cho ai phải đọc."""
-        cho, self._cho = self._cho, {}
-        for future in cho.values():
+        waiter, self._pending = self._pending, {}
+        for future in waiter.values():
             if not future.done():
                 future.cancel()
 
 
-async def send_reply(gui: Any, *, correlation_id: str | None, dia_chi: str, nhan: str,
-                     ket_qua: Any = None, loi: BaseException | str | None = None) -> None:
+async def send_reply(send: Any, *, correlation_id: str | None, address: str, handler: str,
+                     result: Any = None, error: BaseException | str | None = None) -> None:
     """Gửi câu trả lời về, và NUỐT mọi lỗi phát sinh khi gửi.
 
     `gui` là một coroutine function `(dia_chi, correlation_id, goi)`.
@@ -411,15 +431,15 @@ async def send_reply(gui: Any, *, correlation_id: str | None, dia_chi: str, nhan
     khiến hạ tầng coi như tin xử lý hỏng rồi **thử lại cả việc** — làm hai lần
     một việc chỉ vì đường về bị nghẽn.
     """
-    goi = error_packet(correlation_id, loi) if loi is not None else ok_packet(correlation_id, ket_qua)
+    packet = error_packet(correlation_id, error) if error is not None else ok_packet(correlation_id, result)
     try:
-        await gui(dia_chi, correlation_id, goi)
+        await send(address, correlation_id, packet)
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 - việc đã xong, đường về hỏng không đáng làm lại
         log.warning(
             "rpc.reply_failed",
-            handler=nhan,
-            reply_to=dia_chi,
+            handler=handler,
+            reply_to=address,
             error=f"{type(exc).__name__}: {exc}",
         )

@@ -11,6 +11,11 @@ Hai việc làm được: **gửi tin** (`KafkaBroker.publish`) và **đọc nh�
 
 ---
 
+
+> Cần gửi rồi **chờ trả lời**? Có `kafka.send()` và `@kafka_responder`, nhưng
+> đọc [docs/rpc.md](rpc.md) trước: Kafka là nhật ký để đọc lại, không phải
+> đường gọi hàm.
+
 ## Kafka khác RabbitMQ ở đâu
 
 Đây là thứ phải nắm trước khi viết dòng code nào, vì nó quyết định chọn cái nào:

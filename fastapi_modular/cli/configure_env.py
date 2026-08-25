@@ -38,14 +38,14 @@ from fastapi_modular.core.config import (
     WebSocketSettings,
 )
 
-RONG = 78
+EMPTY = 78
 
 
 def begin_marker(section: str) -> str:
     return f"# >>> {section} (sinh bởi fam env) >>>"
 
 
-def _moc_cu(section: str) -> str:
+def _previous_hook(section: str) -> str:
     """Mốc thời CLI còn là `make install-*`.
 
     Vẫn phải nhận ra, để `fam env` THAY đúng khối trong .env đã có thay vì ghi
@@ -60,13 +60,13 @@ def end_marker(section: str) -> str:
 
 
 @dataclass(frozen=True)
-class Bien:
+class EnvVar:
     """Một biến môi trường sẽ được ghi ra .env."""
 
     key: str
     value: str
-    mo_ta: str
-    bat_buoc: bool = False
+    description: str
+    required: bool = False
     """True = xoá dòng này đi thì app chạy SAI một cách im lặng.
 
     Không có nghĩa là "không có mặc định" — `APP_DB__DRIVER` có mặc định
@@ -76,32 +76,32 @@ class Bien:
 
 
 @dataclass(frozen=True)
-class Khoi:
+class Block:
     """Một khối cấu hình: thuộc mục nào, đọc mặc định từ model nào."""
 
     section: str
     model: type[BaseModel]
     prefix: str
-    items: list[Bien | str]
+    items: list[EnvVar | str]
     """Phần tử là chuỗi thì in ra làm tiêu đề nhóm."""
 
 
-def _mac_dinh(khoi: Khoi, key: str) -> str:
+def _default(block: Block, key: str) -> str:
     """Đọc giá trị mặc định từ model, để .env và code không bao giờ lệch nhau."""
-    ten_truong = key.removeprefix(khoi.prefix).lower()
-    field = khoi.model.model_fields.get(ten_truong)
+    field_name = key.removeprefix(block.prefix).lower()
+    field = block.model.model_fields.get(field_name)
     if field is None:
         raise KeyError(
-            f"{key} không còn tồn tại trong {khoi.model.__name__}. "
+            f"{key} không còn tồn tại trong {block.model.__name__}. "
             "Xoá nó khỏi fastapi_modular/cli/configure_env.py, hoặc thêm lại trường vào model."
         )
     default = field.default
-    if default is None and ten_truong == "dsn":
+    if default is None and field_name == "dsn":
         # DSN không có mặc định tĩnh: nó được suy ra từ driver lúc chạy. Lấy
         # đúng giá trị đó thay vì nói "(trống)" — người đọc cần biết app sẽ nối
         # vào đâu nếu họ xoá dòng này.
         driver = next(
-            (b.value for b in khoi.items if isinstance(b, Bien) and b.key.endswith("__DRIVER")),
+            (b.value for b in block.items if isinstance(b, EnvVar) and b.key.endswith("__DRIVER")),
             "memory",
         )
         return DatabaseSettings(driver=driver).resolved_dsn or "(trống)"
@@ -114,262 +114,262 @@ def _mac_dinh(khoi: Khoi, key: str) -> str:
     return str(default)
 
 
-def render(khoi: Khoi) -> str:
+def render(block: Block) -> str:
     """Dựng nội dung khối .env, mỗi biến kèm giải thích và mặc định."""
-    dong: list[str] = []
-    for item in khoi.items:
+    line: list[str] = []
+    for item in block.items:
         if isinstance(item, str):
-            dong.append("" if not item else f"# --- {item} ---")
+            line.append("" if not item else f"# --- {item} ---")
             continue
-        dong.extend(f"# {d}" for d in textwrap.wrap(item.mo_ta, RONG - 2))
-        if item.bat_buoc:
-            canh_bao = (
-                f"BẮT BUỘC — xoá dòng này thì app quay về {_mac_dinh(khoi, item.key)}, "
+        line.extend(f"# {d}" for d in textwrap.wrap(item.description, EMPTY - 2))
+        if item.required:
+            warn = (
+                f"BẮT BUỘC — xoá dòng này thì app quay về {_default(block, item.key)}, "
                 "gần như chắc chắn không phải thứ bạn muốn"
             )
-            dong.extend(f"# {d}" for d in textwrap.wrap(canh_bao, RONG - 2))
+            line.extend(f"# {d}" for d in textwrap.wrap(warn, EMPTY - 2))
         else:
-            dong.append(f"# tuỳ chọn · mặc định: {_mac_dinh(khoi, item.key)}")
-        dong.append(f"{item.key}={item.value}")
-    return "\n".join(dong)
+            line.append(f"# tuỳ chọn · mặc định: {_default(block, item.key)}")
+        line.append(f"{item.key}={item.value}")
+    return "\n".join(line)
 
 
 # --------------------------------------------------------------------- các khối
-BLOCKS: dict[str, Khoi] = {
-    "sqlite": Khoi(
+BLOCKS: dict[str, Block] = {
+    "sqlite": Block(
         "database",
         DatabaseSettings,
         "APP_DB__",
         [
-            Bien(
+            EnvVar(
                 "APP_DB__DRIVER",
                 "sqlite",
                 "Backend database đang dùng. Xoá dòng này thì app chạy bằng bộ nhớ tạm "
                 "và mất sạch dữ liệu mỗi lần restart.",
-                bat_buoc=True,
+                required=True,
             ),
-            Bien(
+            EnvVar(
                 "APP_DB__DSN",
                 "sqlite+aiosqlite:///./data/app.db",
                 "Đường dẫn file .db. Thư mục chứa nó phải tồn tại — lệnh này tự tạo ./data.",
             ),
-            Bien(
+            EnvVar(
                 "APP_DB__SCHEMA_MODE",
                 "create",
                 "Mức tự chỉnh schema lúc khởi động. off = không đụng gì (dùng cho "
                 "production kèm Alembic) | create = chỉ tạo bảng còn thiếu | "
                 "sync = thêm cột mới theo entity và báo cột thừa (chỉ dev).",
             ),
-            Bien(
+            EnvVar(
                 "APP_DB__DROP_COLUMNS",
                 "false",
                 "Cho phép sync XOÁ cột không còn trong entity. Xoá cột là mất dữ liệu.",
             ),
-            Bien("APP_DB__ECHO", "false", "In câu SQL ra log khi cần soi."),
+            EnvVar("APP_DB__ECHO", "false", "In câu SQL ra log khi cần soi."),
         ],
     ),
-    "postgres": Khoi(
+    "postgres": Block(
         "database",
         DatabaseSettings,
         "APP_DB__",
         [
-            Bien(
+            EnvVar(
                 "APP_DB__DRIVER",
                 "postgres",
                 "Backend database đang dùng. Xoá dòng này thì app chạy bằng bộ nhớ tạm "
                 "và mất sạch dữ liệu mỗi lần restart.",
-                bat_buoc=True,
+                required=True,
             ),
-            Bien(
+            EnvVar(
                 "APP_DB__DSN",
                 "postgresql+asyncpg://postgres:postgres@localhost:5432/app",
                 "Dạng postgresql+asyncpg://NGƯỜI_DÙNG:MẬT_KHẨU@HOST:CỔNG/TÊN_DB.",
-                bat_buoc=True,
+                required=True,
             ),
-            Bien(
+            EnvVar(
                 "APP_DB__SCHEMA_MODE",
                 "create",
                 "off | create | sync — xem docs/database.md.",
             ),
-            Bien(
+            EnvVar(
                 "APP_DB__DROP_COLUMNS",
                 "false",
                 "Cho phép sync XOÁ cột không còn trong entity. Xoá cột là mất dữ liệu.",
             ),
-            Bien("APP_DB__ECHO", "false", "In câu SQL ra log khi cần soi."),
+            EnvVar("APP_DB__ECHO", "false", "In câu SQL ra log khi cần soi."),
             "kết nối & phục hồi khi database rớt",
-            Bien(
+            EnvVar(
                 "APP_DB__POOL_PRE_PING",
                 "true",
                 "Thử connection còn sống trước khi giao cho request. Tắt đi thì mỗi "
                 "lần database restart sẽ có đúng một request lỗi.",
             ),
-            Bien(
+            EnvVar(
                 "APP_DB__POOL_SIZE",
                 "5",
                 "Trần connection = (POOL_SIZE + MAX_OVERFLOW) x số worker. Mặc định "
                 "15 mỗi worker; Postgres cho tối đa 100 nên trên 6 worker phải giảm.",
             ),
-            Bien("APP_DB__MAX_OVERFLOW", "10", "Số connection mượn thêm lúc cao điểm."),
-            Bien(
+            EnvVar("APP_DB__MAX_OVERFLOW", "10", "Số connection mượn thêm lúc cao điểm."),
+            EnvVar(
                 "APP_DB__POOL_RECYCLE_SECONDS",
                 "1800",
                 "Mở lại connection cũ hơn ngần này giây; proxy hay cắt kết nối nhàn rỗi.",
             ),
-            Bien("APP_DB__CONNECT_TIMEOUT_SECONDS", "10", "Chờ tối đa khi MỞ kết nối."),
-            Bien(
+            EnvVar("APP_DB__CONNECT_TIMEOUT_SECONDS", "10", "Chờ tối đa khi MỞ kết nối."),
+            EnvVar(
                 "APP_DB__QUERY_TIMEOUT_SECONDS",
                 "15",
                 "Chờ tối đa cho MỘT câu truy vấn đã gửi đi. Khác CONNECT_TIMEOUT: "
                 "database treo giữa chừng thì connection vẫn mở.",
             ),
-            Bien(
+            EnvVar(
                 "APP_DB__STARTUP_RETRIES",
                 "5",
                 "Thử lại mấy lần khi khởi động mà database chưa sẵn sàng.",
             ),
-            Bien("APP_DB__STARTUP_RETRY_DELAY_SECONDS", "1", "Chờ giữa các lần thử."),
+            EnvVar("APP_DB__STARTUP_RETRY_DELAY_SECONDS", "1", "Chờ giữa các lần thử."),
             "ngắt mạch khi database hỏng",
-            Bien(
+            EnvVar(
                 "APP_DB__CIRCUIT_BREAKER",
                 "true",
                 "Hỏng liên tiếp quá ngưỡng thì trả 503 ngay, không chạm database nữa.",
             ),
-            Bien("APP_DB__CIRCUIT_FAILURE_THRESHOLD", "5", "Số lần hỏng liên tiếp để ngắt."),
-            Bien("APP_DB__CIRCUIT_RESET_SECONDS", "10", "Bao lâu thì thử đóng mạch lại."),
+            EnvVar("APP_DB__CIRCUIT_FAILURE_THRESHOLD", "5", "Số lần hỏng liên tiếp để ngắt."),
+            EnvVar("APP_DB__CIRCUIT_RESET_SECONDS", "10", "Bao lâu thì thử đóng mạch lại."),
         ],
     ),
-    "mongodb": Khoi(
+    "mongodb": Block(
         "database",
         DatabaseSettings,
         "APP_DB__",
         [
-            Bien(
+            EnvVar(
                 "APP_DB__DRIVER",
                 "mongodb",
                 "Backend database đang dùng. Xoá dòng này thì app chạy bằng bộ nhớ tạm "
                 "và mất sạch dữ liệu mỗi lần restart.",
-                bat_buoc=True,
+                required=True,
             ),
-            Bien(
+            EnvVar(
                 "APP_DB__DSN",
                 "mongodb://localhost:27017",
                 "Dạng mongodb://HOST:CỔNG hoặc mongodb+srv://NGƯỜI_DÙNG:MẬT_KHẨU@CỤM.",
-                bat_buoc=True,
+                required=True,
             ),
-            Bien(
+            EnvVar(
                 "APP_DB__NAME",
                 "app",
                 "Tên database bên trong Mongo. Collection lấy theo tên entity.",
             ),
-            Bien(
+            EnvVar(
                 "APP_DB__CONNECT_TIMEOUT_SECONDS",
                 "10",
                 "Hạn chọn server. Mặc định của driver là 30s, quá lâu cho một request.",
             ),
-            Bien("APP_DB__QUERY_TIMEOUT_SECONDS", "15", "Hạn cho MỘT câu truy vấn."),
-            Bien("APP_DB__STARTUP_RETRIES", "5", "Thử lại khi khởi động mà database chưa lên."),
-            Bien("APP_DB__STARTUP_RETRY_DELAY_SECONDS", "1", "Chờ giữa các lần thử."),
+            EnvVar("APP_DB__QUERY_TIMEOUT_SECONDS", "15", "Hạn cho MỘT câu truy vấn."),
+            EnvVar("APP_DB__STARTUP_RETRIES", "5", "Thử lại khi khởi động mà database chưa lên."),
+            EnvVar("APP_DB__STARTUP_RETRY_DELAY_SECONDS", "1", "Chờ giữa các lần thử."),
             "ngắt mạch khi database hỏng",
-            Bien("APP_DB__CIRCUIT_BREAKER", "true", "Hỏng liên tiếp quá ngưỡng thì trả 503 ngay."),
-            Bien("APP_DB__CIRCUIT_FAILURE_THRESHOLD", "5", "Số lần hỏng liên tiếp để ngắt."),
-            Bien("APP_DB__CIRCUIT_RESET_SECONDS", "10", "Bao lâu thì thử đóng mạch lại."),
+            EnvVar("APP_DB__CIRCUIT_BREAKER", "true", "Hỏng liên tiếp quá ngưỡng thì trả 503 ngay."),
+            EnvVar("APP_DB__CIRCUIT_FAILURE_THRESHOLD", "5", "Số lần hỏng liên tiếp để ngắt."),
+            EnvVar("APP_DB__CIRCUIT_RESET_SECONDS", "10", "Bao lâu thì thử đóng mạch lại."),
         ],
     ),
-    "ws-redis": Khoi(
+    "ws-redis": Block(
         "websocket",
         WebSocketSettings,
         "APP_WS__",
         [
-            Bien(
+            EnvVar(
                 "APP_WS__ADAPTER",
                 "redis",
                 "Cách phát tin WebSocket xuyên worker. local = mỗi worker một sổ kết "
                 "nối riêng, chỉ đúng khi chạy MỘT worker. redis = mọi worker cùng nhận.",
             ),
-            Bien("APP_WS__REDIS_URL", "redis://localhost:6379/0", "Redis dùng làm kênh chung."),
-            Bien(
+            EnvVar("APP_WS__REDIS_URL", "redis://localhost:6379/0", "Redis dùng làm kênh chung."),
+            EnvVar(
                 "APP_WS__CHANNEL",
                 "ws:broadcast",
                 "Kênh pub/sub. Nhiều ứng dụng chung một Redis thì đặt tên khác nhau.",
             ),
             "giới hạn cho mỗi kết nối",
-            Bien(
+            EnvVar(
                 "APP_WS__SEND_QUEUE_SIZE",
                 "100",
                 "Trần số tin chờ gửi. Client đọc chậm mà vượt trần thì bị ngắt, thay vì "
                 "để hàng đợi phình tới lúc hết RAM.",
             ),
-            Bien(
+            EnvVar(
                 "APP_WS__OVERFLOW",
                 "close",
                 "Khi hàng đợi đầy: close = ngắt client chậm | drop_oldest = bỏ tin cũ "
                 "(hợp với dữ liệu chỉ cần bản mới nhất như vị trí, nhiệt độ).",
             ),
-            Bien(
+            EnvVar(
                 "APP_WS__HEARTBEAT_SECONDS",
                 "25",
                 "Chu kỳ server gửi ping. Để dưới 30s vì nhiều proxy cắt kết nối nhàn rỗi ~60s.",
             ),
-            Bien(
+            EnvVar(
                 "APP_WS__IDLE_TIMEOUT_SECONDS",
                 "70",
                 "Không nhận được khung nào trong ngần này giây thì đóng — cách duy nhất "
                 "phát hiện client đã chết mà TCP chưa biết.",
             ),
-            Bien("APP_WS__MAX_MESSAGE_BYTES", "65536", "Khung tin dài hơn bị từ chối."),
-            Bien("APP_WS__MAX_MESSAGES_PER_SECOND", "50", "Trần tần suất mỗi kết nối; 0 để tắt."),
-            Bien("APP_WS__MAX_CONNECTIONS", "5000", "Trần kết nối mỗi worker."),
-            Bien(
+            EnvVar("APP_WS__MAX_MESSAGE_BYTES", "65536", "Khung tin dài hơn bị từ chối."),
+            EnvVar("APP_WS__MAX_MESSAGES_PER_SECOND", "50", "Trần tần suất mỗi kết nối; 0 để tắt."),
+            EnvVar("APP_WS__MAX_CONNECTIONS", "5000", "Trần kết nối mỗi worker."),
+            EnvVar(
                 "APP_WS__MAX_CONNECTIONS_PER_USER",
                 "10",
                 "Trần kết nối đồng thời của một tài khoản; 0 để tắt.",
             ),
         ],
     ),
-    "redis": Khoi(
+    "redis": Block(
         "redis",
         RedisSettings,
         "APP_REDIS__",
         [
-            Bien(
+            EnvVar(
                 "APP_REDIS__ENABLED",
                 "true",
                 "Bật/tắt lớp Redis (cache, đếm, pub/sub). Đặt false thì phần còn lại "
                 "của app chạy bình thường, không cần gỡ thư viện hay sửa code. Không "
                 "liên quan tới APP_WS__ADAPTER — adapter WebSocket có cấu hình riêng.",
             ),
-            Bien(
+            EnvVar(
                 "APP_REDIS__URL",
                 "redis://localhost:6379/0",
                 "Dạng redis://[:MẬT_KHẨU@]HOST:CỔNG/SỐ_DB, hoặc rediss:// nếu có TLS.",
-                bat_buoc=True,
+                required=True,
             ),
-            Bien(
+            EnvVar(
                 "APP_REDIS__KEY_PREFIX",
                 "",
                 "Tiền tố ghép vào mọi khoá và mọi kênh. Nhiều ứng dụng dùng chung một "
                 "Redis thì đặt khác nhau để không ai ghi đè khoá của ai.",
             ),
             "thời gian chờ",
-            Bien(
+            EnvVar(
                 "APP_REDIS__CONNECT_TIMEOUT_SECONDS",
                 "5",
                 "Chờ mở kết nối. Hết giờ thì app vẫn chạy và nối lại ngầm.",
             ),
-            Bien(
+            EnvVar(
                 "APP_REDIS__COMMAND_TIMEOUT_SECONDS",
                 "5",
                 "Trần thời gian cho MỘT lệnh. Redis chậm còn tệ hơn Redis chết: không "
                 "có trần thì mọi request đang chờ cache sẽ treo theo.",
             ),
             "tự nối lại",
-            Bien(
+            EnvVar(
                 "APP_REDIS__RECONNECT_DELAY_SECONDS",
                 "1",
                 "Chờ trước lần thử lại đầu tiên; các lần sau tăng gấp đôi.",
             ),
-            Bien(
+            EnvVar(
                 "APP_REDIS__MAX_RECONNECT_DELAY_SECONDS",
                 "30",
                 "Trần thời gian chờ giữa hai lần thử. Có trần thì server hồi sinh sau "
@@ -377,50 +377,50 @@ BLOCKS: dict[str, Khoi] = {
             ),
         ],
     ),
-    "mqtt": Khoi(
+    "mqtt": Block(
         "mqtt",
         MqttSettings,
         "APP_MQTT__",
         [
-            Bien(
+            EnvVar(
                 "APP_MQTT__ENABLED",
                 "true",
                 "Bật/tắt lớp MQTT. Đặt false thì phần còn lại của app chạy bình thường.",
             ),
-            Bien(
+            EnvVar(
                 "APP_MQTT__URL",
                 "mqtt://localhost:1883",
                 "Dạng mqtt://[NGƯỜI_DÙNG:MẬT_KHẨU@]HOST:CỔNG, hoặc mqtts:// nếu có TLS.",
-                bat_buoc=True,
+                required=True,
             ),
             "phiên làm việc",
-            Bien(
+            EnvVar(
                 "APP_MQTT__CLIENT_ID",
                 "",
                 "Danh tính phiên trên broker. Để trống thì sinh ngẫu nhiên mỗi lần chạy. "
                 "Chạy nhiều worker thì mỗi worker phải một id khác nhau — trùng id là "
                 "hai bên đá nhau ra khỏi broker liên tục.",
             ),
-            Bien(
+            EnvVar(
                 "APP_MQTT__CLEAN_SESSION",
                 "true",
                 "false = broker GIỮ tin QoS>=1 lại trong lúc client ngắt và giao tiếp khi "
                 "nối lại; cần đi kèm CLIENT_ID cố định. true = mất tin trong lúc ngắt.",
             ),
-            Bien(
+            EnvVar(
                 "APP_MQTT__KEEPALIVE_SECONDS",
                 "30",
                 "Nhịp tim MQTT. Đây là thứ duy nhất phát hiện được cảnh rút cáp hay mất "
                 "điện, vì lúc đó không có gói ngắt kết nối nào được gửi đi.",
             ),
             "tự nối lại",
-            Bien("APP_MQTT__CONNECT_TIMEOUT_SECONDS", "10", "Chờ lần bắt tay đầu tiên."),
-            Bien(
+            EnvVar("APP_MQTT__CONNECT_TIMEOUT_SECONDS", "10", "Chờ lần bắt tay đầu tiên."),
+            EnvVar(
                 "APP_MQTT__RECONNECT_DELAY_SECONDS",
                 "1",
                 "Chờ trước lần thử lại đầu tiên; các lần sau tăng gấp đôi.",
             ),
-            Bien(
+            EnvVar(
                 "APP_MQTT__MAX_RECONNECT_DELAY_SECONDS",
                 "30",
                 "Trần thời gian chờ giữa hai lần thử. Có trần thì server hồi sinh sau "
@@ -428,44 +428,44 @@ BLOCKS: dict[str, Khoi] = {
             ),
         ],
     ),
-    "kafka": Khoi(
+    "kafka": Block(
         "kafka",
         KafkaSettings,
         "APP_KAFKA__",
         [
-            Bien(
+            EnvVar(
                 "APP_KAFKA__ENABLED",
                 "true",
                 "Bật/tắt lớp Kafka. Đặt false thì phần còn lại của app chạy bình thường.",
             ),
-            Bien(
+            EnvVar(
                 "APP_KAFKA__BOOTSTRAP_SERVERS",
                 "localhost:9092",
                 "Danh sách HOST:CỔNG ngăn bằng dấu phẩy. Chỉ cần vài broker để hỏi "
                 "đường; client tự tìm ra phần còn lại của cụm.",
-                bat_buoc=True,
+                required=True,
             ),
-            Bien(
+            EnvVar(
                 "APP_KAFKA__CLIENT_ID",
                 "fastapi_modular",
                 "Tên ứng dụng hiện trong log và số đo của cụm Kafka.",
             ),
-            Bien(
+            EnvVar(
                 "APP_KAFKA__ACKS",
                 "all",
                 "Bao nhiêu bản sao phải ghi xong mới coi là gửi thành công. "
                 "all = an toàn nhất (chậm hơn) | 1 = chỉ leader | 0 = bắn đi rồi thôi.",
             ),
             "thời gian chờ",
-            Bien("APP_KAFKA__REQUEST_TIMEOUT_SECONDS", "20", "Trần cho một lần gửi/nhận."),
-            Bien("APP_KAFKA__CONNECT_TIMEOUT_SECONDS", "10", "Chờ lần nối đầu tiên."),
+            EnvVar("APP_KAFKA__REQUEST_TIMEOUT_SECONDS", "20", "Trần cho một lần gửi/nhận."),
+            EnvVar("APP_KAFKA__CONNECT_TIMEOUT_SECONDS", "10", "Chờ lần nối đầu tiên."),
             "tự nối lại",
-            Bien(
+            EnvVar(
                 "APP_KAFKA__RECONNECT_DELAY_SECONDS",
                 "1",
                 "Chờ trước lần thử lại đầu tiên; các lần sau tăng gấp đôi.",
             ),
-            Bien(
+            EnvVar(
                 "APP_KAFKA__MAX_RECONNECT_DELAY_SECONDS",
                 "30",
                 "Trần thời gian chờ giữa hai lần thử. Có trần thì server hồi sinh sau "
@@ -473,47 +473,47 @@ BLOCKS: dict[str, Khoi] = {
             ),
         ],
     ),
-    "rabbitmq": Khoi(
+    "rabbitmq": Block(
         "rabbitmq",
         RabbitSettings,
         "APP_RABBITMQ__",
         [
-            Bien(
+            EnvVar(
                 "APP_RABBITMQ__ENABLED",
                 "true",
                 "Bật/tắt toàn bộ lớp RabbitMQ. Đặt false thì phần còn lại của app chạy "
                 "bình thường, không cần gỡ thư viện hay sửa code.",
             ),
-            Bien(
+            EnvVar(
                 "APP_RABBITMQ__URL",
                 "amqp://guest:guest@localhost:5672/",
                 "Dạng amqp://NGƯỜI_DÙNG:MẬT_KHẨU@HOST:CỔNG/VHOST. Đặt sai TÊN BIẾN thì "
                 "app dùng mặc định và báo lỗi localhost.",
-                bat_buoc=True,
+                required=True,
             ),
             "thời gian chờ",
-            Bien(
+            EnvVar(
                 "APP_RABBITMQ__PUBLISH_TIMEOUT_SECONDS",
                 "5",
                 "Chờ broker xác nhận một lần đăng tin. Đè từng lời gọi bằng "
                 "publish(..., timeout=...).",
             ),
-            Bien("APP_RABBITMQ__CONNECT_TIMEOUT_SECONDS", "10", "Chờ tối đa khi mở kết nối."),
-            Bien(
+            EnvVar("APP_RABBITMQ__CONNECT_TIMEOUT_SECONDS", "10", "Chờ tối đa khi mở kết nối."),
+            EnvVar(
                 "APP_RABBITMQ__HEARTBEAT_SECONDS",
                 "30",
                 "Nhịp tim AMQP. Mất mạng đột ngột không có gói FIN nào, đây là thứ duy "
                 "nhất phát hiện được; ngưỡng phát hiện khoảng 2 lần giá trị này.",
             ),
             "tự nối lại (luôn bật, không tắt được)",
-            Bien("APP_RABBITMQ__RECONNECT_DELAY_SECONDS", "2", "Chờ trước lần thử nối lại đầu."),
-            Bien(
+            EnvVar("APP_RABBITMQ__RECONNECT_DELAY_SECONDS", "2", "Chờ trước lần thử nối lại đầu."),
+            EnvVar(
                 "APP_RABBITMQ__MAX_RECONNECT_DELAY_SECONDS",
                 "30",
                 "Trần thời gian chờ; mỗi lần hỏng lại tăng gấp đôi cho tới mức này.",
             ),
             "",
-            (Bien.__doc__ and "") or "",
+            (EnvVar.__doc__ and "") or "",
         ],
     ),
 }
@@ -525,7 +525,7 @@ BLOCKS["rabbitmq"].items[:] = [i for i in BLOCKS["rabbitmq"].items if i != ""]
 def strip_managed_block(text: str, section: str = "database") -> str:
     end = end_marker(section)
     begin = next(
-        (m for m in (begin_marker(section), _moc_cu(section)) if m in text),
+        (m for m in (begin_marker(section), _previous_hook(section)) if m in text),
         begin_marker(section),
     )
     if begin not in text:
@@ -536,31 +536,31 @@ def strip_managed_block(text: str, section: str = "database") -> str:
 
 
 def main(driver: str, env_path: Path) -> int:
-    khoi = BLOCKS.get(driver)
-    if khoi is None:
+    block = BLOCKS.get(driver)
+    if block is None:
         print(f"Thành phần không hợp lệ: {driver}. Chọn một trong {sorted(BLOCKS)}.")
         return 1
 
-    begin, end = begin_marker(khoi.section), end_marker(khoi.section)
+    begin, end = begin_marker(block.section), end_marker(block.section)
     existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
     had_block = begin in existing
-    body = strip_managed_block(existing, khoi.section)
+    body = strip_managed_block(existing, block.section)
 
     # SQLite ghi thẳng ra file: thiếu thư mục là lần chạy đầu tiên chết ngay,
     # với một lỗi nói về "unable to open database file" chứ không nói thiếu gì.
     if driver == "sqlite":
         (env_path.parent / "data").mkdir(parents=True, exist_ok=True)
 
-    noi_dung = render(khoi)
-    parts = [p for p in (body, begin, noi_dung, end) if p]
+    content = render(block)
+    parts = [p for p in (body, begin, content, end) if p]
     env_path.write_text("\n".join(parts) + "\n", encoding="utf-8")
 
-    print(f"{'Đã thay' if had_block else 'Đã thêm'} khối {khoi.section} trong {env_path}:")
-    for item in khoi.items:
-        if isinstance(item, Bien):
-            mac = _mac_dinh(khoi, item.key)
-            ghi_chu = f"BẮT BUỘC, đừng xoá — mặc định là {mac}" if item.bat_buoc else f"tuỳ chọn, mặc định {mac}"
-            print(f"    {item.key}={item.value}   ({ghi_chu})")
+    print(f"{'Đã thay' if had_block else 'Đã thêm'} khối {block.section} trong {env_path}:")
+    for item in block.items:
+        if isinstance(item, EnvVar):
+            default_ = _default(block, item.key)
+            note = f"BẮT BUỘC, đừng xoá — mặc định là {default_}" if item.required else f"tuỳ chọn, mặc định {default_}"
+            print(f"    {item.key}={item.value}   ({note})")
     print("Sửa lại giá trị cho khớp máy bạn rồi chạy: fam dev")
     return 0
 

@@ -19,10 +19,10 @@ _INSTALL_HINT = {
 
 
 def _missing(driver: str, package: str) -> RuntimeError:
-    cach_cai = _INSTALL_HINT.get(driver, "pip install 'fastapi-modular[<driver>]'")
+    install_hint = _INSTALL_HINT.get(driver, "pip install 'fastapi-modular[<driver>]'")
     return RuntimeError(
         f"Driver database '{driver}' cần thư viện '{package}' nhưng chưa cài. "
-        f"Chạy: {cach_cai}"
+        f"Chạy: {install_hint}"
     )
 
 

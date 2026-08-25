@@ -22,10 +22,18 @@ from fastapi_modular.infrastructure.redis.pubsub import (
     discover_redis_subscribers,
     redis_subscriber,
 )
+from fastapi_modular.infrastructure.redis.responders import (
+    RedisResponderRunner,
+    discover_redis_responders,
+    redis_responder,
+)
 
 __all__ = [
     "RedisClient",
+    "RedisResponderRunner",
     "RedisRunner",
+    "discover_redis_responders",
     "discover_redis_subscribers",
+    "redis_responder",
     "redis_subscriber",
 ]

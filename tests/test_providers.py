@@ -32,7 +32,7 @@ class PaymentGateway(ABC):
 
 class HoanTien(ABC):
     @abstractmethod
-    async def hoan_tien(self, ma: str) -> bool: ...
+    async def hoan_tien(self, correlation_id: str) -> bool: ...
 
 
 @provider("vnpay")
@@ -40,7 +40,7 @@ class VNPayProvider(PaymentGateway, HoanTien):
     async def tao_giao_dich(self, so_tien: int) -> str:
         return f"vnpay:{so_tien}"
 
-    async def hoan_tien(self, ma: str) -> bool:
+    async def hoan_tien(self, correlation_id: str) -> bool:
         return True
 
 
@@ -72,21 +72,21 @@ def test_get_tra_ve_dung_provider(co_ban: Providers[PaymentGateway]):
 
 
 def test_ten_khong_co_thi_404_va_liet_ke_cai_dang_co(co_ban: Providers[PaymentGateway]):
-    with pytest.raises(ProviderNotFoundError) as loi:
+    with pytest.raises(ProviderNotFoundError) as error:
         co_ban.get("zalopay")
-    assert loi.value.status_code == 404
+    assert error.value.status_code == 404
     # Thông báo phải chỉ ra đang có gì, nếu không người dùng phải đi mò.
-    assert "momo" in str(loi.value) and "vnpay" in str(loi.value)
+    assert "momo" in str(error.value) and "vnpay" in str(error.value)
 
 
 def test_thieu_nang_luc_thi_501_chu_khong_phai_500(hoan: Providers[HoanTien]):
     """Momo có thật, chỉ là không hoàn tiền được — đó không phải bug của server."""
-    with pytest.raises(CapabilityNotSupportedError) as loi:
+    with pytest.raises(CapabilityNotSupportedError) as error:
         hoan.get("momo")
-    assert loi.value.status_code == 501
-    assert "HoanTien" in str(loi.value)
+    assert error.value.status_code == 501
+    assert "HoanTien" in str(error.value)
     # Nói luôn nó làm được gì, để người đọc biết phải đổi sang đâu.
-    assert "PaymentGateway" in str(loi.value)
+    assert "PaymentGateway" in str(error.value)
 
 
 def test_names_chi_liet_ke_provider_lam_duoc_viec_cua_so(
@@ -157,8 +157,8 @@ class ProviderCanSettings(CoPhuThuoc):
 
 def test_provider_nhan_duoc_phu_thuoc_qua_container():
     container.override(Settings, Settings(APP_NAME="thu-nghiem", APP_DB=DatabaseSettings()))
-    so = Providers("cfg", CoPhuThuoc, {"can-settings": ProviderCanSettings})
-    assert so.get("can-settings").ten_app() == "thu-nghiem"
+    count = Providers("cfg", CoPhuThuoc, {"can-settings": ProviderCanSettings})
+    assert count.get("can-settings").ten_app() == "thu-nghiem"
 
 
 def test_provider_la_singleton_theo_mac_dinh(co_ban: Providers[PaymentGateway]):
@@ -173,12 +173,12 @@ class ProviderTheoRequest(CoPhuThuoc):
 
 @pytest.mark.asyncio
 async def test_scope_request_duoc_ton_trong():
-    so = Providers("cfg", CoPhuThuoc, {"theo-request": ProviderTheoRequest})
+    count = Providers("cfg", CoPhuThuoc, {"theo-request": ProviderTheoRequest})
     async with request_scope():
-        a, b = so.get("theo-request"), so.get("theo-request")
+        a, b = count.get("theo-request"), count.get("theo-request")
         assert a is b
     async with request_scope():
-        assert so.get("theo-request") is not a
+        assert count.get("theo-request") is not a
 
 
 def test_service_nhan_duoc_so_qua_annotation_Providers():
@@ -190,10 +190,10 @@ def test_service_nhan_duoc_so_qua_annotation_Providers():
         def __init__(self, payments: Providers[PaymentGateway]) -> None:
             self._payments = payments
 
-        def cong(self, ten: str):
-            return self._payments.get(ten)
+        def gateway(self, label: str):
+            return self._payments.get(label)
 
-    assert isinstance(container.resolve(DonHangService).cong("vnpay"), VNPayProvider)
+    assert isinstance(container.resolve(DonHangService).gateway("vnpay"), VNPayProvider)
 
 
 def test_quen_goi_register_providers_thi_bao_dung_nguyen_nhan():
@@ -201,10 +201,10 @@ def test_quen_goi_register_providers_thi_bao_dung_nguyen_nhan():
 
     Câu "thiếu @injectable" mặc định dẫn người đọc đi sai hướng.
     """
-    with pytest.raises(RuntimeError) as loi:
+    with pytest.raises(RuntimeError) as error:
         container.resolve("Providers", ("ChuaTungCo",))
-    assert "register_providers()" in str(loi.value)
-    assert "@injectable" not in str(loi.value)
+    assert "register_providers()" in str(error.value)
+    assert "@injectable" not in str(error.value)
 
 
 # ------------------------------------------------------- quét thư mục thật
@@ -262,22 +262,22 @@ def _du_an_mau(root: Path) -> None:
 
 
 def _don_sys_modules() -> None:
-    for ten in [m for m in sys.modules if m.startswith("providers_thu")]:
-        del sys.modules[ten]
+    for label in [m for m in sys.modules if m.startswith("providers_thu")]:
+        del sys.modules[label]
 
 
 def test_register_providers_dung_mot_so_cho_moi_nang_luc(tmp_path: Path):
     _du_an_mau(tmp_path)
     sys.path.insert(0, str(tmp_path))
     try:
-        so = register_providers("providers_thu")
-        assert sorted(so) == ["GuiHangLoat", "GuiSms"]
-        assert so["GuiSms"].names() == ["viettel", "vina"]
-        assert so["GuiHangLoat"].names() == ["viettel"]      # vina không gửi hàng loạt
+        count = register_providers("providers_thu")
+        assert sorted(count) == ["GuiHangLoat", "GuiSms"]
+        assert count["GuiSms"].names() == ["viettel", "vina"]
+        assert count["GuiHangLoat"].names() == ["viettel"]      # vina không gửi hàng loạt
 
         # Đúng đường đi mà service dùng.
-        assert container.resolve("Providers", ("GuiSms",)) is so["GuiSms"]
-        assert so["GuiSms"].family == "sms"
+        assert container.resolve("Providers", ("GuiSms",)) is count["GuiSms"]
+        assert count["GuiSms"].family == "sms"
     finally:
         sys.path.remove(str(tmp_path))
         _don_sys_modules()
@@ -317,24 +317,24 @@ def test_hai_ho_dung_chung_mot_ten_class_van_song_hoa_binh():
 
     class GuiTin(ABC):
         @abstractmethod
-        def gui(self) -> str: ...
+        def send(self) -> str: ...
 
     @provider("oryza")
     class OryzaProvider(GuiTin):
-        def gui(self) -> str:
+        def send(self) -> str:
             return "thiet-bi"
 
     ho_a = Providers("device", GuiTin, {"oryza": OryzaProvider})
 
     @provider("oryza")
     class OryzaProvider(GuiTin):
-        def gui(self) -> str:
+        def send(self) -> str:
             return "thong-bao"
 
     ho_b = Providers("notification", GuiTin, {"oryza": OryzaProvider})
 
-    assert ho_a.get("oryza").gui() == "thiet-bi"
-    assert ho_b.get("oryza").gui() == "thong-bao"
+    assert ho_a.get("oryza").send() == "thiet-bi"
+    assert ho_b.get("oryza").send() == "thong-bao"
 
 
 def test_provider_khong_lam_ban_so_dang_ky_toan_cuc():
@@ -348,9 +348,9 @@ def test_provider_khong_lam_ban_so_dang_ky_toan_cuc():
 def test_fam_provider_sinh_ho_moi_roi_them_provider(tmp_path: Path):
     from fastapi_modular.cli.new_provider import main as sinh
 
-    goc = tmp_path / "src" / "providers"
-    assert sinh(["payment", "vnpay", "--root", str(goc)]) == 0
-    ho = goc / "payment"
+    root = tmp_path / "src" / "providers"
+    assert sinh(["payment", "vnpay", "--root", str(root)]) == 0
+    ho = root / "payment"
     assert (ho / "__init__.py").exists()
     assert (ho / "capabilities.py").exists()
 
@@ -371,7 +371,7 @@ def test_fam_provider_sinh_ho_moi_roi_them_provider(tmp_path: Path):
         "    async def hoan_tien(self, ma: str) -> bool: ...\n",
         encoding="utf-8",
     )
-    assert sinh(["payment", "momo", "--root", str(goc)]) == 0
+    assert sinh(["payment", "momo", "--root", str(root)]) == 0
     momo = (ho / "momo.py").read_text(encoding="utf-8")
     assert "class MomoPayment(PaymentBasic, HoanTien)" in momo
     assert "async def hoan_tien(self, ma: str) -> bool:" in momo
@@ -380,9 +380,9 @@ def test_fam_provider_sinh_ho_moi_roi_them_provider(tmp_path: Path):
 def test_fam_provider_khong_ghi_de_file_da_co(tmp_path: Path):
     from fastapi_modular.cli.new_provider import main as sinh
 
-    goc = tmp_path / "providers"
-    assert sinh(["sms", "viettel", "--root", str(goc)]) == 0
-    assert sinh(["sms", "viettel", "--root", str(goc)]) == 1  # lần hai bị chặn
+    root = tmp_path / "providers"
+    assert sinh(["sms", "viettel", "--root", str(root)]) == 0
+    assert sinh(["sms", "viettel", "--root", str(root)]) == 1  # lần hai bị chặn
 
 
 def test_fam_provider_chan_ten_khong_hop_le(tmp_path: Path):
@@ -420,13 +420,13 @@ def test_nang_luc_de_phang_trong_thu_muc_ho(tmp_path: Path):
 
     sys.path.insert(0, str(tmp_path))
     try:
-        so = register_providers("prov_phang")
-        assert sorted(so) == ["DoorManagement"]
-        assert so["DoorManagement"].names() == ["hik"]
+        count = register_providers("prov_phang")
+        assert sorted(count) == ["DoorManagement"]
+        assert count["DoorManagement"].names() == ["hik"]
     finally:
         sys.path.remove(str(tmp_path))
-        for ten in [m for m in sys.modules if m.startswith("prov_phang")]:
-            del sys.modules[ten]
+        for label in [m for m in sys.modules if m.startswith("prov_phang")]:
+            del sys.modules[label]
 
 
 def test_tach_capabilities_thanh_package_van_quet_duoc(tmp_path: Path):
@@ -435,11 +435,11 @@ def test_tach_capabilities_thanh_package_van_quet_duoc(tmp_path: Path):
     Và re-export ở `capabilities/__init__.py` KHÔNG được làm năng lực bị đếm
     hai lần: chỉ class định nghĩa ở một module mới được tính.
     """
-    goi = tmp_path / "prov_tach"
-    caps = goi / "device" / "capabilities"
+    packet = tmp_path / "prov_tach"
+    caps = packet / "device" / "capabilities"
     caps.mkdir(parents=True)
-    (goi / "__init__.py").write_text("", encoding="utf-8")
-    (goi / "device" / "__init__.py").write_text('"""Họ device."""\n', encoding="utf-8")
+    (packet / "__init__.py").write_text("", encoding="utf-8")
+    (packet / "device" / "__init__.py").write_text('"""Họ device."""\n', encoding="utf-8")
     (caps / "door.py").write_text(
         "from abc import ABC, abstractmethod\n\n"
         "class DoorManagement(ABC):\n"
@@ -461,7 +461,7 @@ def test_tach_capabilities_thanh_package_van_quet_duoc(tmp_path: Path):
         '__all__ = ["CameraManagement", "DoorManagement"]\n',
         encoding="utf-8",
     )
-    (goi / "device" / "hik.py").write_text(
+    (packet / "device" / "hik.py").write_text(
         "from fastapi_modular import provider\n"
         "from prov_tach.device.capabilities import CameraManagement\n\n"
         '@provider("hik")\n'
@@ -472,11 +472,11 @@ def test_tach_capabilities_thanh_package_van_quet_duoc(tmp_path: Path):
 
     sys.path.insert(0, str(tmp_path))
     try:
-        so = register_providers("prov_tach")
-        assert sorted(so) == ["CameraManagement", "DoorManagement"]
-        assert so["CameraManagement"].names() == ["hik"]
-        assert so["DoorManagement"].names() == []      # hik không mở cửa được
+        count = register_providers("prov_tach")
+        assert sorted(count) == ["CameraManagement", "DoorManagement"]
+        assert count["CameraManagement"].names() == ["hik"]
+        assert count["DoorManagement"].names() == []      # hik không mở cửa được
     finally:
         sys.path.remove(str(tmp_path))
-        for ten in [m for m in sys.modules if m.startswith("prov_tach")]:
-            del sys.modules[ten]
+        for label in [m for m in sys.modules if m.startswith("prov_tach")]:
+            del sys.modules[label]

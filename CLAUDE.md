@@ -67,7 +67,7 @@ link trong `docs/*.md` thì cứ để tương đối.
 ## Kiểm chứng trước khi nói là xong
 
 ```bash
-pytest -q                       # 556 passed, 52 skipped (52 skip cần hạ tầng thật)
+pytest -q                       # 568 passed, 62 skipped (62 skip cần hạ tầng thật)
 fam lint fastapi_modular src tests    # `fam lint` trần chỉ soi `src`, thiếu thư viện và test
 ```
 
@@ -108,5 +108,37 @@ Hai điều đã cắn một lần:
 
 ## Ngôn ngữ
 
-Tài liệu, comment, docstring và commit message viết **tiếng Việt**. API công khai
-(tên hàm, tên lớp, tên biến `APP_*`) viết **tiếng Anh**. Giữ đúng quy ước này.
+**Chữ nghĩa** — tài liệu, comment, docstring, commit message, thông báo lỗi cho
+người dùng: **tiếng Việt**.
+
+**Mọi định danh trong code — tiếng Anh, không trừ cái nào.** Tên hàm, tên lớp,
+tên biến (kể cả biến cục bộ và hàm `_private`), tên tham số, tên file `.py`,
+khoá dict dùng như trường dữ liệu, `dest=` của argparse. Không có ngoại lệ cho
+"chỉ dùng nội bộ".
+
+```python
+# ĐÚNG
+async def _dispatch(self, message: Any) -> None:
+    """Giao tin cho handler khớp pattern."""
+    reply_topic = ...
+
+# SAI — tên tiếng Việt, dù comment đúng
+async def _giao(self, message: Any) -> None:
+    topic_tra_loi = ...
+```
+
+Nếu phải đổi tên hàng loạt, **đừng dùng `sed`**: nó sửa cả chữ trong comment và
+trong chuỗi. Đổi bằng `tokenize` (chỉ đụng token `NAME`) rồi soi tay bốn chỗ mà
+tokenizer KHÔNG với tới, vì ở đó tên nằm trong chuỗi:
+
+| Chỗ | Ví dụ |
+|---|---|
+| `__slots__`, `__all__` | `__slots__ = ("_pending", "_name")` |
+| `@pytest.mark.parametrize` | `parametrize("raw,expected", ...)` |
+| argparse | `add_argument("ten")` -> `args.ten`; `dest="lenh"` |
+| placeholder trong template | `"{ten}".format(...)`, `@get("/x/{ma}")` |
+
+Và soi lại **nghĩa** của tên mới, đừng tin bảng tra. Lần đổi vừa rồi từng biến
+`rong` (rộng) thành `empty`, `tang` (tầng) thành `increase`, và `ma` (mã đơn)
+thành `correlation_id` trong một model dữ liệu — code vẫn chạy nhưng tên sai
+nghĩa, tệ hơn tên tiếng Việt cũ.

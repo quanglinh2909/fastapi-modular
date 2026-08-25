@@ -17,7 +17,7 @@ DA_NHAN: list[dict] = []
 
 
 class NhietDo(BaseModel):
-    gia_tri: float
+    value: float
     don_vi: str = "C"
 
 
@@ -28,8 +28,8 @@ class ThietBiListener:
         """`+` là ĐÚNG MỘT TẦNG: khớp thiet-bi/bep/nhiet-do, không khớp
         thiet-bi/tang2/bep/nhiet-do."""
         ma_thiet_bi = meta["topic"].split("/")[1]
-        log.info("mqtt.nhiet_do", thiet_bi=ma_thiet_bi, gia_tri=payload.gia_tri)
-        _ghi({"topic": meta["topic"], "gia_tri": payload.gia_tri, "qos": meta["qos"],
+        log.info("mqtt.nhiet_do", thiet_bi=ma_thiet_bi, value=payload.value)
+        _write({"topic": meta["topic"], "value": payload.value, "qos": meta["qos"],
               "retain": meta["retain"], "handler": "nhiet_do"})
 
     @mqtt_subscriber("thiet-bi/#", qos=0)
@@ -37,9 +37,9 @@ class ThietBiListener:
         """`#` nuốt mọi tầng còn lại. Hai handler cùng khớp một tin thì CẢ HAI
         đều chạy — tiện để vừa xử lý vừa soi, nhưng đừng vô tình làm việc gì
         hai lần."""
-        _ghi({"topic": meta["topic"], "payload": payload, "handler": "moi_thu"})
+        _write({"topic": meta["topic"], "payload": payload, "handler": "moi_thu"})
 
 
-def _ghi(muc: dict) -> None:
+def _write(muc: dict) -> None:
     DA_NHAN.append(muc)
     del DA_NHAN[:-40]

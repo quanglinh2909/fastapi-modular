@@ -206,8 +206,8 @@ def _collect_handlers(cls: type) -> dict[str, _Handler]:
         # Cùng một class mà hai method cùng đăng ký một sự kiện là lỗi gõ nhầm.
         # Còn lớp con đăng ký đè sự kiện của lớp cha là CHỦ Ý — đó là cách ghi
         # đè hành vi mặc định của một mixin.
-        da_co = owners.get(event)
-        if da_co is klass:
+        existing = owners.get(event)
+        if existing is klass:
             raise RuntimeError(f"{klass.__name__} đăng ký trùng sự kiện '{event}'")
         owners[event] = klass
         handlers[event] = _Handler(event, fn, model, wants_payload)

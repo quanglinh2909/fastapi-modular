@@ -17,7 +17,7 @@ class KafkaTestController:
         self._kafka = kafka
 
     @post("/gui", summary="Gửi một đơn hàng — key quyết định phân vùng")
-    async def gui(self, don: DonHang) -> dict[str, object]:
+    async def send(self, don: DonHang) -> dict[str, object]:
         # key=ma_don: mọi tin của cùng một đơn rơi vào cùng phân vùng, nên
         # chúng được xử lý đúng thứ tự. Không có key thì thứ tự không bảo đảm.
         await self._kafka.publish(TOPIC, don.model_dump(), key=don.ma_don)
@@ -29,7 +29,7 @@ class KafkaTestController:
         return {
             "topic": TOPIC,
             "key": don.ma_don,
-            "du_kien": di_dau.get(don.kieu, "payload sai khuôn -> .dlt ngay"),
+            "du_kien": di_dau.get(don.kind, "payload sai khuôn -> .dlt ngay"),
         }
 
     @get("/da-nhan", summary="Hai nhóm đã đọc được gì")
