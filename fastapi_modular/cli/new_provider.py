@@ -100,6 +100,10 @@ class {nang_luc}(ABC):
 # class {pascal(family)}Advanced(ABC):
 #     @abstractmethod
 #     async def lam_viec_kho(self, tham_so: str) -> str: ...
+#
+# Từ 3 năng lực trở lên thì tách file này thành package `capabilities/`, mỗi
+# năng lực một file, rồi re-export ở `capabilities/__init__.py`. Đường import
+# giữ nguyên nên không phải sửa provider nào — xem docs/providers.md.
 '''
     return {"__init__.py": init, "capabilities.py": caps}
 

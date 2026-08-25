@@ -391,3 +391,55 @@ def test_fam_provider_chan_ten_khong_hop_le(tmp_path: Path):
     # "Payment" được hạ chữ thường thành "payment" — cố ý, cho dễ gõ.
     assert sinh(["payment", "VN Pay", "--root", str(tmp_path)]) == 1
     assert sinh(["1payment", "vnpay", "--root", str(tmp_path)]) == 1
+
+
+def test_tach_capabilities_thanh_package_van_quet_duoc(tmp_path: Path):
+    """Tách mỗi năng lực một file phải chạy nguyên vẹn — đó là lời hứa trong docs.
+
+    Và re-export ở `capabilities/__init__.py` KHÔNG được làm năng lực bị đếm
+    hai lần: chỉ class định nghĩa ở một module mới được tính.
+    """
+    goi = tmp_path / "prov_tach"
+    caps = goi / "device" / "capabilities"
+    caps.mkdir(parents=True)
+    (goi / "__init__.py").write_text("", encoding="utf-8")
+    (goi / "device" / "__init__.py").write_text('"""Họ device."""\n', encoding="utf-8")
+    (caps / "door.py").write_text(
+        "from abc import ABC, abstractmethod\n\n"
+        "class DoorManagement(ABC):\n"
+        "    @abstractmethod\n"
+        "    async def open_door(self, door_id: str) -> bool: ...\n",
+        encoding="utf-8",
+    )
+    (caps / "camera.py").write_text(
+        "from abc import ABC, abstractmethod\n\n"
+        "class CameraManagement(ABC):\n"
+        "    @abstractmethod\n"
+        "    async def snapshot(self, cam_id: str) -> bytes: ...\n",
+        encoding="utf-8",
+    )
+    (caps / "__init__.py").write_text(
+        "from prov_tach.device.capabilities.camera import CameraManagement\n"
+        "from prov_tach.device.capabilities.door import DoorManagement\n\n"
+        '__all__ = ["CameraManagement", "DoorManagement"]\n',
+        encoding="utf-8",
+    )
+    (goi / "device" / "hik.py").write_text(
+        "from fastapi_modular import provider\n"
+        "from prov_tach.device.capabilities import CameraManagement\n\n"
+        '@provider("hik")\n'
+        "class HikDevice(CameraManagement):\n"
+        "    async def snapshot(self, cam_id): return b''\n",
+        encoding="utf-8",
+    )
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        so = register_providers("prov_tach")
+        assert sorted(so) == ["CameraManagement", "DoorManagement"]
+        assert so["CameraManagement"].names() == ["hik"]
+        assert so["DoorManagement"].names() == []      # hik không mở cửa được
+    finally:
+        sys.path.remove(str(tmp_path))
+        for ten in [m for m in sys.modules if m.startswith("prov_tach")]:
+            del sys.modules[ten]

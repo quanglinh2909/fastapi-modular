@@ -24,7 +24,9 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 
   `get()` trả 404 nếu không có tên, **501** nếu có tên nhưng thiếu năng lực —
   Hik không mở được cửa thì đó không phải bug của server. `names()` chỉ liệt kê
-  provider làm được việc của sổ đó. Xem `docs/providers.md`.
+  provider làm được việc của sổ đó. Xem `docs/providers.md`, trong đó có mục
+  "Viết năng lực cho dễ bảo trì": khi nào tách `capabilities.py` thành package,
+  và ba nguyên tắc đặt tên / chia nhỏ interface.
 
 - **`fam provider <họ> <tên>`** — sinh khung. Lần đầu dựng cả họ; lần sau đọc
   `capabilities.py` rồi sinh sẵn stub đúng chữ ký các method cần viết.

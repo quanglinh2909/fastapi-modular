@@ -180,7 +180,106 @@ if self._refunds.supports(ten):
 
 ---
 
-## 4. Những điều cần biết
+## 4. Viết năng lực cho dễ bảo trì
+
+### Khi nào tách `capabilities.py` ra nhiều file
+
+Một file cho tới khi nó phình. Ngưỡng thực tế: **quá một màn hình, hoặc từ 3
+năng lực trở lên**.
+
+Điều khiến quyết định này rẻ: **đường import không đổi**.
+
+```python
+from src.providers.device.capabilities import DoorManagement   # trước VÀ sau khi tách
+```
+
+Nên cứ bắt đầu bằng một file, tách khi thấy vướng — không phải sửa provider nào:
+
+```
+src/providers/device/
+├── __init__.py
+├── capabilities/
+│   ├── __init__.py          # re-export, giữ nguyên đường import
+│   ├── camera_management.py
+│   ├── door_management.py
+│   └── person_management.py
+├── dahua.py
+└── hik.py
+```
+
+```python
+# capabilities/__init__.py
+from src.providers.device.capabilities.camera_management import CameraManagement
+from src.providers.device.capabilities.door_management import DoorManagement
+from src.providers.device.capabilities.person_management import PersonManagement
+
+__all__ = ["CameraManagement", "DoorManagement", "PersonManagement"]
+```
+
+Bộ quét đi vào cả package con, nên **không phải khai gì thêm**. Việc re-export ở
+`__init__.py` cũng không làm năng lực bị đếm hai lần — chỉ class **định nghĩa**
+ở một module mới được tính.
+
+### Ba nguyên tắc
+
+**1. Đặt tên theo *việc làm được*, không theo *loại thiết bị*.**
+
+```python
+class DoorManagement(ABC): ...      # ✓ cắt ngang mọi hãng
+class DahuaInterface(ABC): ...      # ✗ chỉ là một class thường, không phải năng lực
+```
+
+Năng lực phải là thứ nhiều hãng cùng làm được. Buộc vào một hãng thì nó mất hết
+tác dụng.
+
+**2. Nhỏ tới mức provider nào hiện thực nó cũng hiện thực TRỌN.**
+
+Dấu hiệu năng lực quá to: có provider phải viết method rỗng, hoặc
+`raise NotImplementedError` chỉ để thoả ABC. Lúc đó tách đôi.
+
+```python
+# ✗ một interface to: Hik buộc phải viết open_door rỗng
+class DeviceInterface(ABC):
+    async def snapshot(self, cam_id: str) -> bytes: ...
+    async def open_door(self, door_id: str) -> bool: ...
+
+# ✓ tách: Hik chỉ kế thừa cái nó làm được
+class CameraManagement(ABC): ...
+class DoorManagement(ABC): ...
+```
+
+Đây chính là lý do `get()` trả **501**: để bạn **không cần** method rỗng. Thiếu
+năng lực là chuyện bình thường, và khung nói ra hộ bạn.
+
+**3. Docstring nói HỢP ĐỒNG, không nói cách làm.**
+
+Trả gì, ném lỗi gì, gọi nhiều lần có sao không. Cách làm là việc của provider.
+
+```python
+class DoorManagement(ABC):
+    """Mở/đóng cửa. Thiết bị chỉ có camera thì ĐỪNG hiện thực."""
+
+    @abstractmethod
+    async def open_door(self, door_id: str) -> bool:
+        """Mở cửa `door_id`. True nếu thiết bị xác nhận đã mở.
+
+        Ném NotFoundError nếu không có cửa đó. Gọi nhiều lần vô hại.
+        """
+```
+
+### Đừng để kiểu riêng của một hãng lọt vào năng lực
+
+Năng lực là hợp đồng chung, nên tham số và giá trị trả về phải là thứ mọi hãng
+đều diễn đạt được — kiểu dựng sẵn, DTO của bạn, hoặc enum bạn định nghĩa.
+
+```python
+async def snapshot(self, cam_id: str) -> bytes: ...          # ✓
+async def snapshot(self, cam: DahuaCameraHandle) -> bytes: ...  # ✗ hãng khác lấy đâu ra
+```
+
+---
+
+## 5. Những điều cần biết
 
 **Họ suy ra từ vị trí file.** `src/providers/payment/vnpay.py` thuộc họ
 `payment`. Không phải khai lại tên họ trong `@provider`.
@@ -215,7 +314,7 @@ provider không phải tạo thư mục rỗng.
 
 ---
 
-## 5. Đổi chỗ đặt
+## 6. Đổi chỗ đặt
 
 Mặc định là gói `providers` nằm cạnh gói ứng dụng: `src.api` → `src.providers`.
 Xếp khác thì khai một lần:
@@ -233,7 +332,7 @@ app = create_app(AppSettings(), providers_package="cong_ty.plugins")
 
 ---
 
-## 6. Test
+## 7. Test
 
 Provider là class thuần, test thẳng không cần gì:
 
@@ -255,7 +354,7 @@ def test_service_dung_cong_gia_lap():
 
 ---
 
-## 7. Gặp sự cố
+## 8. Gặp sự cố
 
 | Triệu chứng | Nguyên nhân | Cách chữa |
 |---|---|---|
@@ -269,7 +368,7 @@ def test_service_dung_cong_gia_lap():
 
 ---
 
-## 8. Bảng lệnh
+## 9. Bảng lệnh
 
 ```bash
 fam provider payment vnpay    # lần đầu: tạo cả họ
