@@ -384,17 +384,13 @@ def _khong_co_provider(name: str) -> str:
     nó được `register_providers()` cắm thẳng vào store. Quên gọi hàm đó thì lỗi
     hiện ra ở đây, và câu "thiếu @injectable" sẽ dẫn người đọc đi sai đường.
     """
-    try:
-        from fastapi_modular.core.providers import _TEN_TOKEN
-    except ImportError:  # pragma: no cover
-        _TEN_TOKEN = set()
-
-    if name in _TEN_TOKEN:
+    if name == "Providers":
         return (
-            f"Không có sổ provider '{name}'. Lớp token đã khai nhưng chưa ai dựng sổ — "
-            "gọi `register_providers()` trong src/main.py TRƯỚC register_routes(), "
-            "hoặc dùng `create_app()` (nó gọi sẵn). Nếu thư mục provider không nằm ở "
-            "`src/providers/` thì truyền đường dẫn: register_providers('src.plugins')."
+            "Chưa ai dựng sổ provider — gọi `register_providers()` trong src/main.py "
+            "TRƯỚC register_routes(), hoặc dùng `create_app()` (nó gọi sẵn). Nếu năng "
+            "lực có thật rồi mà vẫn lỗi: nó phải là lớp con của ABC và nằm trong một "
+            "thư mục con của `src/providers/`. Thư mục khác thì truyền đường dẫn: "
+            "register_providers('src.plugins')."
         )
     return (
         f"Không có provider '{name}'. Thiếu @injectable, hoặc module chứa nó "

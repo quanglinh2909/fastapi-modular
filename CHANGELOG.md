@@ -9,18 +9,26 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 
 - **Provider cắm được** — chọn bản hiện thực bằng TÊN lúc chạy, thứ mà container
   (tra theo kiểu) không làm được: cổng thanh toán lấy từ cột trong đơn hàng, nhà
-  mạng SMS lấy từ cấu hình. API: `@provider`, `ProviderFamily`, `Registry`,
-  `register_providers`. Xem `docs/providers.md`.
-  Lớp token CHÍNH LÀ sổ đăng ký — không còn `Registry` tách riêng, bớt một
-  khái niệm và annotation `payments: PaymentProviders` trở thành sự thật.
+  mạng SMS lấy từ cấu hình, hãng camera lấy từ bản ghi thiết bị.
+
+  Dùng đúng khuôn `Repository[User]` — service khai **năng lực** nó cần:
+
+  ```python
+  def __init__(self, payments: Providers[PaymentGateway]) -> None: ...
+
+  cong = self._payments.get(don.cong_thanh_toan)   # -> PaymentGateway
+  ```
+
+  Thêm bản hiện thực mới = thả một file mang `@provider("tên")` vào
+  `src/providers/<họ>/`. Không sửa service, không sửa `main.py`.
+
+  `get()` trả 404 nếu không có tên, **501** nếu có tên nhưng thiếu năng lực —
+  Hik không mở được cửa thì đó không phải bug của server. `names()` chỉ liệt kê
+  provider làm được việc của sổ đó. Xem `docs/providers.md`.
+
 - **`fam provider <họ> <tên>`** — sinh khung. Lần đầu dựng cả họ; lần sau đọc
   `capabilities.py` rồi sinh sẵn stub đúng chữ ký các method cần viết.
-- Họ khai **năng lực chính** qua tham số generic:
-  `class PaymentProviders(ProviderFamily[PaymentGateway], family="payment")`.
-  Nhờ đó `require(tên)` chỉ cần một tham số và trả về đúng kiểu đó — IDE gợi ý
-  được method, thay vì `Any` như trước. Năng lực tuỳ chọn vẫn khai tường minh:
-  `require(tên, HoanTien)` — và overload khiến kiểu trả về khi đó là CHÍNH
-  `HoanTien`, nếu không thì IDE vẫn chỉ gợi ý method của năng lực chính.
+
 - **`container.build(cls, key=..., scope=...)`** — dựng một lớp có nối phụ thuộc
   mà KHÔNG đăng ký vào sổ toàn cục. Cần cho provider: sổ toàn cục tra theo tên
   class, trong khi hai họ có quyền cùng có một `OryzaProvider`.
@@ -29,8 +37,8 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 
 - `fam p` giờ **nhập nhằng** giữa `publish` và `provider` nên `fam` hỏi lại. Viết
   tắt mới: `fam pu` cho publish, `fam pr` cho provider.
-- `create_app()` gọi `register_providers()` trước khi dựng route. Không có
-  `src/providers/` thì bỏ qua, không lỗi.
+- `create_app()` và `src/main.py` sinh sẵn gọi `register_providers()` trước khi
+  dựng route. Không có `src/providers/` thì bỏ qua, không lỗi.
 
 ## [0.2.1] — 2026-08-22
 

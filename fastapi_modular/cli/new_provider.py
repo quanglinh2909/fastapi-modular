@@ -61,28 +61,19 @@ def _chu_ky(duong_dan: Path, lop: str, method: str) -> tuple[str, bool]:
     return "(self)", True
 
 
-def render_family(family: str, goi: str) -> dict[str, str]:
+def render_family(family: str) -> dict[str, str]:
     """Hai file khung của một họ mới."""
-    lop_token = f"{pascal(family)}Providers"
     nang_luc = f"{pascal(family)}Basic"
 
     init = f'''"""Họ provider **{family}** — các bản hiện thực cắm được.
 
 Thả một file `<tên>.py` mang `@provider("<tên>")` vào thư mục này là xong:
 không sửa service, không sửa main.py, không có danh sách import nào phải nhớ.
+
+Service khai ĐÚNG năng lực nó cần:
+
+    def __init__(self, x: Providers[{nang_luc}]) -> None: ...
 """
-
-from fastapi_modular import ProviderFamily
-
-from {goi}.{family}.capabilities import {nang_luc}
-
-
-class {lop_token}(ProviderFamily[{nang_luc}], family="{family}"):
-    """Token DI của họ. Service khai `def __init__(self, x: {lop_token})`.
-
-    Tham số generic là NĂNG LỰC CHÍNH: nhờ nó `require(tên)` chỉ cần một tham
-    số và trả về đúng kiểu {nang_luc}, nên IDE gợi ý được method.
-    """
 '''
 
     caps = f'''"""Năng lực của họ **{family}** — provider CÓ THỂ hiện thực cái nào tuỳ nó.
@@ -197,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         _write(goc, {"__init__.py": '"""Các provider cắm được, nhóm theo họ."""\n'})
 
     if ho_moi:
-        _write(thu_muc, render_family(family, str(goc).replace("/", ".")))
+        _write(thu_muc, render_family(family))
 
     caps = _capabilities_trong(thu_muc / "capabilities.py")
     _write(thu_muc, {f"{name}.py": render_provider(family, name, caps, goc)})
@@ -210,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Việc tiếp theo:")
         print(f"  1. Sửa {thu_muc / 'capabilities.py'} cho đúng nghiệp vụ của bạn")
         print(f"  2. Viết thân các method trong {tep_provider}")
-        print(f"  3. Service nhận sổ: def __init__(self, x: {pascal(family)}Providers)")
+        print(f"  3. Service nhận sổ: def __init__(self, x: Providers[{pascal(family)}Basic])")
     else:
         print(f"Đã thêm provider '{name}' vào họ '{family}':")
         print(f"    {tep_provider}")

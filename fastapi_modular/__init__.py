@@ -27,8 +27,8 @@ from fastapi_modular.core.lifespan import lifespan
 from fastapi_modular.core.logging import configure_logging, get_logger
 from fastapi_modular.core.providers import (
     CapabilityNotSupportedError,
-    ProviderFamily,
     ProviderNotFoundError,
+    Providers,
     provider,
     register_providers,
 )
@@ -50,8 +50,8 @@ __all__ = [
     "Lazy",
     "NotFoundError",
     "Page",
-    "ProviderFamily",
     "ProviderNotFoundError",
+    "Providers",
     "Scope",
     "ServiceUnavailableError",
     "Settings",

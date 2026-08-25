@@ -4,7 +4,7 @@ Chọn **bản hiện thực bằng tên lúc chạy**: cổng thanh toán lấy
 hàng, nhà mạng SMS lấy từ cấu hình, hãng camera lấy từ bản ghi thiết bị.
 
 ```
-DonHangService ──── require("vnpay") ────▶ VnpayPayment
+DonHangService ──── get("vnpay") ────▶ VnpayPayment
                                           MomoPayment
                                           ZaloPayPayment  <- thả file vào là có
 ```
@@ -55,20 +55,16 @@ thân hàm.
 
 ## 2. Ba file được sinh ra
 
-**`__init__.py`** — token DI của họ, hai dòng:
+**`__init__.py`** — chỉ một docstring. Không có gì phải bảo trì:
 
 ```python
-from fastapi_modular import ProviderFamily
+"""Họ provider **payment** — các bản hiện thực cắm được.
 
-from src.providers.payment.capabilities import PaymentGateway
+Service khai ĐÚNG năng lực nó cần:
 
-
-class PaymentProviders(ProviderFamily[PaymentGateway], family="payment"):
-    """Token DI của họ. Service khai `def __init__(self, x: PaymentProviders)`."""
+    def __init__(self, x: Providers[PaymentGateway]) -> None: ...
+"""
 ```
-
-Tham số generic là **năng lực chính** của họ. Nhờ nó `require(tên)` chỉ cần một
-tham số và trả về đúng kiểu `PaymentGateway` — IDE gợi ý được method.
 
 **`capabilities.py`** — việc mà provider *có thể* làm:
 
@@ -105,55 +101,33 @@ class VnpayPayment(PaymentGateway, HoanTien):
 
 > **Tách nhỏ năng lực, đừng gộp một interface to.** Momo không hoàn tiền được
 > thì **bỏ `HoanTien` khỏi danh sách kế thừa** rồi xoá method đi — đừng để lại
-> thân rỗng. Khi đó `require("momo", HoanTien)` trả lỗi **501** nói rõ thiếu gì,
+> thân rỗng. Khi đó `Providers[HoanTien].get("momo")` trả lỗi **501** nói rõ thiếu gì,
 > thay vì một `NotImplementedError` 500 khó hiểu.
 
 ---
 
 ## 3. Dùng trong service
 
-Nhận sổ qua DI, đúng cách nhận mọi thứ khác:
+Khai **đúng năng lực bạn cần** — cùng khuôn với `Repository[User]`:
 
 ```python
-from fastapi_modular import injectable
+from fastapi_modular import Providers, injectable
 
-from src.providers.payment import PaymentProviders
+from src.providers.payment.capabilities import PaymentGateway
 
 
 @injectable
 class DonHangService:
-    def __init__(self, payments: PaymentProviders) -> None:
+    def __init__(self, payments: Providers[PaymentGateway]) -> None:
         self._payments = payments
 
     async def thanh_toan(self, don: DonHang) -> str:
         # tên cổng lấy từ DB — service không biết trước là cổng nào
-        cong = self._payments.require(don.cong_thanh_toan)
+        cong = self._payments.get(don.cong_thanh_toan)      # -> PaymentGateway
         return await cong.tao_giao_dich(don.so_tien, don.ma)
 ```
 
-### Năng lực tuỳ chọn — và vì sao IDE không gợi ý
-
-`require(tên)` trả về **năng lực chính** — thứ khai trong
-`ProviderFamily[PaymentGateway]`. Nên IDE chỉ gợi ý method của `PaymentGateway`.
-
-Method thuộc một năng lực **tuỳ chọn** thì phải nói ra:
-
-```python
-# IDE KHÔNG biết `hoan_tien` — nó thuộc HoanTien, không phải năng lực chính
-cong = self._payments.require(ten)
-await cong.hoan_tien(ma)                      # ✗ không gợi ý, type checker báo lỗi
-
-# Nói rõ năng lực -> IDE gợi ý đúng method của HoanTien
-cong = self._payments.require(ten, HoanTien)
-await cong.hoan_tien(ma)                      # ✓
-```
-
-Không chắc provider có năng lực đó không thì hỏi trước, đừng để 501 bay ra:
-
-```python
-if self._payments.supports(ten, HoanTien):
-    await self._payments.require(ten, HoanTien).hoan_tien(ma)
-```
+`get()` trả về **đúng kiểu năng lực bạn khai**, nên IDE gợi ý được method ngay.
 
 **Thêm ZaloPay = thả một file `zalopay.py` vào thư mục.** Không sửa service,
 không sửa `main.py`, không có danh sách import nào phải bảo trì.
@@ -162,13 +136,13 @@ không sửa `main.py`, không có danh sách import nào phải bảo trì.
 
 | Gọi | Trả về | Ném lỗi |
 |---|---|---|
-| `require(tên)` | provider, kiểu tĩnh là **năng lực chính** | **404** không có tên · **501** thiếu năng lực |
-| `require(tên, NăngLực)` | provider, kiểu tĩnh là **chính `NăngLực` đó** | nt |
-| `get(tên)` | provider, **không** kiểm năng lực | **404** |
-| `supports(tên[, NăngLực])` | `bool` | — |
-| `names()` | `["momo", "vnpay"]` | — |
+| `get(tên)` | provider, kiểu tĩnh là **chính năng lực đã khai** | **404** không có tên · **501** có tên nhưng thiếu năng lực |
+| `supports(tên)` | `bool` — có làm được việc này không | **404** |
+| `names()` | **chỉ** provider làm được việc này | — |
+| `all_names()` | mọi provider của họ | — |
 | `capabilities(tên)` | `["HoanTien", "PaymentGateway"]` | **404** |
-| `describe()` | `[{"name", "capabilities"}, …]` | — |
+| `describe()` | `[{"name", "capabilities"}, …]` cho `names()` | — |
+| `family` · `capability` | tên họ · lớp năng lực | — |
 
 `describe()` trả thẳng ra endpoint được:
 
@@ -183,12 +157,38 @@ async def liet_ke(self) -> list[dict]:
  {"name": "vnpay", "capabilities": ["HoanTien", "PaymentGateway"]}]
 ```
 
+### Cần hai năng lực thì nhận hai sổ
+
+```python
+def __init__(
+    self,
+    payments: Providers[PaymentGateway],
+    refunds: Providers[HoanTien],
+) -> None: ...
+```
+
+Đọc `__init__` là biết ngay service này đụng vào những gì — không có năng lực
+nào lẩn trong thân hàm.
+
+`names()` cũng vì thế mà có nghĩa: `refunds.names()` là **các cổng hoàn tiền
+được**, không phải mọi cổng thanh toán. Không chắc thì hỏi trước:
+
+```python
+if self._refunds.supports(ten):
+    await self._refunds.get(ten).hoan_tien(ma)
+```
+
 ---
 
 ## 4. Những điều cần biết
 
 **Họ suy ra từ vị trí file.** `src/providers/payment/vnpay.py` thuộc họ
 `payment`. Không phải khai lại tên họ trong `@provider`.
+
+**`Providers[X]` trỏ tới họ ĐỊNH NGHĨA `X`.** Năng lực khai ở
+`src/providers/payment/capabilities.py` thì sổ của nó chứa provider của họ
+`payment`. Hai họ cùng đặt tên một năng lực sẽ bị chặn lúc khởi động — container
+tra theo tên lớp.
 
 **Hai họ dùng chung một tên là bình thường.** `@provider("oryza")` bên `device`
 và bên `notification` là hai thứ khác nhau, kể cả khi hai class trùng tên. Tên
@@ -245,12 +245,11 @@ def test_vnpay_tao_duoc_giao_dich():
 Đổi cả sổ trong test — service không biết gì:
 
 ```python
-from src.providers.payment import PaymentProviders
+from fastapi_modular import Providers
 
 def test_service_dung_cong_gia_lap():
-    so = PaymentProviders()
-    so.add("vnpay", CongGiaLap)
-    container.override(PaymentProviders, so)
+    so = Providers("payment", PaymentGateway, {"vnpay": CongGiaLap})
+    container.override("Providers[PaymentGateway]", so)
     ...
 ```
 
@@ -260,8 +259,8 @@ def test_service_dung_cong_gia_lap():
 
 | Triệu chứng | Nguyên nhân | Cách chữa |
 |---|---|---|
-| `Họ 'x' chưa có token DI` | thiếu lớp `ProviderFamily` trong `__init__.py` của họ | thêm 2 dòng, hoặc chạy lại `fam provider x <tên>` |
-| `Họ 'x' chưa khai năng lực chính` | token viết `ProviderFamily` không có `[NangLuc]` | thêm tham số generic, hoặc truyền năng lực vào `require(tên, NăngLực)` |
+| `Chưa ai dựng sổ provider` | quên `register_providers()` trong `src/main.py` | gọi nó TRƯỚC `register_routes()`, hoặc dùng `create_app()` |
+| `Hai họ cùng khai năng lực tên 'X'` | hai `capabilities.py` đặt trùng tên lớp | đổi tên một cái |
 | `Không có provider 'y' trong họ 'x'` (404) | sai tên, hoặc file chưa được quét | so tên với `names()`; file phải nằm dưới `src/providers/x/` và không bắt đầu bằng `_` |
 | `Provider 'y' không hỗ trợ Z` (501) | provider không kế thừa `Z` | đúng như thiết kế — dùng `supports()` để kiểm trước, hoặc cho `y` hiện thực `Z` |
 | `capabilities()` trả rỗng | interface không kế thừa `ABC` | năng lực phải là lớp con của `ABC` mới được nhận diện |
