@@ -12,6 +12,7 @@ from fastapi_modular.core.config import DatabaseSettings, JobSettings, Settings
 from fastapi_modular.core.container import container, injectable
 from fastapi_modular.core.exceptions import BadRequestError, ServiceUnavailableError
 from fastapi_modular.core.jobs import JobQueue, JobRunner, discover_jobs, job
+from fastapi_modular.core.workers import WorkerContext
 
 DA_LAM: list[object] = []
 SO_LAN_HONG = {"dem": 0}
@@ -29,7 +30,7 @@ class ViecNen:
         await asyncio.sleep(0.01)
         DA_LAM.append(payload["i"])
 
-    @job("test-nang", blocking=True)
+    @job("test-nang", thread=True)
     def nang(self, payload: dict) -> None:
         time.sleep(0.01)
         DA_LAM.append(("nang", payload["i"]))
@@ -61,7 +62,7 @@ async def _chay(settings: Settings):
 def test_quet_duoc_viec():
     table = discover_jobs()
     assert {"test-ghi", "test-nang", "test-hong", "test-model"} <= set(table)
-    assert table["test-nang"].blocking is True
+    assert table["test-nang"].thread is True
     assert table["test-model"].model is ThamSo
 
 
@@ -72,11 +73,11 @@ def test_viec_thuong_phai_la_async():
         def dong_bo(self, payload: dict) -> None: ...
 
 
-def test_viec_blocking_phai_la_def_thuong():
-    """Cả điểm của `blocking=True` là chạy NGOÀI vòng lặp sự kiện."""
+def test_viec_thread_phai_la_def_thuong():
+    """Cả điểm của `thread=True` là chạy NGOÀI vòng lặp sự kiện."""
     with pytest.raises(RuntimeError, match="def` thường"):
 
-        @job("x-blocking-sai", blocking=True)
+        @job("x-thread-sai", thread=True)
         async def sai(self, payload: dict) -> None: ...
 
 
@@ -127,7 +128,7 @@ async def test_chay_dung_thu_tu_gui_vao():
     assert DA_LAM == [0, 1, 2, 3, 4, 5]
 
 
-async def test_viec_blocking_chay_trong_thread():
+async def test_viec_thread_chay_trong_thread():
     DA_LAM.clear()
     queue, runner = await _chay(_settings())
     await queue.submit("test-nang", {"i": 1})
@@ -239,3 +240,26 @@ def test_stats_noi_ro_do_sau_hang_doi():
     queue = JobQueue(settings)
     runner = JobRunner(queue, settings)
     assert runner.stats()["queued"] == 0
+
+
+async def test_job_thread_ghi_duoc_database_qua_ctx():
+    """Lỗ hổng cũ: `@job(thread=True)` không có đường gọi async — nay có `ctx.run`."""
+    ghi: list[str] = []
+
+    @injectable
+    class ViecNangCoCtx:
+        async def save(self, value: str) -> None:
+            await asyncio.sleep(0)
+            ghi.append(value)
+
+        @job("test-thread-ctx", thread=True)
+        def nang(self, payload: dict, ctx: WorkerContext) -> None:
+            time.sleep(0.01)
+            ctx.run(self.save(payload["ma"]))
+
+    queue, runner = await _chay(_settings())
+    await queue.submit("test-thread-ctx", {"ma": "A9"})
+    await asyncio.wait_for(queue.raw.join(), timeout=5)
+    await runner.shutdown()
+
+    assert ghi == ["A9"]

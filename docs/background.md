@@ -48,24 +48,34 @@ class CameraService:
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    @worker(key="ip")
-    async def watch(self, ip: str, ctx: WorkerContext) -> None:
-        capture = await ctx.blocking(cv2.VideoCapture, ip)     # DỰNG (ngoài vòng lặp)
+    @worker("camera")
+    async def watch(self, data: dict, ctx: WorkerContext) -> None:
+        capture = await ctx.blocking(cv2.VideoCapture, data["ip"])   # DỰNG
         try:
-            while ctx.running:                                  # VÒNG LẶP
+            while ctx.running:                                        # VÒNG LẶP
                 frame = await ctx.blocking(capture.read)
                 events = await ctx.blocking(model.predict, frame)
-                await self._db.save(events)                     # await như thường
+                await self._db.save(events)                           # await như thường
         finally:
-            await ctx.blocking(capture.release)                 # DỌN
+            await ctx.blocking(capture.release)                       # DỌN
 ```
 
-**Gọi hàm là sinh ra một bản chạy nền**, trả về ngay:
+**Gọi hàm là sinh ra một bản chạy nền**, trả về ngay. Khoá và dữ liệu truyền
+vào lúc gọi:
 
 ```python
 for camera in await self._db.all_cameras():
-    await service.watch(camera.ip)          # mỗi IP một bản
+    await service.watch(camera.id, {"ip": camera.ip, "fps": camera.fps})
+    #                   └ KHOÁ       └ DATA (dict, tuỳ bạn đặt gì)
 ```
+
+Khoá là **danh tính của bản chạy**, không phải tên hàm và không lấy từ chữ ký.
+Muốn dùng IP làm khoá cũng được, dùng id trong database cũng được — miễn là nó
+duy nhất.
+
+Tên worker (`"camera"` ở trên) không khai thì mặc định là `__qualname__`, tức
+`CameraService.watch` — đã kèm tên lớp nên **hai method trùng tên ở hai lớp
+khác nhau không đụng nhau**.
 
 Gọi lại cùng một `key` **không** sinh bản thứ hai — nó trả về bản đang chạy.
 Với camera thì đó là điều bắt buộc: mở hai kết nối RTSP tới cùng một thiết bị
@@ -73,6 +83,42 @@ là cách nhanh nhất để cả hai cùng giật.
 
 Gọi được từ bất cứ đâu: lifespan lúc boot, một endpoint "thêm camera", hay một
 `@interval` quét bảng camera mỗi phút và bật những cái mới.
+
+### Khi nào cần `ctx`, khi nào không
+
+Câu hỏi hay gặp: *không phải thread thì có cần `ctx` không?*
+
+`ctx` **không phải chuyện của thread**. Nó là ba thứ khác nhau, và bạn chỉ khai
+khi cần thứ đó:
+
+| Cần gì | Lấy từ | Có ở |
+|---|---|---|
+| thoát vòng lặp cho sạch | `ctx.running` | mọi kiểu |
+| gọi hàm CHẶN mà không giữ tiến trình | `await ctx.blocking(fn, …)` | `async def` |
+| gọi hàm ASYNC từ trong thread | `ctx.run(coro)` | `thread=True` |
+
+Suy ra:
+
+| | Cần `ctx` không |
+|---|---|
+| `@worker` (`async def`) | **gần như luôn** — cần `ctx.running` để dừng, `ctx.blocking` để gọi hàm chặn |
+| `@worker(thread=True)` | **luôn** — `ctx.running` để dừng, `ctx.run` để ghi database |
+| `@interval` / `@cron` / `@timeout` (`async def`) | **không**, trừ khi có hàm chặn cần `ctx.blocking` |
+| `@job` (`async def`) | **không**, trừ khi có hàm chặn |
+| bất kỳ cái nào với `thread=True` | **có**, nếu cần gọi async (`ctx.run`) |
+
+Không khai thì khung không truyền — cứ viết `async def lam(self) -> None` như
+thường.
+
+```python
+@interval(seconds=60)
+async def ping(self) -> None:              # không cần ctx
+    await self._http.get("/health")
+
+@interval(seconds=60)
+async def scan(self, ctx: WorkerContext) -> None:
+    await ctx.blocking(os.scandir, "/data")  # có hàm chặn -> cần ctx
+```
 
 ### `ctx.running` — cách duy nhất thoát cho sạch
 
@@ -93,7 +139,22 @@ HTTP, mọi frame WebSocket, mọi worker khác. `async def` không tự cứu �
 `await ctx.blocking(fn, *args)` đẩy lời gọi sang thread khác rồi chờ kết quả.
 Đo được với 3 camera chạy song song: event loop trễ **0,001 giây**.
 
-### Hai kiểu chạy
+### Hai kiểu chạy — có ở CẢ BỐN decorator
+
+`thread=True` không riêng của `@worker`: `@interval`, `@cron`, `@timeout` và
+`@job` đều nhận, và đều tiêm `ctx` như nhau.
+
+```python
+@interval(seconds=5, thread=True)
+def quet_o_dia(self, ctx: WorkerContext) -> None:   # def thường
+    ket_qua = quet_cham()                            # hàm chặn, gọi thẳng
+    ctx.run(self._db.save(ket_qua))                  # ghi database
+
+@job("detect", thread=True)
+def nhan_dang(self, payload: dict, ctx: WorkerContext) -> None:
+    events = model.predict(payload["path"])
+    ctx.run(self._db.save(events))
+```
 
 |  | `@worker(...)` | `@worker(..., thread=True)` |
 |---|---|---|
@@ -109,9 +170,9 @@ HTTP, mọi frame WebSocket, mọi worker khác. `async def` không tự cứu �
 bọc từng lời gọi thành rườm rà:
 
 ```python
-@worker(key="ip", thread=True)
-def watch(self, ip: str, ctx: WorkerContext) -> None:
-    capture = cv2.VideoCapture(ip)                  # đang ở thread, gọi thẳng
+@worker("camera", thread=True)
+def watch(self, data: dict, ctx: WorkerContext) -> None:
+    capture = cv2.VideoCapture(data["ip"])          # đang ở thread, gọi thẳng
     try:
         while ctx.running:
             frame = capture.read()
@@ -158,9 +219,8 @@ Lúc tắt app khung tự gọi `stop_all()` **đầu tiên**, trước cả sch
 
 ```python
 @worker(
-    name="",                  # tên loại worker; mặc định lấy tên method
+    name="",                  # tên loại worker; mặc định là __qualname__
     *,
-    key="",                   # TÊN THAM SỐ làm danh tính bản chạy ("ip")
     thread=False,
     restart=True,
     restart_delay=1.0,
@@ -168,6 +228,9 @@ Lúc tắt app khung tự gọi `stop_all()` **đầu tiên**, trước cả sch
     single=False,             # chỉ MỘT tiến trình chạy bản này
 )
 ```
+
+Chữ ký hàm: `(self)`, `(self, data)`, `(self, ctx)` hoặc `(self, data, ctx)`.
+Gọi: `await self.watch(key, data)` — cả hai đều tuỳ chọn.
 
 `single=True` khoá theo `<name>:<key>`, dùng chung cơ chế với
 [việc theo lịch](#cái-bẫy-nhiều-worker). Đặt khi chạy nhiều worker uvicorn mà
@@ -409,21 +472,22 @@ handler.
 ### Việc nặng — YOLO và bạn bè
 
 ```python
-@job("detect", blocking=True)
-def detect(self, payload: dict) -> None:      # `def` thường, KHÔNG phải async
-    model.predict(payload["path"])
+@job("detect", thread=True)
+def detect(self, payload: dict, ctx: WorkerContext) -> None:   # `def` thường
+    events = model.predict(payload["path"])
+    ctx.run(self._db.save(events))            # ghi database từ trong thread
 ```
 
-`blocking=True` chạy handler trong một **thread** thay vì trên vòng lặp sự
+`thread=True` chạy handler trong một **thread** thay vì trên vòng lặp sự
 kiện. Việc này **có** tác dụng với torch/opencv/numpy vì phần tính toán của
 chúng viết bằng C và **nhả GIL** trong lúc chạy. Nó **không** có tác dụng với
 vòng lặp Python thuần — cái đó vẫn giữ GIL và vẫn làm nghẽn cả tiến trình.
 
-Không có `blocking=True` thì suy luận YOLO **chặn event loop**: mọi request HTTP
+Không có `thread=True` thì suy luận YOLO **chặn event loop**: mọi request HTTP
 và mọi frame WebSocket đứng im chờ nó xong. `async def` không cứu được —
 `await` chỉ nhả quyền khi chờ I/O, còn đây là tính toán.
 
-Và dù có `blocking=True`, chạy nhận dạng cùng tiến trình với API vẫn tranh CPU
+Và dù có `thread=True`, chạy nhận dạng cùng tiến trình với API vẫn tranh CPU
 với việc phục vụ request. Tải thật thì tách hẳn:
 
 ```
@@ -439,7 +503,7 @@ API  ──publish──▶  RabbitMQ  ──▶  tiến trình worker RIÊNG (@
     *,
     max_retries=0,          # thử lại NGAY TẠI CHỖ khi handler ném lỗi
     retry_delay=1.0,
-    blocking=False,
+    thread=False,           # chạy trong thread; hàm khai bằng `def` thường
 )
 ```
 

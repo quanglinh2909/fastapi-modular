@@ -54,6 +54,12 @@ from fastapi_modular.core.exceptions import BadRequestError
 from fastapi_modular.core.locks import NoLock, SingleFlight, build_lock
 from fastapi_modular.core.logging import get_logger
 from fastapi_modular.core.metrics import Counter, Histogram, registry
+from fastapi_modular.core.workers import (
+    WorkerContext,
+    call_handler,
+    check_thread_mode,
+    context_param_of,
+)
 
 log = get_logger(__name__)
 
@@ -84,6 +90,8 @@ class ScheduledSpec:
     run_on_startup: bool = False
     jitter: float = 0.0
     max_seconds: float | None = None
+    thread: bool = False
+    context_param: str = ""
     cls: type | None = None
     fn: Callable | None = None
     cron: CronExpression | None = field(default=None, compare=False)
@@ -103,18 +111,20 @@ class ScheduledSpec:
         return f"mỗi {self.seconds}s" if self.kind == "interval" else f"sau {self.seconds}s"
 
 
-def _decorate(spec: ScheduledSpec) -> Callable[[Callable], Callable]:
+def _decorate(spec: ScheduledSpec, thread: bool) -> Callable[[Callable], Callable]:
     def decorate(fn: Callable) -> Callable:
-        if not inspect.iscoroutinefunction(fn):
-            raise RuntimeError(f"{fn.__name__} phải là `async def`")
-        params = [p for p in inspect.signature(fn).parameters if p != "self"]
-        if params:
+        check_thread_mode(fn, thread)
+        context_param = context_param_of(fn)
+        others = [
+            p for p in inspect.signature(fn).parameters if p not in ("self", context_param)
+        ]
+        if others:
             raise RuntimeError(
-                f"{fn.__name__} không được nhận tham số nào ngoài `self`: việc theo lịch "
-                "tự chạy, không ai truyền gì vào. Cần dữ liệu thì lấy qua DI trong "
-                "`__init__`."
+                f"{fn.__name__} chỉ được nhận `self` và (tuỳ chọn) `ctx: WorkerContext`: "
+                "việc theo lịch tự chạy, không ai truyền dữ liệu vào. Cần dữ liệu thì "
+                f"lấy qua DI trong `__init__`. Tham số thừa: {others}."
             )
-        setattr(fn, _SPEC_ATTR, spec)
+        setattr(fn, _SPEC_ATTR, replace(spec, thread=thread, context_param=context_param))
         return fn
 
     return decorate
@@ -128,6 +138,7 @@ def interval(
     run_on_startup: bool = False,
     jitter: float = 0.0,
     max_seconds: float | None = None,
+    thread: bool = False,
 ) -> Callable[[Callable], Callable]:
     """Chạy lặp mỗi `seconds` giây — tương đương `@Interval()` của NestJS.
 
@@ -144,6 +155,13 @@ def interval(
         max_seconds      trần thời gian MỘT lượt; quá thì huỷ lượt đó và ghi
                          log. Không đặt thì một lượt treo sẽ làm việc này im
                          luôn, mà không có gì báo.
+        thread           True = chạy trong thread, hàm khai bằng `def` thường.
+                         Dùng khi thân hàm toàn lời gọi CHẶN. Ghi database thì
+                         qua `ctx.run(...)` — xem `WorkerContext`.
+
+    Nhận `ctx: WorkerContext` nếu cần: `ctx.blocking(...)` để gọi hàm chặn ở
+    bản `async def`, `ctx.run(...)` để gọi async ở bản `thread=True`. Không cần
+    thì cứ bỏ, khung không truyền.
     """
     if seconds <= 0:
         raise BadRequestError(f"`seconds` phải lớn hơn 0 (đang là {seconds})")
@@ -156,7 +174,8 @@ def interval(
             run_on_startup=run_on_startup,
             jitter=max(0.0, jitter),
             max_seconds=max_seconds,
-        )
+        ),
+        thread,
     )
 
 
@@ -167,6 +186,7 @@ def cron(
     name: str = "",
     single: bool = True,
     max_seconds: float | None = None,
+    thread: bool = False,
 ) -> Callable[[Callable], Callable]:
     """Chạy theo biểu thức cron — tương đương `@Cron()` của NestJS.
 
@@ -195,12 +215,18 @@ def cron(
             single=single,
             max_seconds=max_seconds,
             cron=parsed,
-        )
+        ),
+        thread,
     )
 
 
 def timeout(
-    seconds: float, *, name: str = "", single: bool = True, max_seconds: float | None = None
+    seconds: float,
+    *,
+    name: str = "",
+    single: bool = True,
+    max_seconds: float | None = None,
+    thread: bool = False,
 ) -> Callable[[Callable], Callable]:
     """Chạy ĐÚNG MỘT LẦN, `seconds` giây sau khi app khởi động —
     tương đương `@Timeout()` của NestJS.
@@ -214,7 +240,8 @@ def timeout(
     return _decorate(
         ScheduledSpec(
             kind="timeout", name=name, seconds=seconds, single=single, max_seconds=max_seconds
-        )
+        ),
+        thread,
     )
 
 
@@ -397,7 +424,16 @@ class SchedulerRunner:
         try:
             async with request_scope():
                 instance = container.resolve(spec.cls)      # type: ignore[arg-type]
-                call = spec.fn(instance)                    # type: ignore[misc]
+                context = WorkerContext(
+                    spec.label, "", asyncio.get_running_loop(), thread_mode=spec.thread
+                )
+                call = call_handler(
+                    spec.fn,                                # type: ignore[arg-type]
+                    instance,
+                    context=context,
+                    context_param=spec.context_param,
+                    thread=spec.thread,
+                )
                 if spec.max_seconds:
                     await asyncio.wait_for(call, spec.max_seconds)
                 else:

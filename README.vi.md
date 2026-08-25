@@ -263,22 +263,28 @@ async def cap_nhat_camera(self) -> None: ...
 async def don_log(self) -> None: ...
 
 # theo YÊU CẦU — hàng đợi asyncio.Queue trong tiến trình, xử lý tuần tự
-@job("detect", blocking=True)          # blocking: chạy trong thread cho YOLO
-def nhan_dang(self, payload: dict) -> None: ...
+@job("detect", thread=True)            # thread: chạy trong thread cho YOLO
+def nhan_dang(self, payload: dict, ctx: WorkerContext) -> None:
+    ctx.run(self._db.save(...))        # ghi database từ trong thread
 
 await self._jobs.submit("detect", {"path": p})      # trả về ngay
 
-# VÒNG LẶP SỐNG MÃI — N bản, mỗi camera một IP
-@worker(key="ip")
-async def watch(self, ip: str, ctx: WorkerContext) -> None:
-    cap = await ctx.blocking(cv2.VideoCapture, ip)   # dựng, NGOÀI vòng lặp
+# VÒNG LẶP SỐNG MÃI — N bản, mỗi camera một khoá
+@worker("camera")
+async def watch(self, data: dict, ctx: WorkerContext) -> None:
+    cap = await ctx.blocking(cv2.VideoCapture, data["ip"])   # dựng, NGOÀI vòng lặp
     while ctx.running:
-        frame = await ctx.blocking(cap.read)         # hàm chặn -> thread khác
-        await self._db.save(...)                     # await thẳng
+        frame = await ctx.blocking(cap.read)                 # hàm chặn -> thread khác
+        await self._db.save(...)                             # await thẳng
 
 for camera in cameras:
-    await service.watch(camera.ip)      # gọi hàm là sinh một bản chạy nền
+    await service.watch(camera.id, {"ip": camera.ip})   # khoá + data lúc gọi
 ```
+
+Cả bốn decorator đều có hai dạng: `async def` (mặc định) và `thread=True` cho
+thân hàm toàn lời gọi chặn. `ctx` là tuỳ chọn — khai khi cần `ctx.running` để
+dừng vòng lặp, `ctx.blocking(...)` để gọi hàm chặn, hoặc `ctx.run(...)` để ghi
+database từ trong thread.
 
 `@worker` là chỗ `@interval` và `@job` không với tới: nó có phần **dựng ở trước
 vòng lặp** (mở camera, nạp model) và chạy tới khi bạn bảo dừng. Hỏng thì tự dựng
@@ -376,7 +382,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              847 test chạy không cần hạ tầng, 62 test nữa bật khi có server thật
+tests/              852 test chạy không cần hạ tầng, 62 test nữa bật khi có server thật
 docs/               tài liệu tra cứu
 ```
 

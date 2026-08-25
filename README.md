@@ -267,22 +267,28 @@ async def update_cameras(self) -> None: ...
 async def clean_logs(self) -> None: ...
 
 # on DEMAND — an in-process asyncio.Queue, processed in order
-@job("detect", blocking=True)          # blocking: runs in a thread, for YOLO
-def detect(self, payload: dict) -> None: ...
+@job("detect", thread=True)            # thread: runs in a thread, for YOLO
+def detect(self, payload: dict, ctx: WorkerContext) -> None:
+    ctx.run(self._db.save(...))        # write to the DB from inside the thread
 
 await self._jobs.submit("detect", {"path": p})      # returns immediately
 
-# a LONG-RUNNING LOOP — N instances, one per camera IP
-@worker(key="ip")
-async def watch(self, ip: str, ctx: WorkerContext) -> None:
-    cap = await ctx.blocking(cv2.VideoCapture, ip)   # setup, OUTSIDE the loop
+# a LONG-RUNNING LOOP — N instances, one per key
+@worker("camera")
+async def watch(self, data: dict, ctx: WorkerContext) -> None:
+    cap = await ctx.blocking(cv2.VideoCapture, data["ip"])   # setup, OUTSIDE the loop
     while ctx.running:
-        frame = await ctx.blocking(cap.read)         # blocking call -> a thread
-        await self._db.save(...)                     # plain await
+        frame = await ctx.blocking(cap.read)                 # blocking call -> a thread
+        await self._db.save(...)                             # plain await
 
 for camera in cameras:
-    await service.watch(camera.ip)      # calling it spawns a supervised instance
+    await service.watch(camera.id, {"ip": camera.ip})   # key + data at call time
 ```
+
+All four decorators come in two shapes: `async def` (the default) and
+`thread=True` for bodies that are all blocking calls. `ctx` is optional — take
+it when you need `ctx.running` to leave a loop, `ctx.blocking(...)` to call
+blocking code, or `ctx.run(...)` to write to the DB from inside a thread.
 
 `@worker` covers what `@interval` and `@job` cannot: a setup phase **before**
 the loop (open the camera, load the model) and a body that runs until you stop
@@ -377,7 +383,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              847 tests that need no infrastructure, 62 more when servers exist
+tests/              852 tests that need no infrastructure, 62 more when servers exist
 docs/               reference documentation (Vietnamese)
 ```
 

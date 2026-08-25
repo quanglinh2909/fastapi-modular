@@ -24,6 +24,7 @@ from fastapi_modular.core.scheduler import (
     interval,
     timeout,
 )
+from fastapi_modular.core.workers import WorkerContext
 
 DA_CHAY: list[str] = []
 
@@ -70,13 +71,16 @@ def test_phai_la_async():
         def dong_bo(self) -> None: ...
 
 
-def test_khong_duoc_nhan_tham_so():
+def test_khong_duoc_nhan_tham_so_du_lieu():
     """Việc theo lịch tự chạy, không ai truyền gì vào — nói ngay thay vì để
-    người dùng gặp TypeError khó hiểu lúc chạy."""
-    with pytest.raises(RuntimeError, match="tham số"):
+    người dùng gặp TypeError khó hiểu lúc chạy. `ctx` thì được phép."""
+    with pytest.raises(RuntimeError, match="Tham số thừa"):
 
         @interval(seconds=1)
         async def co_tham_so(self, payload: dict) -> None: ...
+
+    @interval(seconds=1, name="co-ctx-thoi")
+    async def chi_co_ctx(self, ctx: WorkerContext) -> None: ...
 
 
 @pytest.mark.parametrize("seconds", [0, -1])
@@ -233,3 +237,64 @@ async def test_tat_app_cho_luot_dang_chay_xong():
     await runner.shutdown()
 
     assert time.monotonic() - started < 2.0
+
+
+# --------------------------------------------- thread=True và ctx ở scheduler
+async def test_interval_thread_chay_ngoai_event_loop_va_ghi_duoc_db():
+    """Cùng hai dạng như @worker: `thread=True` + `ctx.run(...)` để gọi async."""
+    ghi: list[str] = []
+    threads: list[int] = []
+
+    @injectable
+    class ViecChan:
+        async def save(self, value: str) -> None:
+            await asyncio.sleep(0)
+            ghi.append(value)
+
+        @interval(seconds=0.05, run_on_startup=True, name="test-thread", thread=True)
+        def cham(self, ctx: WorkerContext) -> None:
+            import threading
+
+            threads.append(threading.get_ident())
+            time.sleep(0.01)                       # hàm chặn, gọi thẳng
+            ctx.run(self.save("xong"))             # cầu nối sang event loop
+
+    settings = _settings(single=False)
+    container.override("Settings", settings)
+    runner = SchedulerRunner(settings)
+    await runner.startup()
+    await asyncio.sleep(0.25)
+    await runner.shutdown()
+
+    assert ghi, "thread phải ghi được qua ctx.run"
+    import threading as _t
+
+    assert threads and _t.get_ident() not in threads, "phải chạy ở thread khác"
+
+
+async def test_ctx_la_tuy_chon_o_viec_theo_lich():
+    """Không khai `ctx` thì khung không truyền — việc theo lịch ngắn, thường
+    chẳng cần gì."""
+    chay: list[int] = []
+
+    @injectable
+    class KhongCanCtx:
+        @interval(seconds=0.05, run_on_startup=True, name="test-khong-ctx")
+        async def lam(self) -> None:
+            chay.append(1)
+
+    settings = _settings(single=False)
+    container.override("Settings", settings)
+    runner = SchedulerRunner(settings)
+    await runner.startup()
+    await asyncio.sleep(0.15)
+    await runner.shutdown()
+
+    assert chay
+
+
+def test_viec_theo_lich_van_cam_tham_so_du_lieu():
+    with pytest.raises(RuntimeError, match="Tham số thừa"):
+
+        @interval(seconds=1)
+        async def co_du_lieu(self, payload: dict) -> None: ...

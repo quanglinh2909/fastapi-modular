@@ -34,8 +34,9 @@ class CameraService:
         await asyncio.sleep(0)
         DB.append((ip, frame))
 
-    @worker(key="ip")
-    async def watch(self, ip: str, ctx: WorkerContext) -> None:
+    @worker("watch")
+    async def watch(self, data: dict, ctx: WorkerContext) -> None:
+        ip = data["ip"]
         cap = await ctx.blocking(_blocking_open, ip)     # dựng, NGOÀI vòng lặp
         THREADS.setdefault(ip, threading.get_ident())
         try:
@@ -45,8 +46,9 @@ class CameraService:
         finally:
             DB.append((ip, "cleaned"))
 
-    @worker(key="ip", name="watch-thread", thread=True)
-    def watch_thread(self, ip: str, ctx: WorkerContext) -> None:
+    @worker("watch-thread", thread=True)
+    def watch_thread(self, data: dict, ctx: WorkerContext) -> None:
+        ip = data["ip"]
         cap = _blocking_open(ip)                         # đang ở thread, gọi thẳng
         try:
             while ctx.running:
@@ -102,11 +104,27 @@ def test_worker_thread_phai_la_def_thuong():
         async def sai(self, ctx: WorkerContext) -> None: ...
 
 
-def test_khoa_phai_tro_toi_mot_tham_so_co_that():
-    with pytest.raises(RuntimeError, match="không có tham số"):
+def test_chu_ky_chi_nhan_data_va_ctx():
+    with pytest.raises(RuntimeError, match="chữ ký"):
 
-        @worker(key="khong_co")
-        async def sai(self, ip: str, ctx: WorkerContext) -> None: ...
+        @worker("sai")
+        async def sai(self, data: dict, them: str, ctx: WorkerContext) -> None: ...
+
+
+def test_ten_mac_dinh_kem_ten_lop_nen_khong_dung_nhau():
+    """Hai method trùng tên ở hai lớp khác nhau phải ra hai worker khác nhau."""
+
+    class A:
+        @worker()
+        async def watch(self, ctx: WorkerContext) -> None: ...
+
+    class B:
+        @worker()
+        async def watch(self, ctx: WorkerContext) -> None: ...
+
+    from fastapi_modular.core.workers import _SPEC_ATTR
+
+    assert getattr(A.watch, _SPEC_ATTR).name != getattr(B.watch, _SPEC_ATTR).name
 
 
 def test_restart_delay_phai_duong():
@@ -119,7 +137,7 @@ async def test_moi_ip_mot_ban_va_deu_ghi_duoc_database(pool: WorkerPool):
     """Đúng hình dạng đã hỏi: nhiều camera, khác nhau mỗi cái IP."""
     service = CameraService()
     for ip in ("10.0.0.1", "10.0.0.2", "10.0.0.3"):
-        await service.watch(ip)
+        await service.watch(ip, {"ip": ip})
 
     await asyncio.sleep(0.2)
     assert pool.stats()["count"] == 3
@@ -132,8 +150,8 @@ async def test_moi_ip_mot_ban_va_deu_ghi_duoc_database(pool: WorkerPool):
 async def test_goi_lai_cung_khoa_khong_mo_them_ban(pool: WorkerPool):
     """Mở hai kết nối RTSP tới cùng một thiết bị là cách nhanh nhất để cả hai giật."""
     service = CameraService()
-    first = await service.watch("10.0.0.1")
-    second = await service.watch("10.0.0.1")
+    first = await service.watch("10.0.0.1", {"ip": "10.0.0.1"})
+    second = await service.watch("10.0.0.1", {"ip": "10.0.0.1"})
 
     assert pool.stats()["count"] == 1
     assert first is second
@@ -144,7 +162,7 @@ async def test_vong_lap_khong_chan_event_loop(pool: WorkerPool):
     """Cả điểm của `ctx.blocking`: hàm chặn chạy ở thread khác."""
     service = CameraService()
     for ip in ("10.0.0.1", "10.0.0.2", "10.0.0.3"):
-        await service.watch(ip)
+        await service.watch(ip, {"ip": ip})
     await asyncio.sleep(0.05)
 
     started = time.monotonic()
@@ -158,7 +176,7 @@ async def test_vong_lap_khong_chan_event_loop(pool: WorkerPool):
 async def test_thread_mode_ghi_database_qua_ctx_run(pool: WorkerPool):
     """Câu trả lời cho 'chạy trong thread thì ghi database kiểu gì'."""
     service = CameraService()
-    await service.watch_thread("10.0.0.9")
+    await service.watch_thread("10.0.0.9", {"ip": "10.0.0.9"})
     await asyncio.sleep(0.15)
     await pool.stop_all()
 
@@ -209,7 +227,7 @@ async def test_vong_lap_tu_ket_thuc_thi_khong_dung_lai(pool: WorkerPool):
 async def test_dung_dung_mot_ban(pool: WorkerPool):
     service = CameraService()
     for ip in ("10.0.0.1", "10.0.0.2"):
-        await service.watch(ip)
+        await service.watch(ip, {"ip": ip})
     await asyncio.sleep(0.05)
 
     assert await pool.stop("watch", "10.0.0.2") is True
@@ -220,7 +238,7 @@ async def test_dung_dung_mot_ban(pool: WorkerPool):
 
 async def test_dung_het_thi_phan_finally_van_chay(pool: WorkerPool):
     service = CameraService()
-    await service.watch("10.0.0.1")
+    await service.watch("10.0.0.1", {"ip": "10.0.0.1"})
     await asyncio.sleep(0.05)
     await pool.stop_all()
 
@@ -236,7 +254,7 @@ async def test_tran_so_ban_chan_viec_sinh_worker_vo_han():
     container.override("WorkerPool", small)
     service = CameraService()
 
-    await service.watch("10.0.0.1")
+    await service.watch("10.0.0.1", {"ip": "10.0.0.1"})
     await service.watch("10.0.0.2")
     with pytest.raises(ServiceUnavailableError, match="MAX_INSTANCES"):
         await service.watch("10.0.0.3")

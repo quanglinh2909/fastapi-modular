@@ -49,12 +49,13 @@ camera**: hai camera chạy song song, nhưng hai việc của cùng một camer
 
 ## Việc nặng (YOLO) thì sao
 
-`@job("x", blocking=True)` chạy handler trong một **thread** thay vì trên vòng
-lặp sự kiện. Việc này CÓ tác dụng với torch/opencv/numpy vì phần tính toán của
+`@job("x", thread=True)` chạy handler trong một **thread** thay vì trên vòng
+lặp sự kiện, và khai thêm `ctx: WorkerContext` thì ghi database được từ trong
+đó bằng `ctx.run(self._db.save(...))`. Việc này CÓ tác dụng với torch/opencv/numpy vì phần tính toán của
 chúng viết bằng C và **nhả GIL** trong lúc chạy. Nó KHÔNG có tác dụng với vòng
 lặp Python thuần — cái đó vẫn giữ GIL và vẫn làm nghẽn cả tiến trình.
 
-Và dù có `blocking=True`, chạy nhận dạng trong cùng tiến trình với API vẫn
+Và dù có `thread=True`, chạy nhận dạng trong cùng tiến trình với API vẫn
 tranh CPU với việc phục vụ request. Tải thật thì tách hẳn ra một tiến trình
 worker riêng đọc từ RabbitMQ.
 """
@@ -77,6 +78,12 @@ from fastapi_modular.core.context import new_request_id, reset_request_id, set_r
 from fastapi_modular.core.exceptions import BadRequestError, ServiceUnavailableError
 from fastapi_modular.core.logging import get_logger
 from fastapi_modular.core.metrics import Counter, Gauge, Histogram, registry
+from fastapi_modular.core.workers import (
+    WorkerContext,
+    call_handler,
+    check_thread_mode,
+    context_param_of,
+)
 
 log = get_logger(__name__)
 
@@ -95,7 +102,8 @@ class JobSpec:
     name: str
     max_retries: int = 0
     retry_delay: float = 1.0
-    blocking: bool = False
+    thread: bool = False
+    context_param: str = ""
     cls: type | None = None
     fn: Callable | None = None
     model: type[BaseModel] | None = None
@@ -106,7 +114,7 @@ class JobSpec:
 
 
 def job(
-    name: str, *, max_retries: int = 0, retry_delay: float = 1.0, blocking: bool = False
+    name: str, *, max_retries: int = 0, retry_delay: float = 1.0, thread: bool = False
 ) -> Callable[[Callable], Callable]:
     """Khai một loại việc chạy nền; gửi vào bằng `JobQueue.submit(name, payload)`.
 
@@ -115,28 +123,19 @@ def job(
                      Mặc định 0 — hỏng là ghi log rồi bỏ. Nhớ là thử lại làm
                      đứng cả hàng đợi khi `workers=1`.
         retry_delay  chờ bao lâu giữa hai lần thử (giây).
-        blocking     True = chạy trong thread thay vì trên vòng lặp sự kiện.
-                     Chỉ đặt cho việc dùng thư viện nhả GIL (torch, opencv,
-                     numpy). Xem docstring của module.
+        thread       True = chạy trong thread thay vì trên vòng lặp sự kiện,
+                     hàm khai bằng `def` thường. Chỉ đặt cho việc dùng thư viện
+                     nhả GIL (torch, opencv, numpy). Xem docstring của module.
 
     Tham số đầu chú kiểu bằng model Pydantic thì payload được kiểm khuôn trước
-    khi vào handler.
+    khi vào handler. Khai thêm `ctx: WorkerContext` nếu cần `ctx.blocking(...)`
+    (bản async) hoặc `ctx.run(...)` để ghi database từ trong thread.
     """
     if not name.strip():
         raise BadRequestError("`name` của việc không được để trống")
 
     def decorate(fn: Callable) -> Callable:
-        if blocking:
-            if inspect.iscoroutinefunction(fn):
-                raise RuntimeError(
-                    f"{fn.__name__} khai `blocking=True` thì phải là `def` thường, không "
-                    "phải `async def` — cả điểm của nó là chạy ngoài vòng lặp sự kiện."
-                )
-        elif not inspect.iscoroutinefunction(fn):
-            raise RuntimeError(
-                f"{fn.__name__} phải là `async def`. Việc nặng chạy đồng bộ thì khai "
-                "`@job(..., blocking=True)` để nó chạy trong thread."
-            )
+        check_thread_mode(fn, thread)
         setattr(
             fn,
             _SPEC_ATTR,
@@ -144,7 +143,8 @@ def job(
                 name=name.strip(),
                 max_retries=max_retries,
                 retry_delay=retry_delay,
-                blocking=blocking,
+                thread=thread,
+                context_param=context_param_of(fn),
             ),
         )
         return fn
@@ -161,10 +161,15 @@ def discover_jobs() -> dict[str, JobSpec]:
             if spec is None:
                 continue
 
-            params = list(inspect.signature(fn).parameters.values())[1:]
+            params = [
+                p
+                for p in list(inspect.signature(fn).parameters.values())[1:]
+                if p.name != spec.context_param
+            ]
             if len(params) != 1:
                 raise RuntimeError(
-                    f"{cls.__name__}.{fn.__name__}: chữ ký phải là (self, payload)"
+                    f"{cls.__name__}.{fn.__name__}: chữ ký phải là (self, payload) "
+                    "hoặc (self, payload, ctx: WorkerContext)"
                 )
             hints = get_type_hints(fn)
             annotation = hints.get(params[0].name)
@@ -315,12 +320,19 @@ class JobRunner:
                 raise BadRequestError(f"Payload không hợp lệ: {exc}") from exc
 
         instance = container.resolve(spec.cls)      # type: ignore[arg-type]
-        if spec.blocking:
-            # Đẩy sang thread. Có tác dụng vì torch/opencv nhả GIL trong lúc
-            # tính; với vòng lặp Python thuần thì không.
-            await asyncio.to_thread(spec.fn, instance, payload)     # type: ignore[misc]
-        else:
-            await spec.fn(instance, payload)                        # type: ignore[misc]
+        # `thread=True` đẩy sang thread. Có tác dụng vì torch/opencv nhả GIL
+        # trong lúc tính; với vòng lặp Python thuần thì không.
+        context = WorkerContext(
+            spec.name, "", asyncio.get_running_loop(), thread_mode=spec.thread
+        )
+        await call_handler(
+            spec.fn,                                    # type: ignore[arg-type]
+            instance,
+            payload,
+            context=context,
+            context_param=spec.context_param,
+            thread=spec.thread,
+        )
 
     async def shutdown(self) -> None:
         """Chạy nốt việc đang dở, rồi nói rõ còn bao nhiêu việc bị bỏ."""

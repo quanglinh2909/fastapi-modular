@@ -70,7 +70,7 @@ import inspect
 import threading
 import time
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi_modular.core.config import Settings
@@ -172,18 +172,58 @@ class WorkerContext:
         return future.result(timeout)
 
 
+def context_param_of(fn: Callable) -> str:
+    """Tên tham số được chú kiểu `WorkerContext`, hoặc "" nếu hàm không xin.
+
+    `ctx` là TUỲ CHỌN ở mọi decorator: không khai thì khung không truyền. Ai
+    cần cờ dừng hay cần gọi qua lại giữa thread và event loop thì mới khai.
+    """
+    for parameter in inspect.signature(fn).parameters.values():
+        if parameter.annotation in (WorkerContext, "WorkerContext"):
+            return parameter.name
+    return ""
+
+
+def check_thread_mode(fn: Callable, thread: bool) -> None:
+    """`thread=True` cần `def` thường; không thì cần `async def`."""
+    is_async = inspect.iscoroutinefunction(fn)
+    if thread and is_async:
+        raise RuntimeError(
+            f"{fn.__name__} khai `thread=True` thì phải là `def` thường, không phải "
+            "`async def` — cả điểm của nó là chạy ngoài vòng lặp sự kiện."
+        )
+    if not thread and not is_async:
+        raise RuntimeError(
+            f"{fn.__name__} phải là `async def`. Toàn hàm chặn thì khai `thread=True`."
+        )
+
+
+async def call_handler(
+    fn: Callable,
+    instance: Any,
+    *args: Any,
+    context: WorkerContext | None = None,
+    context_param: str = "",
+    thread: bool = False,
+) -> Any:
+    """Gọi handler, tiêm `ctx` nếu nó xin, và chạy đúng chỗ (thread hay loop)."""
+    kwargs = {context_param: context} if context_param and context is not None else {}
+    if thread:
+        return await asyncio.to_thread(fn, instance, *args, **kwargs)
+    return await fn(instance, *args, **kwargs)
+
+
 @dataclass(slots=True)
 class WorkerSpec:
     name: str
-    key_param: str = ""
     thread: bool = False
     restart: bool = True
     restart_delay: float = 1.0
     max_restart_delay: float = 30.0
     single: bool = False
     fn: Callable | None = None
-    signature: inspect.Signature | None = field(default=None, compare=False)
     context_param: str = ""
+    wants_data: bool = False
 
 
 @dataclass(slots=True)
@@ -210,7 +250,6 @@ class WorkerHandle:
 def worker(
     name: str = "",
     *,
-    key: str = "",
     thread: bool = False,
     restart: bool = True,
     restart_delay: float = 1.0,
@@ -219,12 +258,9 @@ def worker(
 ) -> Callable[[Callable], Callable]:
     """Biến một method thành vòng lặp chạy nền; GỌI nó là sinh ra một bản.
 
-        name               tên loại worker; mặc định lấy tên method
-        key                tên THAM SỐ dùng làm danh tính của bản chạy.
-                           `key="ip"` thì `watch("10.0.0.1")` và
-                           `watch("10.0.0.2")` là hai bản, còn gọi lại cùng một
-                           IP thì trả về bản đang chạy chứ không mở thêm.
-                           Không khai thì mọi lời gọi dùng chung một bản.
+        name               tên loại worker. Không khai thì lấy `__qualname__`,
+                           tức `CameraService.watch` — đã kèm tên lớp nên hai
+                           method trùng tên ở hai lớp khác nhau không đụng nhau.
         thread             True = chạy cả vòng lặp trong thread; hàm phải là
                            `def` thường và ghi database qua `ctx.run(...)`.
         restart            True (mặc định) = hỏng thì dựng lại, chờ tăng dần.
@@ -234,54 +270,48 @@ def worker(
                            `<name>:<key>`. Đặt khi nhiều worker uvicorn cùng
                            nối tới một thiết bị.
 
-    Hàm nhận `ctx: WorkerContext` (tuỳ chọn nhưng gần như luôn cần): `ctx.running`
-    để thoát vòng lặp cho sạch, `ctx.blocking(...)` để gọi hàm chặn, `ctx.run(...)`
-    để gọi async từ trong thread.
+    Khoá và dữ liệu truyền vào LÚC GỌI, không lấy từ chữ ký hàm:
+
+        @worker("camera")
+        async def watch(self, data: dict, ctx: WorkerContext) -> None:
+            ip = data["ip"]
+
+        await service.watch("cam-01", {"ip": "10.0.0.1", "fps": 15})
+
+    `ctx: WorkerContext` là tuỳ chọn về cú pháp nhưng gần như luôn cần ở
+    `@worker`: `ctx.running` là cách duy nhất thoát vòng lặp cho sạch, và
+    `ctx.blocking(...)` là cách gọi hàm chặn mà không giữ cả tiến trình.
     """
     if restart_delay <= 0:
         raise BadRequestError(f"`restart_delay` phải lớn hơn 0 (đang là {restart_delay})")
 
     def decorate(fn: Callable) -> Callable:
-        is_async = inspect.iscoroutinefunction(fn)
-        if thread and is_async:
+        check_thread_mode(fn, thread)
+        context_param = context_param_of(fn)
+        others = [
+            p for p in inspect.signature(fn).parameters if p not in ("self", context_param)
+        ]
+        if len(others) > 1:
             raise RuntimeError(
-                f"{fn.__name__} khai `thread=True` thì phải là `def` thường, không phải "
-                "`async def` — cả điểm của nó là chạy ngoài vòng lặp sự kiện."
-            )
-        if not thread and not is_async:
-            raise RuntimeError(
-                f"{fn.__name__} phải là `async def`. Vòng lặp toàn hàm chặn thì khai "
-                "`@worker(..., thread=True)`."
-            )
-
-        signature = inspect.signature(fn)
-        params = list(signature.parameters)
-        context_param = ""
-        for parameter in signature.parameters.values():
-            if parameter.annotation in (WorkerContext, "WorkerContext"):
-                context_param = parameter.name
-        if key and key not in params:
-            raise RuntimeError(
-                f"{fn.__name__} không có tham số {key!r} để làm khoá. "
-                f"Tham số đang có: {[p for p in params if p != 'self']}."
+                f"{fn.__name__}: chữ ký phải là (self, data) hoặc (self, data, ctx), "
+                f"hoặc bỏ hẳn `data`. Tham số đang thừa: {others[1:]}."
             )
 
         spec = WorkerSpec(
-            name=name or fn.__name__,
-            key_param=key,
+            name=name or fn.__qualname__,
             thread=thread,
             restart=restart,
             restart_delay=restart_delay,
             max_restart_delay=max_restart_delay,
             single=single,
             fn=fn,
-            signature=signature,
             context_param=context_param,
+            wants_data=bool(others),
         )
 
-        async def launch(self: Any, *args: Any, **kwargs: Any) -> WorkerHandle:
+        async def launch(self: Any, key: str = "", data: Any = None) -> WorkerHandle:
             pool = container.resolve(WorkerPool)
-            return await pool.start(spec, self, args, kwargs)
+            return await pool.start(spec, self, str(key), data)
 
         launch.__name__ = fn.__name__
         launch.__doc__ = fn.__doc__
@@ -306,27 +336,12 @@ class WorkerPool:
         self._lock: SingleFlight | None = None
         self._closing = False
 
-    def _key_of(self, spec: WorkerSpec, instance: Any, args: tuple, kwargs: dict) -> str:
-        if not spec.key_param:
-            return ""
-        # `bind_partial` chứ không `bind`: `ctx` do khung tiêm vào lúc chạy nên
-        # người gọi không truyền, và `bind` sẽ kêu thiếu tham số.
-        bound = spec.signature.bind_partial(instance, *args, **kwargs)  # type: ignore[union-attr]
-        bound.apply_defaults()
-        if spec.key_param not in bound.arguments:
-            raise BadRequestError(
-                f"Worker {spec.name!r} lấy khoá từ tham số {spec.key_param!r} nhưng lời "
-                "gọi không truyền giá trị nào cho nó."
-            )
-        return str(bound.arguments[spec.key_param])
-
     async def start(
-        self, spec: WorkerSpec, instance: Any, args: tuple, kwargs: dict
+        self, spec: WorkerSpec, instance: Any, key: str, data: Any
     ) -> WorkerHandle:
         if self._closing:
             raise ServiceUnavailableError("App đang tắt nên không nhận worker mới")
 
-        key = self._key_of(spec, instance, args, kwargs)
         existing = self._handles.get((spec.name, key))
         if existing is not None and existing.running:
             # Gọi lại cùng khoá KHÔNG mở thêm bản. Với camera thì mở hai kết
@@ -345,7 +360,7 @@ class WorkerPool:
             spec.name, key, asyncio.get_running_loop(), thread_mode=spec.thread
         )
         task = asyncio.create_task(
-            self._supervise(spec, instance, args, kwargs, context),
+            self._supervise(spec, instance, data, context),
             name=f"worker-{spec.name}-{key}" if key else f"worker-{spec.name}",
         )
         handle = WorkerHandle(spec.name, key, context, task, time.monotonic())
@@ -356,12 +371,7 @@ class WorkerPool:
         return handle
 
     async def _supervise(
-        self,
-        spec: WorkerSpec,
-        instance: Any,
-        args: tuple,
-        kwargs: dict,
-        context: WorkerContext,
+        self, spec: WorkerSpec, instance: Any, data: Any, context: WorkerContext
     ) -> None:
         """Chạy vòng lặp, và dựng lại khi nó hỏng."""
         if spec.single and not await self._become_owner(spec, context):
@@ -372,7 +382,7 @@ class WorkerPool:
             while context.running and not self._closing:
                 token = set_request_id(new_request_id())
                 try:
-                    await self._run_body(spec, instance, args, kwargs, context)
+                    await self._run_body(spec, instance, data, context)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -403,23 +413,19 @@ class WorkerPool:
                 await self._lock.release(f"{spec.name}:{context.key}")
 
     async def _run_body(
-        self,
-        spec: WorkerSpec,
-        instance: Any,
-        args: tuple,
-        kwargs: dict,
-        context: WorkerContext,
+        self, spec: WorkerSpec, instance: Any, data: Any, context: WorkerContext
     ) -> None:
-        call_kwargs = dict(kwargs)
-        if spec.context_param:
-            call_kwargs[spec.context_param] = context
-
-        if spec.thread:
-            # Vòng lặp nằm trọn trong thread. Không huỷ ngang được — `ctx.running`
-            # là cách duy nhất bảo nó dừng, nên tài liệu nhấn mạnh chuyện đó.
-            await asyncio.to_thread(spec.fn, instance, *args, **call_kwargs)  # type: ignore[misc]
-        else:
-            await spec.fn(instance, *args, **call_kwargs)                     # type: ignore[misc]
+        # `thread=True` thì vòng lặp nằm trọn trong thread và KHÔNG huỷ ngang
+        # được — `ctx.running` là đường duy nhất bảo nó dừng.
+        args = (data,) if spec.wants_data else ()
+        await call_handler(
+            spec.fn,                                              # type: ignore[arg-type]
+            instance,
+            *args,
+            context=context,
+            context_param=spec.context_param,
+            thread=spec.thread,
+        )
 
     async def _become_owner(self, spec: WorkerSpec, context: WorkerContext) -> bool:
         if self._lock is None:
