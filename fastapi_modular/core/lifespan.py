@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -34,6 +35,25 @@ from fastapi_modular.core.logging import get_logger
 from fastapi_modular.core.websocket import WebSocketServer
 
 log = get_logger(__name__)
+
+
+def _resize_blocking_pool(settings: Settings) -> Any:
+    """Đổi pool thread mà `ctx.blocking(...)` dùng, nếu có khai kích thước.
+
+    Mặc định của Python là `min(32, số nhân + 4)`. Nhiều worker cùng gọi hàm
+    chặn liên tục hơn số đó thì chúng xếp hàng chờ nhau.
+    """
+    size = settings.workers.thread_pool_size
+    if size <= 0:
+        return None
+
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    pool = ThreadPoolExecutor(max_workers=size, thread_name_prefix="fam-blocking")
+    asyncio.get_running_loop().set_default_executor(pool)
+    log.info("workers.thread_pool", size=size)
+    return pool
 
 
 @asynccontextmanager
@@ -148,6 +168,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.scheduler = scheduler
     workers = container.resolve(WorkerPool)
     app.state.workers = workers
+    blocking_pool = _resize_blocking_pool(settings)
 
     log.info(
         "app.started",
@@ -185,6 +206,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await broker.shutdown()
         await redis.shutdown()
         await database.shutdown()
+        if blocking_pool is not None:
+            blocking_pool.shutdown(wait=False, cancel_futures=True)
         container.reset()
         app.state.container = None
         app.state.database = None

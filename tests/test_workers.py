@@ -277,3 +277,62 @@ async def test_ctx_wait_tinh_ngay_khi_co_lenh_dung(pool: WorkerPool):
     assert woke is True
     assert time.monotonic() - started < 1.0
     assert ctx.running is False
+
+
+# ------------------------------------------- thread riêng, không mượn pool chung
+async def test_nhieu_worker_thread_khong_lam_can_pool_chung(pool: WorkerPool):
+    """Đây là một lỗi THẬT đã mắc: `thread=True` từng dùng `asyncio.to_thread`,
+    tức mượn `ThreadPoolExecutor` dùng chung của event loop (trần
+    `min(32, cpu+4)`, thường là 16). Vòng lặp chạy MÃI thì giữ chỗ đó vĩnh
+    viễn, nên đủ 16 worker là pool cạn và mọi `ctx.blocking` treo cứng — đo
+    được: 20 worker thì cả tiến trình chết, không phải chậm.
+
+    Nay `@worker(thread=True)` có thread RIÊNG. Test này dựng số worker vượt
+    hẳn trần pool rồi kiểm `ctx.blocking` vẫn chạy ngay.
+    """
+    import os
+
+    tran_pool = min(32, (os.cpu_count() or 1) + 4)
+    dung = threading.Event()
+
+    class Giu:
+        @worker("giu-cho", thread=True)
+        def giu(self, ctx: WorkerContext) -> None:
+            while ctx.running:
+                dung.wait(0.02)
+
+    service = Giu()
+    for i in range(tran_pool + 4):          # VƯỢT hẳn trần pool
+        await service.giu(f"w{i}")
+    await asyncio.sleep(0.1)
+
+    ctx = WorkerContext("do", "", asyncio.get_running_loop(), thread_mode=False)
+    started = time.monotonic()
+    await asyncio.wait_for(ctx.blocking(time.sleep, 0.01), timeout=5)
+    tre = time.monotonic() - started
+
+    await pool.stop_all()
+    assert tre < 1.0, (
+        f"ctx.blocking mất {tre:.2f}s với {tran_pool + 4} worker thread — "
+        "worker đang mượn pool dùng chung thay vì có thread riêng"
+    )
+
+
+async def test_thread_rieng_van_giu_duoc_request_id(pool: WorkerPool):
+    """`asyncio.to_thread` chép contextvars sang thread; bản tự viết cũng phải."""
+    from fastapi_modular.core.context import get_request_id, set_request_id
+
+    thay: list[str | None] = []
+
+    class Doc:
+        @worker("doc-id", thread=True)
+        def doc(self, ctx: WorkerContext) -> None:
+            thay.append(get_request_id())
+
+    set_request_id("abc-123")
+    service = Doc()
+    await service.doc("x")
+    await asyncio.sleep(0.15)
+    await pool.stop_all()
+
+    assert thay and thay[0] is not None, "request-id phải theo được sang thread"

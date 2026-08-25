@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import inspect
 import threading
 import time
@@ -144,6 +145,12 @@ class WorkerContext:
         `cap.read()`, `model.predict()`, `cv2.VideoCapture()` đều là hàm chặn.
         Gọi thẳng trong `async def` thì cả tiến trình đứng im chờ chúng: mọi
         request HTTP, mọi frame WebSocket, mọi worker khác.
+
+        Bên dưới là `asyncio.to_thread`, tức `ThreadPoolExecutor` **dùng chung**
+        của event loop. Thread được TÁI SỬ DỤNG chứ không mở mới mỗi lần, nhưng
+        pool có trần `min(32, cpu+4)` chỗ. Nhiều worker gọi dày hơn số chỗ thì
+        chúng xếp hàng chờ nhau — chậm đi chứ không hỏng. Nới trần bằng
+        `APP_WORKERS__THREAD_POOL_SIZE`.
         """
         if self._thread_mode:
             # Đang ở trong thread rồi, đẩy thêm một lớp nữa là vô ích.
@@ -198,6 +205,42 @@ def check_thread_mode(fn: Callable, thread: bool) -> None:
         )
 
 
+async def run_in_own_thread(fn: Callable, *args: Any, **kwargs: Any) -> Any:
+    """Chạy `fn` trong một thread RIÊNG, không mượn pool dùng chung.
+
+    Vì sao không dùng `asyncio.to_thread` ở đây: nó đẩy việc vào
+    `ThreadPoolExecutor` mặc định của event loop, mà pool đó chỉ có
+    `min(32, cpu+4)` chỗ (16 trên một máy 12 nhân) và **dùng chung với mọi thứ
+    khác**, kể cả `ctx.blocking`.
+
+    Việc ngắn thì không sao — mượn rồi trả ngay. Nhưng một vòng lặp `@worker`
+    chạy MÃI thì giữ chỗ đó vĩnh viễn: đủ 16 worker `thread=True` là pool cạn
+    sạch, và mọi `ctx.blocking` sau đó xếp hàng không bao giờ tới lượt. Đo
+    được: 20 worker thì cả tiến trình treo cứng, không phải chậm mà là chết.
+
+    Thread ở đây là `daemon`, nên nó cũng không giữ tiến trình lại lúc thoát
+    nếu vòng lặp không chịu dừng.
+    """
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[Any] = loop.create_future()
+    context = contextvars.copy_context()      # giữ request-id như `to_thread` làm
+
+    def deliver(setter: Callable[[Any], None], value: Any) -> None:
+        if not future.done():
+            setter(value)
+
+    def runner() -> None:
+        try:
+            result = context.run(fn, *args, **kwargs)
+        except BaseException as exc:          # noqa: BLE001 - chuyển nguyên vẹn về loop
+            loop.call_soon_threadsafe(deliver, future.set_exception, exc)
+        else:
+            loop.call_soon_threadsafe(deliver, future.set_result, result)
+
+    threading.Thread(target=runner, daemon=True, name=f"fam-worker-{fn.__name__}").start()
+    return await future
+
+
 async def call_handler(
     fn: Callable,
     instance: Any,
@@ -205,10 +248,18 @@ async def call_handler(
     context: WorkerContext | None = None,
     context_param: str = "",
     thread: bool = False,
+    own_thread: bool = False,
 ) -> Any:
-    """Gọi handler, tiêm `ctx` nếu nó xin, và chạy đúng chỗ (thread hay loop)."""
+    """Gọi handler, tiêm `ctx` nếu nó xin, và chạy đúng chỗ (thread hay loop).
+
+    `own_thread=True` dành cho việc CHẠY MÃI (`@worker`): thread riêng, không
+    mượn pool. Việc ngắn (`@interval`, `@job`) thì mượn pool là đúng — mở thread
+    mới cho mỗi lượt chạy 5 giây một lần là phí.
+    """
     kwargs = {context_param: context} if context_param and context is not None else {}
     if thread:
+        if own_thread:
+            return await run_in_own_thread(fn, instance, *args, **kwargs)
         return await asyncio.to_thread(fn, instance, *args, **kwargs)
     return await fn(instance, *args, **kwargs)
 
@@ -425,6 +476,7 @@ class WorkerPool:
             context=context,
             context_param=spec.context_param,
             thread=spec.thread,
+            own_thread=True,          # vòng lặp chạy mãi: KHÔNG mượn pool chung
         )
 
     async def _become_owner(self, spec: WorkerSpec, context: WorkerContext) -> bool:

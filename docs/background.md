@@ -139,6 +139,34 @@ HTTP, mọi frame WebSocket, mọi worker khác. `async def` không tự cứu �
 `await ctx.blocking(fn, *args)` đẩy lời gọi sang thread khác rồi chờ kết quả.
 Đo được với 3 camera chạy song song: event loop trễ **0,001 giây**.
 
+#### Bên dưới nó là gì
+
+`ctx.blocking` gọi `asyncio.to_thread`, tức đẩy việc vào
+**`ThreadPoolExecutor` dùng chung của event loop**. Hai điều đáng biết:
+
+- **Thread được TÁI SỬ DỤNG**, không mở mới mỗi lần gọi. Gọi một triệu lần
+  cũng không sinh một triệu thread.
+- **Pool có trần**: `min(32, số nhân + 4)` — trên máy 12 nhân là 16 chỗ. Nhiều
+  worker gọi dày hơn số chỗ thì chúng xếp hàng chờ nhau: **chậm đi**, không
+  hỏng. Nới bằng `APP_WORKERS__THREAD_POOL_SIZE`.
+
+Còn `@worker(thread=True)` thì **KHÔNG** dùng pool đó — mỗi bản một thread
+riêng. Khác biệt này quan trọng, và tôi đã mắc đúng lỗi ấy một lần: vòng lặp
+chạy mãi mà mượn pool chung thì nó giữ chỗ **vĩnh viễn**. Đủ 16 worker là pool
+cạn sạch và mọi `ctx.blocking` treo cứng — đo được 20 worker thì cả tiến trình
+chết, không phải chậm. Sau khi cho thread riêng:
+
+| Worker `thread=True` | Thread tiến trình | `ctx.blocking(0.01s)` mất |
+|---|---|---|
+| 4 | 6 | 0,013s |
+| 12 | 14 | 0,013s |
+| 20 | 22 | 0,015s *(trước khi sửa: treo vĩnh viễn)* |
+| 40 | 42 | 0,015s |
+
+Cái giá của thread riêng: mỗi bản là một thread hệ điều hành thật. `@worker`
+chạy mãi nên đó là cái giá đúng; `@interval`/`@job` chạy từng lượt ngắn thì
+mượn pool là đúng hơn — mở thread mới cho mỗi lượt 5 giây một lần là phí.
+
 ### Hai kiểu chạy — có ở CẢ BỐN decorator
 
 `thread=True` không riêng của `@worker`: `@interval`, `@cron`, `@timeout` và
@@ -535,6 +563,7 @@ Không cần đặt gì để chạy. Các biến dưới đây để chỉnh:
 | `APP_WORKERS__STOP_SECONDS` | `20.0` | chờ worker thoát khi tắt app |
 | `APP_WORKERS__SINGLE` | `true` | worker khai `single=True` thì có khoá thật hay không |
 | `APP_WORKERS__TAKEOVER_SECONDS` | `5.0` | bản đang chờ thì bao lâu thử giành quyền lại |
+| `APP_WORKERS__THREAD_POOL_SIZE` | `0` | số thread cho `ctx.blocking`; 0 = mặc định Python `min(32, nhân+4)` |
 
 ---
 
@@ -563,3 +592,4 @@ Không cần đặt gì để chạy. Các biến dưới đây để chỉnh:
 | `workers_restarted_total` tăng đều | camera rớt mạng, hoặc vòng lặp ném lỗi mỗi lượt — xem log `worker.crashed` |
 | `worker.stop_timeout` lúc tắt app | vòng lặp không kiểm `ctx.running`, hoặc lời gọi chặn không có timeout |
 | API đứng hình khi worker chạy | quên bọc `ctx.blocking(...)` quanh hàm chặn |
+| `ctx.blocking` chậm dần khi thêm worker | vượt trần pool — nới `APP_WORKERS__THREAD_POOL_SIZE` |
