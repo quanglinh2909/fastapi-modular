@@ -84,9 +84,9 @@ def kafka_subscriber(
     *,
     group: str,
     auto_offset_reset: str = "latest",
-    max_retries: int = 3,
+    max_retries: int = 0,
     retry_delay: float = 1.0,
-    dead_letter: bool = True,
+    dead_letter: bool = False,
 ) -> Callable[[Callable], Callable]:
     """Gắn method vào một topic Kafka, đọc dưới danh nghĩa nhóm `group`.
 
