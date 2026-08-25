@@ -55,6 +55,7 @@ from fastapi_modular.infrastructure.rabbitmq.metrics import (
     rabbitmq_publish_failed,
     rabbitmq_published,
 )
+from fastapi_modular.infrastructure.rabbitmq.patterns import EXCHANGE_KINDS, ExchangeKind
 
 log = get_logger(__name__)
 
@@ -114,6 +115,20 @@ def _doc_body(body: bytes) -> Any:
         return body.decode("utf-8", errors="replace")
 
 
+def _mili_giay(giay: float, ten: str) -> int:
+    """Đổi giây (đơn vị của thư viện) sang mili-giây (đơn vị của AMQP).
+
+    Mọi thời lượng trong khung này tính bằng GIÂY. AMQP thì tính bằng mili-giây.
+    Nhầm đơn vị ở đây không báo lỗi gì cả — chỉ là tin sống lâu gấp nghìn lần,
+    hoặc chết ngay khi vừa tới. Quy đổi một chỗ duy nhất là ở đây.
+    """
+    if giay <= 0:
+        raise ServiceUnavailableError(
+            f"`{ten}` phải lớn hơn 0 giây (đang là {giay}). Không cần giới hạn thì bỏ hẳn tham số."
+        )
+    return max(1, round(giay * 1000))
+
+
 @injectable
 class RabbitBroker:
     def __init__(self, settings: Settings) -> None:
@@ -121,6 +136,7 @@ class RabbitBroker:
         self._connection: Any = None
         self._publish_channel: Any = None
         self._exchanges: dict[str, Any] = {}
+        self._exchange_kinds: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._ready_hooks: list[Callable[[], Awaitable[None]]] = []
         self._supervisor: asyncio.Task[None] | None = None
@@ -213,6 +229,7 @@ class RabbitBroker:
         self._connection = connection
         self._publish_channel = publish_channel
         self._exchanges.clear()
+        self._exchange_kinds.clear()
 
         # aio-pika gọi lại khi nó tự nối lại xong. Không tự khai báo lại gì ở
         # đây: RobustChannel/RobustQueue đã khôi phục exchange, hàng đợi,
@@ -276,6 +293,7 @@ class RabbitBroker:
         self._connection = None
         self._publish_channel = None
         self._exchanges.clear()
+        self._exchange_kinds.clear()
 
     def _ready(self) -> None:
         if not self._config.enabled:
@@ -286,22 +304,78 @@ class RabbitBroker:
             raise ServiceUnavailableError("Chưa kết nối được RabbitMQ")
 
     # ---------------------------------------------------------- khai báo
-    async def exchange(self, name: str) -> Any:
-        """Lấy (hoặc khai báo) một topic exchange. Kết quả được nhớ lại."""
-        found = self._exchanges.get(name)
-        if found is not None:
-            return found
+    async def exchange(self, name: str, kind: ExchangeKind | None = None) -> Any:
+        """Lấy (hoặc khai báo) một exchange. Kết quả được nhớ lại.
 
+        `kind=None` nghĩa là "kiểu nào cũng được": exchange này đã khai trong
+        tiến trình rồi thì dùng lại đúng kiểu đó, chưa có thì khai `topic`. Nhờ
+        vậy bên đăng tin không phải nhắc lại kiểu mà consumer đã khai — quên
+        nhắc là chuyện gần như chắc chắn xảy ra, và cái giá của nó rất đắt (xem
+        dưới).
+
+        Tên rỗng là exchange MẶC ĐỊNH của AMQP: có sẵn ở mọi broker, không khai
+        báo được, không bind được, route thẳng theo tên hàng đợi.
+        """
         self._ready()
-        aio_pika = _require_aio_pika()
-        async with self._lock:
-            if name not in self._exchanges:
-                self._exchanges[name] = await self._publish_channel.declare_exchange(
-                    # Exchange luôn bền: nó chỉ là một bảng định tuyến, không
-                    # giữ dữ liệu, mà mất nó thì mọi binding mất theo.
-                    name, aio_pika.ExchangeType.TOPIC, durable=True
+        if name == "":
+            return self._publish_channel.default_exchange
+
+        da_khai = self._exchange_kinds.get(name)
+        if da_khai is not None:
+            if kind is not None and kind != da_khai:
+                # Chặn TẠI CHỖ thay vì để broker chặn: khai lại exchange với
+                # kiểu khác là lỗi giao thức, RabbitMQ đáp PRECONDITION_FAILED
+                # rồi ĐÓNG kênh đăng tin — kéo theo mọi lời publish khác của
+                # tiến trình này, không chỉ lời gọi sai.
+                raise ServiceUnavailableError(
+                    f"Exchange '{name}' đã khai kiểu '{da_khai}', giờ lại đòi kiểu "
+                    f"'{kind}'. Một exchange chỉ có MỘT kiểu và RabbitMQ không cho "
+                    "đổi — sửa cho khớp, hoặc dùng tên exchange khác."
                 )
-                log.debug("mq.exchange_declared", exchange=name)
+            return self._exchanges[name]
+
+        if kind is not None and kind not in EXCHANGE_KINDS:
+            raise ServiceUnavailableError(
+                f"Kiểu exchange '{kind}' không có. Chọn: {', '.join(EXCHANGE_KINDS)}."
+            )
+        if kind == "default":
+            raise ServiceUnavailableError(
+                f"Kiểu 'default' là exchange tên rỗng có sẵn của AMQP, không đặt "
+                f"tên được — bỏ tên '{name}' đi, hoặc chọn kiểu khác."
+            )
+
+        aio_pika = _require_aio_pika()
+        kieu = kind or "topic"
+        async with self._lock:
+            if name in self._exchanges:
+                # Một lời gọi khác vừa khai xong trong lúc ta chờ khoá. Kiểm lại
+                # kiểu ở đây nữa, nếu không hai lời gọi ĐẦU TIÊN chạy song song
+                # với hai kiểu khác nhau sẽ lọt qua chốt phía trên.
+                if kind is not None and kind != self._exchange_kinds.get(name):
+                    raise ServiceUnavailableError(
+                        f"Exchange '{name}' đã khai kiểu "
+                        f"'{self._exchange_kinds.get(name)}', giờ lại đòi kiểu "
+                        f"'{kind}'. Một exchange chỉ có MỘT kiểu và RabbitMQ không "
+                        "cho đổi — sửa cho khớp, hoặc dùng tên exchange khác."
+                    )
+            else:
+                try:
+                    self._exchanges[name] = await self._publish_channel.declare_exchange(
+                        # Exchange luôn bền: nó chỉ là một bảng định tuyến, không
+                        # giữ dữ liệu, mà mất nó thì mọi binding mất theo.
+                        name, aio_pika.ExchangeType(kieu), durable=True
+                    )
+                except Exception as exc:
+                    if "PRECONDITION_FAILED" not in str(exc):
+                        raise
+                    raise ServiceUnavailableError(
+                        f"Exchange '{name}' đã tồn tại trên broker với kiểu KHÁC "
+                        f"'{kieu}': {exc}. RabbitMQ không cho đổi kiểu của exchange "
+                        f"đã có — xoá nó (rabbitmqctl delete_exchange {name}) rồi "
+                        "khởi động lại, hoặc đổi tên exchange."
+                    ) from exc
+                self._exchange_kinds[name] = kieu
+                log.debug("mq.exchange_declared", exchange=name, kind=kieu)
         return self._exchanges[name]
 
     async def new_channel(self, *, prefetch: int = DEFAULT_PREFETCH) -> Any:
@@ -340,6 +414,8 @@ class RabbitBroker:
         durable: bool = True,
         dead_letter: bool = False,
         auto_delete: bool = False,
+        message_ttl: float | None = None,
+        queue_expires: float | None = None,
     ) -> Any:
         """Hàng đợi BỀN cho consumer nền: nhiều worker chia nhau xử lý.
 
@@ -350,9 +426,25 @@ class RabbitBroker:
         `auto_delete=True` thì broker XOÁ hàng đợi khi consumer cuối cùng ngắt,
         và mọi tin còn nằm trong đó mất theo. Mặc định là giữ lại: app tắt (hoặc
         deploy) thì tin vẫn đọng ở broker, chạy lên là xử lý tiếp.
+
+        Hai hạn dùng, tính bằng GIÂY, mặc định không có cái nào:
+
+            message_ttl     tin nằm trong hàng đợi quá lâu thì bỏ (x-message-ttl)
+            queue_expires   hàng đợi không ai dùng quá lâu thì broker xoá (x-expires)
+
+        Kèm `dead_letter=True` thì tin hết hạn không bốc hơi mà rơi vào
+        `<name>.dlq` — cách duy nhất để biết mình đã bỏ mất những gì.
+
+        CẢNH BÁO: cả hai đi vào tham số khai báo hàng đợi, mà RabbitMQ không cho
+        khai lại hàng đợi đã tồn tại với tham số khác. Đổi con số rồi khởi động
+        lại mà chưa xoá hàng đợi cũ thì gặp PRECONDITION_FAILED.
         """
         self._ready()
         arguments: dict[str, Any] = {}
+        if message_ttl is not None:
+            arguments["x-message-ttl"] = _mili_giay(message_ttl, "message_ttl")
+        if queue_expires is not None:
+            arguments["x-expires"] = _mili_giay(queue_expires, "queue_expires")
         if dead_letter:
             dlx = await self._declare_dead_letter(channel, name, durable=durable)
             arguments["x-dead-letter-exchange"] = dlx
@@ -515,11 +607,13 @@ class RabbitBroker:
     async def publish(
         self,
         exchange: str,
-        routing_key: str,
+        routing_key: str = "",
         payload: Any = None,
         *,
+        exchange_type: ExchangeKind | None = None,
         headers: dict[str, Any] | None = None,
         persistent: bool = True,
+        ttl: float | None = None,
         timeout: float | None = None,
         fire_and_forget: bool = False,
     ) -> bool:
@@ -528,10 +622,21 @@ class RabbitBroker:
         `fire_and_forget=True` thì RabbitMQ hỏng chỉ ghi cảnh báo thay vì ném
         lỗi — dùng cho thông báo phụ, nơi mất tin còn hơn hỏng cả request. Mặc
         định là ném lỗi, vì im lặng nuốt tin là thứ khó lần ra nhất.
+
+        `exchange_type` chỉ cần khi tiến trình này CHỈ đăng tin, không có
+        consumer nào khai exchange đó trước. Có consumer rồi thì bỏ trống, khung
+        dùng lại đúng kiểu đã khai.
+
+        `ttl` (giây) đặt hạn dùng cho RIÊNG tin này: quá hạn mà chưa ai lấy thì
+        broker bỏ nó. Khác `message_ttl` của hàng đợi ở chỗ nó theo từng tin, nên
+        đổi lúc nào cũng được — không dính PRECONDITION_FAILED.
+
+        Với exchange `fanout`/`headers`/mặc định thì `routing_key` bị bỏ qua;
+        `headers` chọn hàng đợi theo `headers`.
         """
         aio_pika = _require_aio_pika()
         try:
-            target = await self.exchange(exchange)
+            target = await self.exchange(exchange, exchange_type)
             message = aio_pika.Message(
                 body=json.dumps(payload, ensure_ascii=False, default=str).encode(),
                 content_type=CONTENT_TYPE,
@@ -544,6 +649,7 @@ class RabbitBroker:
                     else aio_pika.DeliveryMode.NOT_PERSISTENT
                 ),
                 headers=headers or {},
+                expiration=ttl,
             )
             await asyncio.wait_for(
                 target.publish(message, routing_key=routing_key),

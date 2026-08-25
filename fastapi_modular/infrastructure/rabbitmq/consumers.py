@@ -39,14 +39,15 @@ from __future__ import annotations
 import inspect
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any, get_type_hints
+from dataclasses import dataclass, replace
+from typing import Any, Literal, get_type_hints
 
 from pydantic import BaseModel, ValidationError
 
 from fastapi_modular.core.config import Settings
 from fastapi_modular.core.container import _REGISTRY, container, injectable, request_scope
 from fastapi_modular.core.context import new_request_id, reset_request_id, set_request_id
+from fastapi_modular.core.exceptions import BadRequestError
 from fastapi_modular.core.logging import get_logger
 from fastapi_modular.infrastructure.rabbitmq.broker import DEFAULT_PREFETCH, RabbitBroker
 from fastapi_modular.infrastructure.rabbitmq.metrics import (
@@ -55,7 +56,7 @@ from fastapi_modular.infrastructure.rabbitmq.metrics import (
     rabbitmq_dead_lettered,
     rabbitmq_retried,
 )
-from fastapi_modular.infrastructure.rabbitmq.patterns import validate_pattern
+from fastapi_modular.infrastructure.rabbitmq.patterns import ExchangeKind, normalize_binding
 
 log = get_logger(__name__)
 
@@ -76,6 +77,10 @@ class RabbitmqSpec:
     exchange: str
     routing_key: str
     queue: str
+    exchange_type: str = "topic"
+    bind_arguments: dict[str, Any] | None = None
+    message_ttl: float | None = None
+    queue_expires: float | None = None
     max_retries: int = 0
     retry_delay: float = 10.0
     dead_letter: bool = False
@@ -94,9 +99,14 @@ class RabbitmqSpec:
 
 def rabbitmq_subscriber(
     exchange: str,
-    routing_key: str,
+    routing_key: str = "",
     *,
     queue: str,
+    exchange_type: ExchangeKind | None = None,
+    headers_match: dict[str, Any] | None = None,
+    match: Literal["all", "any"] = "all",
+    message_ttl: float | None = None,
+    queue_expires: float | None = None,
     max_retries: int = 0,
     retry_delay: float = 10.0,
     dead_letter: bool = False,
@@ -133,6 +143,23 @@ def rabbitmq_subscriber(
         auto_delete   xoá hàng đợi khi consumer cuối cùng ngắt
         prefetch      số tin nhận trước khi ack — handler chậm thì để nhỏ
 
+    `exchange_type` chọn CÁCH exchange tìm hàng đợi để giao tin. Mặc định là
+    `topic` (hoặc `default` khi `exchange=""`):
+
+        topic     routing_key là mẫu có * và #   routing_key="alert.*"
+        direct    routing_key phải trùng khít    routing_key="alert.created"
+        fanout    mọi hàng đợi đã bind đều nhận  BỎ routing_key
+        headers   lọc theo header của tin        headers_match={"vung": "hanoi"}
+        default   exchange="" — tin gửi thẳng vào hàng đợi trùng TÊN
+
+    Với `headers`, `match="all"` là phải khớp MỌI cặp trong `headers_match`,
+    `match="any"` là khớp một cặp là đủ.
+
+    `message_ttl` và `queue_expires` (giây) là hai hạn dùng của HÀNG ĐỢI: tin
+    nằm quá lâu thì bỏ, hàng đợi không ai dùng quá lâu thì broker xoá. Đổi con
+    số của chúng đòi hỏi xoá hàng đợi cũ (RabbitMQ không cho khai lại với tham
+    số khác) — cần hạn linh hoạt theo từng tin thì dùng `broker.publish(ttl=…)`.
+
     `auto_delete` mặc định False, tức GIỮ LẠI hàng đợi khi app tắt. Đó là điều
     người ta muốn gần như mọi lúc: deploy, restart, app chết — tin gửi trong lúc
     đó vẫn nằm ở broker, app lên là xử lý tiếp. Đặt True thì broker xoá hàng đợi
@@ -149,7 +176,23 @@ def rabbitmq_subscriber(
     xác nhận hàng đợi chính đã biến mất (tức không còn worker nào khác đang
     nghe) — xem `RabbitmqRunner._don_hang_doi_phu`.
     """
-    validate_pattern(routing_key)
+    for nhan, gia_tri in (("message_ttl", message_ttl), ("queue_expires", queue_expires)):
+        # Chặn ngay lúc khai báo chứ không đợi tới lúc dựng hàng đợi: lỗi lúc
+        # dựng chỉ hiện trong log `mq.consumer_start_failed` rồi app vẫn chạy
+        # tiếp — không có consumer, mà cũng không ai chết để mà nhận ra.
+        if gia_tri is not None and gia_tri <= 0:
+            raise BadRequestError(
+                f"`{nhan}` phải lớn hơn 0 giây (đang là {gia_tri}). "
+                "Không cần hạn dùng thì bỏ hẳn tham số."
+            )
+
+    kieu, routing_key, bind_arguments = normalize_binding(
+        exchange,
+        routing_key,
+        kind=exchange_type,
+        headers_match=headers_match,
+        match=match,
+    )
 
     def decorate(fn: Callable) -> Callable:
         if not inspect.iscoroutinefunction(fn):
@@ -161,6 +204,10 @@ def rabbitmq_subscriber(
                 exchange=exchange,
                 routing_key=routing_key,
                 queue=queue,
+                exchange_type=kieu,
+                bind_arguments=bind_arguments,
+                message_ttl=message_ttl,
+                queue_expires=queue_expires,
                 max_retries=max_retries,
                 retry_delay=retry_delay,
                 dead_letter=dead_letter,
@@ -201,17 +248,12 @@ def discover_rabbitmq_subscribers() -> list[RabbitmqSpec]:
                 if isinstance(annotation, type) and issubclass(annotation, BaseModel)
                 else None
             )
+            # `replace` chứ không dựng lại từng trường: thêm một tuỳ chọn vào
+            # RabbitmqSpec mà quên chép nó xuống đây thì tuỳ chọn đó lặng lẽ mất
+            # tác dụng — decorator ghi nhận, runner không bao giờ thấy.
             found.append(
-                RabbitmqSpec(
-                    exchange=spec.exchange,
-                    routing_key=spec.routing_key,
-                    queue=spec.queue,
-                    max_retries=spec.max_retries,
-                    retry_delay=spec.retry_delay,
-                    dead_letter=spec.dead_letter,
-                    durable=spec.durable,
-                    auto_delete=spec.auto_delete,
-                    prefetch=spec.prefetch,
+                replace(
+                    spec,
                     cls=cls,
                     fn=fn,
                     model=model,
@@ -264,6 +306,8 @@ class RabbitmqRunner:
                     durable=spec.durable,
                     dead_letter=spec.dead_letter,
                     auto_delete=spec.auto_delete,
+                    message_ttl=spec.message_ttl,
+                    queue_expires=spec.queue_expires,
                 )
                 # Chỉ tạo hàng đợi chờ khi thật sự có thử lại. Không kiểm tra
                 # thì broker mọc thêm một hàng đợi không bao giờ có tin nào.
@@ -271,9 +315,17 @@ class RabbitmqRunner:
                     await self._broker.retry_queue(
                         channel, f"{spec.queue}.retry", spec.queue, durable=spec.durable
                     )
-                await queue.bind(
-                    await self._broker.exchange(spec.exchange), routing_key=spec.routing_key
-                )
+                if spec.exchange_type == "default":
+                    # AMQP CẤM bind tay vào exchange mặc định (ACCESS_REFUSED,
+                    # đóng luôn kênh). Không cần bind: mọi hàng đợi đã sẵn nối
+                    # với nó qua đúng tên của mình.
+                    pass
+                else:
+                    await queue.bind(
+                        await self._broker.exchange(spec.exchange, spec.exchange_type),
+                        routing_key=spec.routing_key,
+                        arguments=spec.bind_arguments,
+                    )
                 tag = await queue.consume(self._make_callback(spec))
                 self._started[spec.queue] = (queue, tag, spec)
                 log.info(
@@ -281,6 +333,7 @@ class RabbitmqRunner:
                     handler=spec.label,
                     queue=spec.queue,
                     exchange=spec.exchange,
+                    exchange_type=spec.exchange_type,
                     routing_key=spec.routing_key,
                     retries=spec.max_retries,
                     dead_letter=spec.dead_letter,

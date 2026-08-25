@@ -9,8 +9,11 @@ fam install rabbitmq     # cài thư viện + ghi APP_RABBITMQ__* vào .env
 Hai việc làm được: **đăng tin** (`RabbitBroker.publish`) và **xử lý tin nền**
 (`@rabbitmq_subscriber`).
 
-Một `@rabbitmq_subscriber` mặc định tạo **đúng một hàng đợi**. Thử lại và hàng đợi chết
-là thứ **tự bật**, không phải thứ mặc định có.
+Một `@rabbitmq_subscriber` mặc định tạo **đúng một hàng đợi**. Thử lại, hàng đợi
+chết và hạn dùng đều là thứ **tự bật**, không phải thứ mặc định có.
+
+Đủ [năm kiểu exchange](#năm-kiểu-exchange) của AMQP — `topic` (mặc định),
+`direct`, `fanout`, `headers`, `default` — và [ba dạng hạn dùng](#hạn-dùng-ttl).
 
 ---
 
@@ -60,12 +63,14 @@ class AlertService:
 
 ```python
 await broker.publish(
-    exchange,            # str  — tên exchange (kiểu topic, tự tạo nếu chưa có)
-    routing_key,         # str  — "alert.created.hanoi"
+    exchange,            # str  — tên exchange (tự tạo nếu chưa có); "" = exchange mặc định
+    routing_key="",      # str  — "alert.created.hanoi"; fanout/headers bỏ trống
     payload=None,        # Any  — bất cứ thứ gì json hoá được
     *,
-    headers=None,        # dict | None
+    exchange_type=None,  # None = dùng lại kiểu đã khai, chưa có thì "topic"
+    headers=None,        # dict | None — với exchange headers thì đây là thứ để lọc
     persistent=True,     # tin sống sót qua restart broker
+    ttl=None,            # giây — hạn dùng của RIÊNG tin này
     timeout=None,        # None = dùng APP_RABBITMQ__PUBLISH_TIMEOUT_SECONDS
     fire_and_forget=False,
 ) -> bool
@@ -123,6 +128,132 @@ ALERT_CREATED = "alert.created"
 
 ---
 
+## Năm kiểu exchange
+
+Exchange không giữ tin. Nó chỉ trả lời một câu hỏi: **tin này đi vào những hàng
+đợi nào?** Năm kiểu là năm cách trả lời câu hỏi đó.
+
+| Kiểu | Chọn hàng đợi theo | Khai ở consumer | Dùng khi |
+|---|---|---|---|
+| `topic` *(mặc định)* | routing key khớp **mẫu** có `*` và `#` | `routing_key="alert.#"` | phần lớn trường hợp: một luồng sự kiện, mỗi bên nghe một nhánh |
+| `direct` | routing key **trùng khít** | `routing_key="device.reboot"` | tên lệnh/loại việc đóng, không cần mẫu |
+| `fanout` | **không lọc gì** — mọi hàng đợi đã bind | bỏ `routing_key` | phát tán: xoá cache, tải lại cấu hình, mọi worker đều phải biết |
+| `headers` | **header** của tin | `headers_match={"vung": "hanoi"}` | phải lọc theo **nhiều chiều** cùng lúc, nhét hết vào routing key thì rối |
+| `default` | **tên hàng đợi** | `exchange=""` | giao việc thẳng cho một hàng đợi cụ thể, không định tuyến gì |
+
+Không khai `exchange_type` thì là `topic`, trừ khi `exchange=""` — tên rỗng
+luôn là exchange mặc định.
+
+### Chọn kiểu nào
+
+Cứ mặc định `topic` cho tới khi có lý do rõ ràng để đổi. `topic` làm được việc
+của `direct` (routing key không có `*` `#` thì nó chính là trùng khít) và của
+`fanout` (bind `#`), chỉ thua ở chỗ đọc code không thấy ngay ý định.
+
+Đổi khi ý định đáng được viết ra:
+
+- `fanout` nói "**mọi** người nhận" rõ hơn `topic` + `#`, và không ai lỡ tay
+  thêm bộ lọc vào được.
+- `direct` từ chối `alert.*` ngay lúc khởi động, nên không ai vô tình mở rộng
+  phạm vi một hàng đợi lệnh.
+- `headers` là kiểu duy nhất lọc được nhiều chiều độc lập.
+
+### `fanout` — mọi hàng đợi một bản sao
+
+```python
+import socket
+
+TOI = socket.gethostname()      # mỗi worker một tên hàng đợi khác nhau
+
+# Người gửi
+await broker.publish("cache-events", payload={"khoa": "user:9"}, exchange_type="fanout")
+
+# Mỗi worker một hàng đợi RIÊNG -> mỗi worker nhận một bản sao
+@rabbitmq_subscriber("cache-events", queue=f"xoa-cache-{TOI}",
+                     exchange_type="fanout", durable=False, auto_delete=True)
+async def xoa_cache(self, payload: dict) -> None: ...
+```
+
+Cái bẫy ở đây không phải kiểu exchange mà là **tên hàng đợi**: hai worker dùng
+CHUNG một tên thì RabbitMQ chia lượt cho nhau, mỗi tin chỉ một worker thấy —
+fanout hay không cũng vậy. Muốn mọi worker cùng nhận thì mỗi worker phải có
+hàng đợi riêng (tên kèm hostname, hoặc [hàng đợi tự sinh](#khi-cần-mọi-worker-cùng-nhận-một-bản-sao)).
+
+### `direct` — trùng khít, không mẫu nào cả
+
+```python
+await broker.publish("cmd", "device.reboot", {"id": "cam-01"}, exchange_type="direct")
+
+@rabbitmq_subscriber("cmd", "device.reboot", queue="device-cmd", exchange_type="direct")
+async def reboot(self, payload: dict) -> None: ...
+```
+
+`routing_key` chứa `*` hoặc `#` sẽ bị từ chối ngay lúc khởi động — với `direct`
+chúng chỉ là ký tự thường, và "cái mẫu của tôi không khớp gì cả" là lỗi tốn cả
+buổi để tìm ra.
+
+### `headers` — lọc nhiều chiều
+
+```python
+await broker.publish(
+    "audit", payload={"id": 1},
+    exchange_type="headers", headers={"vung": "hanoi", "muc": "cao"},
+)
+
+# match="all": phải khớp MỌI cặp.  match="any": khớp một cặp là đủ.
+@rabbitmq_subscriber("audit", queue="canh-bao-hanoi", exchange_type="headers",
+                     headers_match={"vung": "hanoi", "muc": "cao"}, match="all")
+async def canh_bao(self, payload: dict) -> None: ...
+```
+
+`routing_key` **bị bỏ qua hoàn toàn** — khai nó là lỗi ngay lúc khởi động, vì
+tin vẫn đi nhưng không theo cách bạn tưởng.
+
+Chỉ đổi sang `headers` khi thật sự cần lọc nhiều chiều **độc lập** với nhau
+(vùng × mức × loại). Ba chiều nhét vào routing key thì phải chọn trước thứ tự
+`vung.muc.loai`, và người muốn "mọi vùng, mức cao" sẽ mắc kẹt. Đổi lại: mẫu
+routing key hiện ngay trong giao diện quản trị RabbitMQ và trong log, còn điều
+kiện header thì phải đi tra binding mới thấy.
+
+### `default` — đi thẳng vào một hàng đợi
+
+Exchange tên rỗng có sẵn ở mọi broker, không khai báo được, và **mọi hàng đợi
+đã tự nối với nó qua đúng tên của mình**. Gửi vào đó là gửi thẳng cho một hàng
+đợi, không định tuyến gì:
+
+```python
+await broker.publish("", "viec-nen", {"id": 7})     # routing key = TÊN hàng đợi
+
+@rabbitmq_subscriber("", queue="viec-nen")          # exchange="" -> tự hiểu là default
+async def lam_viec(self, payload: dict) -> None: ...
+```
+
+Hợp cho hàng đợi việc một-chiều (job queue), nơi chỉ có đúng một bên nhận và
+không bao giờ cần thêm bên thứ hai. Cần thêm người nghe về sau thì phải sửa
+người gửi — đó là cái giá của việc bỏ qua định tuyến.
+
+> Không bind tay vào exchange mặc định được: AMQP cấm, và lệnh bind sai sẽ đóng
+> cả kênh. Khung tự bỏ qua bước bind cho kiểu này.
+
+### Một exchange chỉ có MỘT kiểu
+
+Khai lại một exchange với kiểu khác là lỗi giao thức: RabbitMQ đáp
+`PRECONDITION_FAILED` rồi **đóng kênh đăng tin**, kéo theo mọi lời `publish`
+khác của tiến trình — không riêng lời gọi sai. Nên khung chặn tại chỗ:
+
+```
+Exchange 'events' đã khai kiểu 'fanout', giờ lại đòi kiểu 'topic'.
+```
+
+Vì vậy `publish()` **không cần** nhắc lại `exchange_type` khi trong tiến trình
+đã có consumer khai exchange đó — khung dùng lại đúng kiểu ấy. Chỉ khai
+`exchange_type` ở `publish()` khi tiến trình này chỉ gửi, không nghe.
+
+Exchange đã tồn tại trên broker từ trước với kiểu khác thì phải xoá nó:
+`rabbitmqctl delete_exchange <tên>`. Không có cách đổi kiểu tại chỗ.
+
+---
+
 ## Consumer nền
 
 ```python
@@ -148,10 +279,15 @@ sinh sẵn khung này.
 
 ```python
 @rabbitmq_subscriber(
-    exchange,            # str — tên exchange
-    routing_key,         # str — mẫu để nghe: "alert.#"
+    exchange,            # str — tên exchange; "" = exchange mặc định
+    routing_key="",      # str — mẫu để nghe: "alert.#"; fanout/headers bỏ trống
     *,
     queue,               # str — BẮT BUỘC, tên nhóm consumer
+    exchange_type=None,  # None = "topic", hoặc "default" khi exchange=""
+    headers_match=None,  # dict — chỉ cho exchange_type="headers"
+    match="all",         # "all" = khớp mọi cặp header, "any" = một cặp là đủ
+    message_ttl=None,    # giây — tin nằm trong hàng đợi quá lâu thì bỏ
+    queue_expires=None,  # giây — hàng đợi không ai dùng quá lâu thì broker xoá
     max_retries=0,
     retry_delay=10.0,
     dead_letter=False,
@@ -168,6 +304,11 @@ bạn tự bật — xem [.retry và .dlq là gì](#retry-và-dlq-là-gì).
 | Tham số | Mặc định | Không truyền thì | Đổi khi nào |
 |---|---|---|---|
 | `queue` | *bắt buộc* | — | luôn phải đặt; đây là danh tính của nhóm consumer |
+| `exchange_type` | `topic` | routing key là **mẫu** có `*` và `#` | `direct` / `fanout` / `headers` / `default` — xem [Năm kiểu exchange](#năm-kiểu-exchange) |
+| `headers_match` | `None` | *(chỉ dùng với `exchange_type="headers"`)* | `{"vung": "hanoi"}` khi lọc theo header |
+| `match` | `"all"` | phải khớp **mọi** cặp trong `headers_match` | `"any"` khi khớp một cặp là đủ |
+| `message_ttl` | `None` | tin nằm trong hàng đợi **mãi mãi** cho tới khi có người lấy | đặt (giây) khi tin cũ mất giá trị — xem [Hạn dùng](#hạn-dùng-ttl) |
+| `queue_expires` | `None` | hàng đợi tồn tại mãi kể cả khi không ai dùng | đặt (giây) cho hàng đợi tạm sinh theo phiên/theo worker |
 | `max_retries` | `0` | **hỏng là bỏ ngay**, chỉ để lại log | `3`–`5` khi lỗi thường là tạm thời (gọi API ngoài, SMTP) → thêm `<queue>.retry` |
 | `retry_delay` | `10.0` | *(không dùng tới khi `max_retries=0`)* | `60` cho dịch vụ ngoài; `0.5` cho việc nhanh |
 | `dead_letter` | `False` | tin hỏng **biến mất** sau khi hết lượt thử | `True` khi cần xem lại tin hỏng → thêm `<queue>.dlq` |
@@ -300,6 +441,86 @@ async def giao_hang(self, payload: OrderPaid, meta: dict) -> None:
 
 Exchange `dlx` (dùng chung cho mọi consumer) chỉ được khai khi có ít nhất một
 consumer bật `dead_letter=True`.
+
+---
+
+## Hạn dùng (TTL)
+
+Mặc định tin nằm trong hàng đợi **vĩnh viễn** — đó thường là điều bạn muốn, và
+cũng là lý do hàng đợi tồn tại. Nhưng có loại tin cũ đi thì thành vô nghĩa hoặc
+thành có hại: vị trí xe lúc 9h sáng, mã OTP, lệnh "bật đèn" gửi lúc thiết bị
+đang mất mạng.
+
+Ba cách đặt hạn, khác nhau ở **phạm vi** và ở **cái giá khi đổi**:
+
+| Cách | Phạm vi | Đổi con số |
+|---|---|---|
+| `publish(..., ttl=5)` | **một tin** | tự do, đổi lúc nào cũng được |
+| `@rabbitmq_subscriber(..., message_ttl=60)` | **mọi tin** trong hàng đợi đó | phải xoá hàng đợi cũ trước |
+| `@rabbitmq_subscriber(..., queue_expires=3600)` | **bản thân hàng đợi** | phải xoá hàng đợi cũ trước |
+
+Tất cả tính bằng **giây** (AMQP tính bằng mili-giây, khung tự quy đổi).
+
+### `ttl` — hạn của một tin
+
+```python
+# Vị trí xe: quá 5 giây thì số cũ còn tệ hơn không có số nào.
+await broker.publish("events", "xe.viTri", {"id": "51A", "lat": 21.0}, ttl=5)
+```
+
+Không đụng tới khai báo hàng đợi, nên đổi tuỳ ý. Đây là lựa chọn mặc định nên
+dùng khi chỉ một vài loại tin cần hạn.
+
+### `message_ttl` — hạn của mọi tin trong hàng đợi
+
+```python
+@rabbitmq_subscriber("events", "viTri.#", queue="theo-doi-xe",
+                     message_ttl=30, durable=False)
+async def cap_nhat(self, payload: dict) -> None: ...
+```
+
+Dùng khi **cả hàng đợi** là loại dữ liệu chóng hỏng, và bạn muốn luật đó nằm
+cạnh consumer chứ không rải ở mọi chỗ gọi `publish`.
+
+Đây cũng là cái van chặn hàng đợi phình vô hạn khi consumer chết mà người gửi
+vẫn gửi: không có hạn thì tin dồn tới lúc broker hết đĩa và **mọi** hàng đợi
+chết theo, kể cả những hàng đợi không liên quan.
+
+### `queue_expires` — hạn của chính hàng đợi
+
+```python
+@rabbitmq_subscriber("events", "phien.#", queue=f"phien-{ma_phien}",
+                     queue_expires=3600, durable=False)
+async def theo_doi(self, payload: dict) -> None: ...
+```
+
+Broker xoá hàng đợi sau khoảng thời gian **không ai dùng** (không consumer,
+không ai lấy tin). Dành cho hàng đợi sinh theo phiên hoặc theo worker — thứ mà
+`auto_delete` không dọn nổi vì tiến trình có thể chết mà không kịp ngắt sạch.
+
+### Hết hạn rồi thì tin đi đâu
+
+Mặc định: **biến mất, không log, không đếm**. Muốn biết mình đã bỏ mất gì thì
+bật `dead_letter=True` — tin hết hạn rơi vào `<queue>.dlq` y như tin lỗi:
+
+```python
+@rabbitmq_subscriber("events", "otp.#", queue="gui-otp",
+                     message_ttl=120, dead_letter=True)
+async def gui_otp(self, payload: OtpRequest) -> None: ...
+```
+
+Nhìn `<queue>.dlq` phình lên là biết consumer đang chậm hơn người gửi — thứ
+mà con số "hàng đợi rỗng" không bao giờ nói cho bạn.
+
+> **`message_ttl` và `queue_expires` đi vào tham số khai báo hàng đợi.**
+> RabbitMQ không cho khai lại hàng đợi đã tồn tại với tham số khác. Đổi con số
+> rồi khởi động lại mà chưa xoá hàng đợi cũ thì gặp `PRECONDITION_FAILED` —
+> khung sẽ báo đúng lệnh `rabbitmqctl delete_queue <tên>` cần chạy. Cần hạn đổi
+> linh hoạt thì dùng `publish(ttl=…)`.
+
+> **TTL chỉ có tác dụng khi không ai đang nghe.** Consumer đang chạy sẽ lấy tin
+> gần như tức thì, chẳng bao giờ kịp hết hạn. Hạn dùng là lưới an toàn cho lúc
+> consumer chết, chậm, hoặc đang deploy — không phải công cụ điều tiết.
 
 ---
 
@@ -445,8 +666,16 @@ x-attempt=(không có)   {"thieu_truong_message": 1}
 
 ## Khi cần mọi worker cùng nhận một bản sao
 
-`@rabbitmq_subscriber` chia tin cho các worker. Cần ngược lại — mỗi worker một bản sao —
-thì tự mở hàng đợi riêng:
+`@rabbitmq_subscriber` chia tin cho các worker: nhiều worker cùng một tên hàng
+đợi thì mỗi tin chỉ MỘT worker thấy. Cần ngược lại — mỗi worker một bản sao —
+thì mỗi worker phải có hàng đợi RIÊNG. Hai cách:
+
+**Cách gọn:** đặt tên hàng đợi kèm hostname rồi dùng
+[`exchange_type="fanout"`](#fanout--mọi-hàng-đợi-một-bản-sao). Vẫn là
+`@rabbitmq_subscriber` bình thường, có đủ retry/DLQ/TTL.
+
+**Cách tay:** tự mở hàng đợi tự sinh tên — khi không muốn nghĩ về tên, và
+không cần thứ gì của `@rabbitmq_subscriber`:
 
 ```python
 channel = await broker.new_channel(prefetch=50)          # prefetch=20 nếu không truyền
@@ -459,14 +688,14 @@ await queue.consume(callback)
 |---|---|---|
 | `new_channel` | `(*, prefetch=20)` | mỗi thành phần nên một kênh riêng |
 | `worker_queue` | `(channel, hint)` | hàng đợi riêng tiến trình, `hint` chỉ để dễ đọc log |
-| `exchange` | `(name)` | tạo nếu chưa có, luôn kiểu topic + bền |
-| `durable_queue` | `(channel, name, *, durable=True, dead_letter=False, auto_delete=False)` | hàng đợi có tên; `dead_letter=True` mới khai thêm `<name>.dlq` |
+| `exchange` | `(name, kind=None)` | tạo nếu chưa có, luôn bền; `kind=None` = dùng lại kiểu đã khai, chưa có thì `topic`; `name=""` là exchange mặc định |
+| `durable_queue` | `(channel, name, *, durable=True, dead_letter=False, auto_delete=False, message_ttl=None, queue_expires=None)` | hàng đợi có tên; `dead_letter=True` mới khai thêm `<name>.dlq`; hai TTL tính bằng giây |
 | `retry_queue` | `(channel, name, target_queue, *, durable=True)` | hàng đợi chờ, không ai nghe |
 | `queue_info` | `(name)` | `{"messages": n, "consumers": n}`, hoặc `None` nếu hàng đợi không tồn tại |
 | `queue_exists` | `(name)` | như trên, rút gọn thành `True`/`False` |
 | `peek` | `(name, *, limit=10)` | xem tin mà không lấy đi — để soi `.dlq` |
 | `delete_queue` | `(name, *, if_unused=True)` | trả `False` nếu không có hoặc còn người nghe |
-| `publish_to_queue` | `(queue, body, *, headers=None, expiration=None, persistent=True)` | gửi thẳng vào một hàng đợi, không qua exchange — dùng để đẩy tin từ `.dlq` về |
+| `publish_to_queue` | `(queue, body, *, headers=None, expiration=None, persistent=True)` | gửi **bytes thô** thẳng vào một hàng đợi — dùng để đẩy tin từ `.dlq` về nguyên vẹn. Gửi payload thường thì dùng `publish("", queue, payload)` |
 
 ---
 
@@ -544,11 +773,17 @@ fam info                        # cấu hình đang dùng
 fam module alerts --consumer              # module mới kèm consumer
 fam module alerts --consumer-only                 # thêm consumer vào module có sẵn
 
-docker exec rabbit rabbitmqctl list_queues name messages consumers durable
+docker exec rabbit rabbitmqctl list_queues name messages consumers durable arguments
+docker exec rabbit rabbitmqctl list_exchanges name type durable      # soi KIỂU exchange
 docker exec rabbit rabbitmqctl list_consumers queue_name prefetch_count
 docker exec rabbit rabbitmqctl list_bindings
-docker exec rabbit rabbitmqctl delete_queue <tên>
+docker exec rabbit rabbitmqctl delete_queue <tên>       # khi đổi TTL / dead_letter / durable
+docker exec rabbit rabbitmqctl delete_exchange <tên>    # khi đổi KIỂU exchange
 ```
+
+`arguments` trong `list_queues` là chỗ nhìn thấy `x-message-ttl`, `x-expires` và
+`x-dead-letter-exchange` mà hàng đợi đang thật sự mang — đối chiếu với code khi
+nghi ngờ hàng đợi cũ còn giữ tham số cũ.
 
 Chạy test cần broker thật:
 

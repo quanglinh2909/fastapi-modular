@@ -100,7 +100,7 @@ fam: lệnh 'm' chưa rõ — khớp với migrate, module. Gõ thêm vài chữ
 | `fam install postgres` | `fam ins p` | PostgreSQL |
 | `fam install mongodb` | `fam ins mo` | MongoDB |
 | **Thêm hàng đợi** | | *cài thư viện **rồi** ghi biến vào `.env`* |
-| `fam install rabbitmq` | `fam ins ra` | hàng đợi bền, thử lại + DLQ |
+| `fam install rabbitmq` | `fam ins ra` | 5 kiểu exchange, hàng đợi bền, TTL, thử lại + DLQ |
 | `fam install redis` | `fam ins re` | cache, đếm nguyên tử, pub/sub |
 | `fam install mqtt` | `fam ins mq` | thiết bị IoT |
 | `fam install kafka` | `fam ins k` | nhật ký sự kiện đọc lại được |
@@ -229,6 +229,14 @@ async def gui_mail(self, payload: AlertCreated) -> None: ...
 @rabbitmq_subscriber("events", "alert.created", queue="alert-mailer",
                      max_retries=3, dead_letter=True)
 async def gui_mail(self, payload: AlertCreated) -> None: ...
+
+# Đủ 5 kiểu exchange: topic (mặc định), direct, fanout, headers, default
+@rabbitmq_subscriber("cache-events", queue=f"xoa-cache-{HOSTNAME}", exchange_type="fanout")
+# hostname trong tên hàng đợi -> mỗi worker một bản sao, thay vì chia lượt nhau
+async def xoa_cache(self, payload: dict) -> None: ...
+
+# Hạn dùng: cho một tin (ttl), cho cả hàng đợi (message_ttl), cho chính hàng đợi
+await self._mq.publish("events", "xe.viTri", {"lat": 21.0}, ttl=5)
 ```
 
 ```bash
@@ -295,7 +303,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              366 test chạy không cần hạ tầng, 40 test nữa bật khi có server thật
+tests/              391 test chạy không cần hạ tầng, 46 test nữa bật khi có server thật
 docs/               tài liệu tra cứu
 ```
 
@@ -333,7 +341,7 @@ MIT — xem [LICENSE](https://github.com/quanglinh2909/fastapi-modular/blob/main
 - [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) — memory / SQLite / PostgreSQL / MongoDB
 - [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: sinh, chạy, lùi migration
 - [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — gateway WebSocket, phòng, Postman, Next.js
-- [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — exchange, topic, consumer nền, `.retry` / `.dlq`
+- [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — đủ 5 kiểu exchange, hạn dùng (TTL), consumer nền, `.retry` / `.dlq`
 - [docs/redis.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/redis.md) — cache, đếm nguyên tử, pub/sub
 - [docs/mqtt.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mqtt.md) — QoS, retain, luật khớp topic `+` và `#`
 - [docs/kafka.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/kafka.md) — nhóm consumer, phân vùng, `.dlt`

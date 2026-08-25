@@ -7,7 +7,7 @@
 | [architecture.md](architecture.md) | Cấu trúc module, DI container, đối chiếu với NestJS |
 | [migrations.md](migrations.md) | Alembic: sinh, chạy, lùi migration |
 | [websocket.md](websocket.md) | Gateway WebSocket: API, phòng, gửi thẳng, Postman, Next.js |
-| [rabbitmq.md](rabbitmq.md) | RabbitMQ (tuỳ chọn): `publish`, `@rabbitmq_subscriber`, tham số và mặc định |
+| [rabbitmq.md](rabbitmq.md) | RabbitMQ (tuỳ chọn): `publish`, `@rabbitmq_subscriber`, đủ 5 kiểu exchange, hạn dùng (TTL) |
 | [redis.md](redis.md) | Redis (tuỳ chọn): cache, đếm nguyên tử, pub/sub |
 | [mqtt.md](mqtt.md) | MQTT (tuỳ chọn): thiết bị IoT, QoS, retain, luật khớp topic |
 | [kafka.md](kafka.md) | Kafka (tuỳ chọn): nhật ký đọc lại được, nhóm consumer, `.dlt` |
@@ -34,7 +34,7 @@ Realtime chạy sẵn, không phải cài gì thêm:
 Thành phần tuỳ chọn, cài khi cần, không cài thì không ảnh hưởng gì:
 
 ```bash
-fam install rabbitmq  # hàng đợi bền, thử lại + DLQ
+fam install rabbitmq  # 5 kiểu exchange, hàng đợi bền, TTL, thử lại + DLQ
 fam install redis     # cache, đếm, pub/sub
 fam install mqtt      # thiết bị IoT
 fam install kafka     # nhật ký đọc lại được

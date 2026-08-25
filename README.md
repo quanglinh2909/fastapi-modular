@@ -108,7 +108,7 @@ fam: lệnh 'm' chưa rõ — khớp với migrate, module. Gõ thêm vài chữ
 | `fam install postgres` | `fam ins p` | PostgreSQL |
 | `fam install mongodb` | `fam ins mo` | MongoDB |
 | **Queues** | | *installs libraries **then** writes `.env`* |
-| `fam install rabbitmq` | `fam ins ra` | durable queues, retry + DLQ |
+| `fam install rabbitmq` | `fam ins ra` | 5 exchange types, durable queues, TTL, retry + DLQ |
 | `fam install redis` | `fam ins re` | cache, atomic counters, pub/sub |
 | `fam install mqtt` | `fam ins mq` | IoT devices |
 | `fam install kafka` | `fam ins k` | replayable event log |
@@ -237,6 +237,14 @@ async def send_mail(self, payload: AlertCreated) -> None: ...
 @rabbitmq_subscriber("events", "alert.created", queue="alert-mailer",
                      max_retries=3, dead_letter=True)
 async def send_mail(self, payload: AlertCreated) -> None: ...
+
+# All 5 exchange types: topic (default), direct, fanout, headers, default
+@rabbitmq_subscriber("cache-events", queue=f"drop-cache-{HOSTNAME}", exchange_type="fanout")
+# hostname in the queue name -> every worker gets a copy, instead of taking turns
+async def drop_cache(self, payload: dict) -> None: ...
+
+# Time to live: per message (ttl), per queue (message_ttl), for the queue itself
+await self._mq.publish("events", "car.position", {"lat": 21.0}, ttl=5)
 ```
 
 Not installed and not enabled means it behaves as if it never existed. If the
@@ -294,7 +302,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              366 tests that need no infrastructure, 40 more when servers exist
+tests/              391 tests that need no infrastructure, 46 more when servers exist
 docs/               reference documentation (Vietnamese)
 ```
 
@@ -336,7 +344,7 @@ Written in Vietnamese, organised for reference rather than reading front to back
 - [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) — memory / SQLite / PostgreSQL / MongoDB
 - [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: generate, run, roll back
 - [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — WebSocket gateway, rooms, Postman, Next.js
-- [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — exchanges, topics, background consumers, `.retry` / `.dlq`
+- [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — all 5 exchange types, TTL, background consumers, `.retry` / `.dlq`
 - [docs/redis.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/redis.md) — cache, atomic counters, pub/sub
 - [docs/mqtt.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mqtt.md) — QoS, retain, `+` and `#` topic matching
 - [docs/kafka.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/kafka.md) — consumer groups, partitions, `.dlt`
