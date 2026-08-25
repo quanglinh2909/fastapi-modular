@@ -19,10 +19,11 @@ fastapi_modular/                     THƯ VIỆN — thứ được đóng gói,
 │   ├── guards.py              Guard + Principal (dùng chung cho HTTP và WebSocket)
 │   ├── lifespan.py            mở/đóng database và hạ tầng (ứng dụng BỌC lại, không sửa)
 │   ├── schemas.py             Page[T]
+│   ├── rpc.py                 khuôn tin emit/send tương thích NestJS (dùng chung mọi hạ tầng)
 │   └── websocket/             @gateway / @subscribe, phòng, adapter nhiều worker
 ├── infrastructure/            mỗi hạ tầng MỘT package, không biết nhau
 │   ├── database/              base.py · memory.py · sql.py · mongo.py · factory.py · repository.py
-│   ├── rabbitmq/              (tuỳ chọn) broker · consumers · patterns
+│   ├── rabbitmq/              (tuỳ chọn) broker · consumers · responders · patterns
 │   ├── redis/                 (tuỳ chọn) client (cache, đếm) · pubsub
 │   ├── mqtt/                  (tuỳ chọn) client · consumers · patterns (+ và #)
 │   └── kafka/                 (tuỳ chọn) broker · consumers
@@ -77,6 +78,8 @@ quét nó đi". Xếp khác thì nói ra một lần trong `src/main.py`:
 | Hai gói `websockets` / `microservices` độc lập | `core/websocket` không biết `infrastructure/rabbitmq` |
 | `Transport.RMQ` là một lựa chọn riêng | mỗi hạ tầng một package riêng dưới `infrastructure/` |
 | `@EventPattern('x')` (microservices) | `@rabbitmq_subscriber("events", "x", queue="...")` |
+| `@MessagePattern('x')` | `@rabbitmq_responder("x", queue="...")` — xem [rpc.md](rpc.md) |
+| `ClientProxy.emit/send` | `broker.emit(...)` / `await broker.send(...)`, khuôn tin tương thích NestJS |
 | `@EventPattern('x')` (transport Kafka) | `@kafka_subscriber("x", group="...")` |
 | `@EventPattern('x')` (transport MQTT) | `@mqtt_subscriber("x/+/y", qos=1)` |
 | `@EventPattern('x')` (transport Redis) | `@redis_subscriber("x:*")` |
@@ -246,7 +249,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 391 test trên backend memory (46 test nữa cần hạ tầng thật)
+fam test       # 556 test trên backend memory (52 test nữa cần hạ tầng thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

@@ -16,13 +16,16 @@ import time
 import anyio
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from fastapi_modular.core.config import DatabaseSettings, RabbitSettings, Settings
 from fastapi_modular.core.container import injectable
+from fastapi_modular.core.rpc import RpcRemoteError, RpcTimeoutError
 from fastapi_modular.factory import create_app
 from fastapi_modular.infrastructure.rabbitmq import (
     PermanentMessageError,
     RabbitBroker,
+    rabbitmq_responder,
     rabbitmq_subscriber,
 )
 
@@ -426,4 +429,138 @@ async def test_ttl_dat_rieng_cho_mot_tin(mq_settings: Settings):
     finally:
         await broker.delete_queue(ten)
         await broker.delete_queue(f"{ten}.dlq")
+        await broker.shutdown()
+
+
+# =================================================== emit / send (khuôn NestJS)
+# Khuôn tin ở đây tương thích @nestjs/microservices. Phần đối chứng với một
+# service NestJS THẬT không chạy trong bộ test này (sẽ phải kéo Node vào CI);
+# cách dựng lại nằm ở mục "Đối chứng với NestJS thật" trong docs/rpc.md.
+RPC_QUEUE = "test-rpc"
+
+
+class ThamSo(BaseModel):
+    ma: str
+    so_luong: int
+
+
+DA_NHAN_SU_KIEN: list[dict] = []
+
+
+@injectable
+class DichVuTraLoi:
+    @rabbitmq_responder("sum", queue=RPC_QUEUE, durable=False)
+    async def cong(self, data: list[int]) -> int:
+        return sum(data)
+
+    @rabbitmq_responder({"cmd": "info"}, queue=RPC_QUEUE, durable=False)
+    async def thong_tin(self, data: dict, meta: dict) -> dict:
+        return {"echo": data, "pattern": meta["pattern"]}
+
+    @rabbitmq_responder("boom", queue=RPC_QUEUE, durable=False)
+    async def no(self, data: dict) -> None:
+        raise RuntimeError("hỏng cố ý")
+
+    @rabbitmq_responder("cham", queue=RPC_QUEUE, durable=False)
+    async def cham(self, data: dict) -> str:
+        await anyio.sleep(5)
+        return "muộn quá rồi"
+
+    @rabbitmq_responder("dat-hang", queue=RPC_QUEUE, durable=False)
+    async def dat_hang(self, don: ThamSo) -> dict:
+        return {"ma": don.ma, "thanh_tien": don.so_luong * 1000}
+
+    @rabbitmq_responder("ghi-nhan", queue=RPC_QUEUE, durable=False)
+    async def ghi_nhan(self, data: dict) -> str:
+        DA_NHAN_SU_KIEN.append(data)
+        return "khong-ai-doc"
+
+
+async def test_send_nhan_lai_dung_gia_tri_handler_tra_ve(mq_client, mq_settings):
+    broker = RabbitBroker(mq_settings)
+    await broker.startup()
+    try:
+        assert await broker.send("sum", [1, 2, 3, 4], queue=RPC_QUEUE) == 10
+        # pattern dạng dict: phải chuỗi hoá giống hệt hai bên mới tra được bảng
+        assert await broker.send({"cmd": "info"}, {"ai": "py"}, queue=RPC_QUEUE) == {
+            "echo": {"ai": "py"},
+            "pattern": '{"cmd":"info"}',
+        }
+        # model Pydantic được kiểm khuôn trước khi vào handler
+        assert await broker.send("dat-hang", {"ma": "A1", "so_luong": 3}, queue=RPC_QUEUE) == {
+            "ma": "A1",
+            "thanh_tien": 3000,
+        }
+    finally:
+        await broker.shutdown()
+
+
+async def test_handler_hong_thi_bao_ngay_chu_khong_de_nguoi_goi_doi_het_gio(
+    mq_client, mq_settings
+):
+    """Biết hỏng vì gì (502) khác hẳn không biết gì (504) — đừng trả về cái sau."""
+    broker = RabbitBroker(mq_settings)
+    await broker.startup()
+    try:
+        with pytest.raises(RpcRemoteError, match="hỏng cố ý"):
+            await broker.send("boom", {}, queue=RPC_QUEUE, timeout=10)
+
+        with pytest.raises(RpcRemoteError, match="Payload không hợp lệ"):
+            await broker.send("dat-hang", {"ma": "A1"}, queue=RPC_QUEUE, timeout=10)
+    finally:
+        await broker.shutdown()
+
+
+async def test_khong_co_responder_thi_tra_dung_nguyen_van_cua_nestjs(mq_client, mq_settings):
+    broker = RabbitBroker(mq_settings)
+    await broker.startup()
+    try:
+        with pytest.raises(RpcRemoteError, match="no matching message handler"):
+            await broker.send("khong-he-co", {}, queue=RPC_QUEUE, timeout=10)
+    finally:
+        await broker.shutdown()
+
+
+async def test_het_gio_thi_nem_504_va_khong_de_lai_rac(mq_client, mq_settings):
+    broker = RabbitBroker(mq_settings)
+    await broker.startup()
+    try:
+        with pytest.raises(RpcTimeoutError):
+            await broker.send("cham", {}, queue=RPC_QUEUE, timeout=0.5)
+        # Sổ chờ phải sạch, nếu không mỗi lời gọi hỏng để lại một chỗ vĩnh viễn.
+        assert len(broker._so_cho) == 0
+    finally:
+        await broker.shutdown()
+
+
+async def test_emit_khong_cho_va_ket_qua_bi_bo(mq_client, mq_settings):
+    """`emit` là sự kiện: handler vẫn chạy, nhưng không ai đọc giá trị trả về."""
+    DA_NHAN_SU_KIEN.clear()
+    broker = RabbitBroker(mq_settings)
+    await broker.startup()
+    try:
+        await broker.emit("ghi-nhan", {"tu": "test"}, queue=RPC_QUEUE)
+        han = time.monotonic() + 10
+        while time.monotonic() < han and not DA_NHAN_SU_KIEN:
+            await anyio.sleep(0.1)
+    finally:
+        await broker.shutdown()
+
+    assert DA_NHAN_SU_KIEN == [{"tu": "test"}]
+
+
+async def test_goi_nhieu_lan_khong_de_lai_cho_cho_nao(mq_client, mq_settings):
+    """Dùng `amq.rabbitmq.reply-to` nên không phải khai hàng đợi trả lời nào.
+
+    Test này chứng minh phần kiểm được từ trong tiến trình: gọi liên tiếp đều
+    trả đúng, và sổ chờ rỗng sau mỗi lần. Phần "broker không mọc thêm hàng đợi"
+    kiểm bằng `rabbitmqctl list_queues` — xem docs/rpc.md.
+    """
+    broker = RabbitBroker(mq_settings)
+    await broker.startup()
+    try:
+        for i in range(5):
+            assert await broker.send("sum", [i, i], queue=RPC_QUEUE) == i * 2
+            assert len(broker._so_cho) == 0
+    finally:
         await broker.shutdown()

@@ -30,6 +30,8 @@ fam init && fam dev
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
 | `@SubscribeMessage('x')` | `@subscribe("x")` |
 | `@EventPattern('x')` (RabbitMQ) | `@rabbitmq_subscriber("events", "x", queue="…")` |
+| `@MessagePattern('x')` | `@rabbitmq_responder("x", queue="…")` — giá trị trả về được gửi ngược |
+| `client.emit(p, d)` / `client.send(p, d)` | `broker.emit(p, d, queue=…)` / `await broker.send(p, d, queue=…)` |
 | `CacheModule` / `CACHE_MANAGER` | `RedisClient.cached(key, factory, ttl=…)` |
 | socket.io Redis adapter | `APP_WS__ADAPTER=redis` |
 
@@ -247,6 +249,30 @@ fam module alerts --consumer    # module mới kèm consumer
 Không cài, không bật thì mọi thứ chạy y như chưa từng có nó. Broker rớt thì app
 vẫn phục vụ và tự nối lại. Chi tiết: [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md).
 
+## Gửi rồi chờ trả lời — khuôn tin của NestJS
+
+`publish`/`emit` bắn đi rồi quên. `send` thì **chờ trả lời** — đúng cặp
+`client.send()` / `@MessagePattern()` của NestJS, cùng một khuôn tin:
+
+```python
+# bên trả lời — service bình thường, chỉ khác là nó `return`
+@rabbitmq_responder("sum", queue="math")
+async def cong(self, data: list[int]) -> int:
+    return sum(data)
+
+# bên gọi
+tong = await self._mq.send("sum", [1, 2, 3, 4], queue="math")   # -> 10
+```
+
+Khuôn gói tin lấy từ chính mã nguồn `@nestjs/microservices`, nên một
+microservice NestJS và một service viết bằng khung này nói chuyện được với nhau
+mà không cần lớp dịch — đã chạy thật hai chiều với NestJS 11.2.1, kể cả pattern
+dạng object (`{"cmd": "sum"}`) và luật sắp xếp khoá của nó.
+
+`send` biến hàng đợi thành lời gọi qua mạng, kéo theo đúng những thứ hàng đợi
+vốn dựng lên để tránh — [docs/rpc.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rpc.md)
+nói rõ khi nào KHÔNG nên dùng.
+
 ## Redis, MQTT, Kafka (cũng tuỳ chọn)
 
 Cùng một khuôn với RabbitMQ: một package riêng dưới `infrastructure/`, một nhóm
@@ -303,7 +329,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              391 test chạy không cần hạ tầng, 46 test nữa bật khi có server thật
+tests/              556 test chạy không cần hạ tầng, 52 test nữa bật khi có server thật
 docs/               tài liệu tra cứu
 ```
 
@@ -342,6 +368,7 @@ MIT — xem [LICENSE](https://github.com/quanglinh2909/fastapi-modular/blob/main
 - [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: sinh, chạy, lùi migration
 - [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — gateway WebSocket, phòng, Postman, Next.js
 - [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — đủ 5 kiểu exchange, hạn dùng (TTL), consumer nền, `.retry` / `.dlq`
+- [docs/rpc.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rpc.md) — `emit` / `send` / `@rabbitmq_responder`, khuôn tin tương thích NestJS
 - [docs/redis.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/redis.md) — cache, đếm nguyên tử, pub/sub
 - [docs/mqtt.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mqtt.md) — QoS, retain, luật khớp topic `+` và `#`
 - [docs/kafka.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/kafka.md) — nhóm consumer, phân vùng, `.dlt`

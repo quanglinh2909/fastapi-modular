@@ -65,7 +65,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from fastapi_modular.infrastructure.database import Database
     from fastapi_modular.infrastructure.kafka import KafkaBroker, KafkaRunner
     from fastapi_modular.infrastructure.mqtt import MqttClient, MqttRunner
-    from fastapi_modular.infrastructure.rabbitmq import RabbitBroker, RabbitmqRunner
+    from fastapi_modular.infrastructure.rabbitmq import (
+        RabbitBroker,
+        RabbitmqResponderRunner,
+        RabbitmqRunner,
+    )
     from fastapi_modular.infrastructure.redis import RedisClient, RedisRunner
 
     database = container.resolve(Database)
@@ -85,6 +89,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await broker.startup()
     consumers = container.resolve(RabbitmqRunner)
     await consumers.startup()
+    responders = container.resolve(RabbitmqResponderRunner)
+    await responders.startup()
     app.state.broker = broker
 
     # Ba lớp dưới đây cũng TUỲ CHỌN và độc lập nhau. Tắt (mặc định) thì mỗi lời

@@ -9,6 +9,9 @@ fam install rabbitmq     # cài thư viện + ghi APP_RABBITMQ__* vào .env
 Hai việc làm được: **đăng tin** (`RabbitBroker.publish`) và **xử lý tin nền**
 (`@rabbitmq_subscriber`).
 
+Cần gửi rồi **chờ trả lời** (kiểu `client.send` / `@MessagePattern` của NestJS)
+thì đó là `emit`/`send` và `@rabbitmq_responder` — [docs/rpc.md](rpc.md).
+
 Một `@rabbitmq_subscriber` mặc định tạo **đúng một hàng đợi**. Thử lại, hàng đợi
 chết và hạn dùng đều là thứ **tự bật**, không phải thứ mặc định có.
 

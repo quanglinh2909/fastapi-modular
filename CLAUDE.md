@@ -30,6 +30,7 @@ chỗ là họ gõ theo rồi lỗi.
 | lệnh hoặc cờ trong `cli/` | bảng lệnh ở **`README.md` VÀ `README.vi.md`**, cây `cli/` ở cả hai README **và** `docs/architecture.md` |
 | tên file / lớp mà `cli/new_module.py` sinh ra | mục "Thêm module mới" ở `docs/architecture.md` |
 | `core/providers.py` hoặc `cli/new_provider.py` | `docs/providers.md` |
+| `core/rpc.py`, `*/responders.py`, `emit`/`send` | `docs/rpc.md`, và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
 | API công khai (`fastapi_modular/__init__.py`, decorator, method) | doc của phần đó, và `docs/README.md` nếu đổi bảng đối chiếu |
 | thêm/bớt test | con số test ở **cả hai README** (cây thư mục) và `docs/architecture.md` (mục Chất lượng mã) |
 
@@ -66,7 +67,7 @@ link trong `docs/*.md` thì cứ để tương đối.
 ## Kiểm chứng trước khi nói là xong
 
 ```bash
-pytest -q                       # 391 passed, 46 skipped (46 skip cần hạ tầng thật)
+pytest -q                       # 556 passed, 52 skipped (52 skip cần hạ tầng thật)
 fam lint fastapi_modular src tests    # `fam lint` trần chỉ soi `src`, thiếu thư viện và test
 ```
 

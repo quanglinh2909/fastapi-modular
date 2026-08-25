@@ -21,12 +21,20 @@ from fastapi_modular.infrastructure.rabbitmq.consumers import (
     rabbitmq_subscriber,
 )
 from fastapi_modular.infrastructure.rabbitmq.patterns import validate_pattern, validate_routing_key
+from fastapi_modular.infrastructure.rabbitmq.responders import (
+    RabbitmqResponderRunner,
+    discover_rabbitmq_responders,
+    rabbitmq_responder,
+)
 
 __all__ = [
     "PermanentMessageError",
     "RabbitBroker",
+    "RabbitmqResponderRunner",
     "RabbitmqRunner",
+    "discover_rabbitmq_responders",
     "discover_rabbitmq_subscribers",
+    "rabbitmq_responder",
     "rabbitmq_subscriber",
     "validate_pattern",
     "validate_routing_key",

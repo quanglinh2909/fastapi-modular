@@ -18,11 +18,14 @@ from fastapi_modular.core.container import injectable
 from fastapi_modular.core.exceptions import BadRequestError, ComponentNotEnabledError
 from fastapi_modular.infrastructure.rabbitmq import (
     RabbitBroker,
+    discover_rabbitmq_responders,
     discover_rabbitmq_subscribers,
+    rabbitmq_responder,
     rabbitmq_subscriber,
     validate_pattern,
     validate_routing_key,
 )
+from fastapi_modular.infrastructure.rabbitmq.responders import plan_queues
 
 
 # ------------------------------------------------------- kiểm tra khuôn mẫu
@@ -548,3 +551,99 @@ def test_ttl_sai_bi_chan_ngay_luc_khai_bao():
 
         @rabbitmq_subscriber("events", "a.b", queue="q", queue_expires=-5)
         async def sai_nua(self, payload: dict) -> None: ...
+
+
+# ------------------------------------------------ @rabbitmq_responder (send)
+@injectable
+class ResponderMau:
+    @rabbitmq_responder("sum", queue="q-rpc")
+    async def cong(self, data: list[int]) -> int:
+        return sum(data)
+
+    @rabbitmq_responder({"cmd": "info"}, queue="q-rpc")
+    async def thong_tin(self, data: dict, meta: dict) -> dict:
+        return {"echo": data, "pattern": meta["pattern"]}
+
+
+def test_responder_quet_duoc_va_chuan_hoa_pattern():
+    specs = {s.pattern: s for s in discover_rabbitmq_responders()}
+    assert "sum" in specs
+    # pattern dạng dict được chuỗi hoá theo đúng luật NestJS ngay lúc khai báo
+    assert '{"cmd":"info"}' in specs
+    assert specs['{"cmd":"info"}'].wants_meta is True
+
+
+def test_khong_khai_exchange_thi_di_thang_vao_hang_doi_theo_ten():
+    """Đây là cách `ClientRMQ` của NestJS gửi: sendToQueue, không định tuyến."""
+    spec = discover_rabbitmq_responders()[0]
+    assert spec.exchange_type == "default"
+    assert spec.routing_key == spec.queue
+
+
+def test_nhieu_responder_chung_mot_hang_doi_la_binh_thuong():
+    """Đúng mô hình NestJS: một microservice nghe một hàng đợi, tự phân theo pattern."""
+    ke_hoach = plan_queues(discover_rabbitmq_responders())
+    _, bang = ke_hoach["q-rpc"]
+    assert set(bang) >= {"sum", '{"cmd":"info"}'}
+
+
+def test_trung_pattern_tren_cung_hang_doi_bi_chan():
+    """Một trong hai sẽ không bao giờ được gọi, và không có gì báo là cái nào."""
+
+    @rabbitmq_responder("trung", queue="q-trung")
+    async def mot(self, data) -> int: ...
+
+    @rabbitmq_responder("trung", queue="q-trung")
+    async def hai(self, data) -> int: ...
+
+    specs = [mot.__rabbitmq_responder__, hai.__rabbitmq_responder__]
+    with pytest.raises(RuntimeError, match="không bao giờ được gọi"):
+        plan_queues(specs)
+
+
+def test_cung_hang_doi_ma_khai_khac_nhau_bi_chan():
+    """Hàng đợi chỉ dựng được một lần; cái khai sau im lặng bị bỏ qua."""
+
+    @rabbitmq_responder("a", queue="q-lech", durable=True)
+    async def mot(self, data) -> int: ...
+
+    @rabbitmq_responder("b", queue="q-lech", durable=False)
+    async def hai(self, data) -> int: ...
+
+    with pytest.raises(RuntimeError, match="durable"):
+        plan_queues([mot.__rabbitmq_responder__, hai.__rabbitmq_responder__])
+
+
+def test_responder_phai_la_async():
+    with pytest.raises(RuntimeError, match="async def"):
+
+        @rabbitmq_responder("x", queue="q")
+        def dong_bo(self, data) -> int: ...
+
+
+def test_hai_cach_khai_dia_chi_khong_tron_lan(monkeypatch):
+    """`queue=` (kiểu NestJS) và `exchange=/routing_key=` (kiểu AMQP) loại trừ nhau."""
+    broker, _ = _broker_gia_lap(monkeypatch)
+    assert broker._dia_chi("viec", "", None) == ("", "viec")
+    assert broker._dia_chi(None, "events", "a.b") == ("events", "a.b")
+    with pytest.raises(Exception, match="Chọn một trong hai"):
+        broker._dia_chi("viec", "events", "a.b")
+    with pytest.raises(Exception, match="Chưa nói gửi đi đâu"):
+        broker._dia_chi(None, "", None)
+
+
+async def test_emit_gui_dung_khuon_goi_nestjs(monkeypatch):
+    """emit() khác publish() ở đúng một chỗ: thân tin là gói {pattern, data}."""
+    broker, _ = _broker_gia_lap(monkeypatch)
+    da_gui = {}
+
+    async def publish(**kwargs):
+        da_gui.update(kwargs)
+        return True
+
+    monkeypatch.setattr(broker, "publish", publish)
+    await broker.emit("alert.created", {"id": 1}, queue="viec")
+
+    assert da_gui["payload"] == {"pattern": "alert.created", "data": {"id": 1}}
+    assert "id" not in da_gui["payload"], "sự kiện KHÔNG có id, nếu không bên kia sẽ đi trả lời"
+    assert (da_gui["exchange"], da_gui["routing_key"]) == ("", "viec")

@@ -35,6 +35,8 @@ public API, and this README, are in English. Start with
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
 | `@SubscribeMessage('x')` | `@subscribe("x")` |
 | `@EventPattern('x')` (RabbitMQ) | `@rabbitmq_subscriber("events", "x", queue="…")` |
+| `@MessagePattern('x')` | `@rabbitmq_responder("x", queue="…")` — the return value is sent back |
+| `client.emit(p, d)` / `client.send(p, d)` | `broker.emit(p, d, queue=…)` / `await broker.send(p, d, queue=…)` |
 | `CacheModule` / `CACHE_MANAGER` | `RedisClient.cached(key, factory, ttl=…)` |
 | socket.io Redis adapter | `APP_WS__ADAPTER=redis` |
 
@@ -251,6 +253,30 @@ Not installed and not enabled means it behaves as if it never existed. If the
 broker goes down the app keeps serving and reconnects on its own. Details:
 [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md).
 
+## Request/response, NestJS-compatible
+
+`publish`/`emit` fire and forget. `send` waits for an answer — the NestJS
+`client.send()` / `@MessagePattern()` pair, same wire format:
+
+```python
+# the side that answers — a normal service that happens to `return`
+@rabbitmq_responder("sum", queue="math")
+async def add(self, data: list[int]) -> int:
+    return sum(data)
+
+# the side that calls
+total = await self._mq.send("sum", [1, 2, 3, 4], queue="math")   # -> 10
+```
+
+The packet layout is taken from `@nestjs/microservices` source, so a NestJS
+microservice and a service built on this library talk to each other with no
+translation layer — verified both ways against NestJS 11.2.1. Object patterns
+(`{"cmd": "sum"}`) included, key ordering and all.
+
+`send` turns a queue into a network call, which brings back everything queues
+exist to avoid — [docs/rpc.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rpc.md)
+says when not to use it.
+
 ## Redis, MQTT, Kafka (also optional)
 
 Same shape as RabbitMQ: one package under `infrastructure/`, one `APP_<NAME>__*`
@@ -302,7 +328,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              391 tests that need no infrastructure, 46 more when servers exist
+tests/              556 tests that need no infrastructure, 52 more when servers exist
 docs/               reference documentation (Vietnamese)
 ```
 
@@ -345,6 +371,7 @@ Written in Vietnamese, organised for reference rather than reading front to back
 - [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: generate, run, roll back
 - [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — WebSocket gateway, rooms, Postman, Next.js
 - [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — all 5 exchange types, TTL, background consumers, `.retry` / `.dlq`
+- [docs/rpc.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rpc.md) — `emit` / `send` / `@rabbitmq_responder`, NestJS-compatible wire format
 - [docs/redis.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/redis.md) — cache, atomic counters, pub/sub
 - [docs/mqtt.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mqtt.md) — QoS, retain, `+` and `#` topic matching
 - [docs/kafka.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/kafka.md) — consumer groups, partitions, `.dlt`

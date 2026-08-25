@@ -51,6 +51,15 @@ from fastapi_modular.core.config import Settings
 from fastapi_modular.core.container import injectable
 from fastapi_modular.core.exceptions import ComponentNotEnabledError, ServiceUnavailableError
 from fastapi_modular.core.logging import get_logger
+from fastapi_modular.core.rpc import (
+    DEFAULT_RPC_TIMEOUT,
+    RMQ_REPLY_QUEUE,
+    PendingReplies,
+    decode,
+    event_packet,
+    normalize_pattern,
+    request_packet,
+)
 from fastapi_modular.infrastructure.rabbitmq.metrics import (
     rabbitmq_publish_failed,
     rabbitmq_published,
@@ -137,6 +146,8 @@ class RabbitBroker:
         self._publish_channel: Any = None
         self._exchanges: dict[str, Any] = {}
         self._exchange_kinds: dict[str, str] = {}
+        self._rpc_channel: Any = None
+        self._so_cho = PendingReplies("RabbitMQ")
         self._lock = asyncio.Lock()
         self._ready_hooks: list[Callable[[], Awaitable[None]]] = []
         self._supervisor: asyncio.Task[None] | None = None
@@ -262,6 +273,12 @@ class RabbitBroker:
         if self._closing:
             return
         log.warning("mq.connection_lost", url=self.url, error=str(exc) if exc else None)
+        # Kênh RPC chết theo kết nối, và hàng đợi trả lời `amq.rabbitmq.reply-to`
+        # KHÔNG sống sót qua lần nối lại — nó gắn với đúng một kênh. Ai đang chờ
+        # thì câu trả lời của họ chắc chắn không bao giờ tới nữa; đánh thức ngay
+        # thay vì để mỗi người đứng thêm đủ `timeout` giây.
+        self._rpc_channel = None
+        self._so_cho.fail_all("kết nối RabbitMQ đứt")
 
     # ------------------------------------------------------------------ hook
     def on_ready(self, hook: Callable[[], Awaitable[None]]) -> None:
@@ -292,6 +309,8 @@ class RabbitBroker:
             log.info("mq.disconnected")
         self._connection = None
         self._publish_channel = None
+        self._rpc_channel = None
+        self._so_cho.cancel_all()
         self._exchanges.clear()
         self._exchange_kinds.clear()
 
@@ -690,6 +709,7 @@ class RabbitBroker:
         headers: dict[str, Any] | None = None,
         expiration: float | None = None,
         persistent: bool = True,
+        correlation_id: str | None = None,
     ) -> None:
         """Gửi thẳng vào MỘT hàng đợi, không qua exchange nào.
 
@@ -710,11 +730,192 @@ class RabbitBroker:
             ),
             headers=headers or {},
             expiration=expiration,
+            # Đây là chỗ NestJS đối chiếu câu trả lời với yêu cầu: client của nó
+            # nghe hàng đợi trả lời rồi phát theo `msg.properties.correlationId`,
+            # KHÔNG đọc `id` trong thân tin. Thiếu thuộc tính này thì câu trả lời
+            # về tới nơi nhưng không ai nhận, và người gọi vẫn đợi tới hết giờ.
+            correlation_id=correlation_id,
         )
         await asyncio.wait_for(
             self._publish_channel.default_exchange.publish(message, routing_key=queue),
             self._config.publish_timeout_seconds,
         )
+
+    # ------------------------------------------------- khuôn NestJS: emit / send
+    def _dia_chi(
+        self, queue: str | None, exchange: str, routing_key: str | None
+    ) -> tuple[str, str]:
+        """Chốt (exchange, routing key) từ hai cách khai địa chỉ.
+
+        Hai cách, cố ý không trộn lẫn:
+
+            queue="math-queue"                 kiểu NestJS: gửi thẳng vào hàng
+                                               đợi qua exchange mặc định, đúng
+                                               như `ClientRMQ.sendToQueue`
+            exchange="events", routing_key=…   kiểu AMQP: định tuyến như thường
+        """
+        if queue is not None:
+            if exchange or routing_key is not None:
+                raise ServiceUnavailableError(
+                    "Khai `queue=` là gửi thẳng vào hàng đợi (kiểu NestJS), nên không "
+                    "kèm `exchange=`/`routing_key=` được. Chọn một trong hai cách."
+                )
+            return "", queue
+        if not exchange and routing_key is None:
+            raise ServiceUnavailableError(
+                "Chưa nói gửi đi đâu: khai `queue=\"tên-hàng-đợi\"` (kiểu NestJS), "
+                "hoặc `exchange=`/`routing_key=` (kiểu AMQP)."
+            )
+        return exchange, routing_key or ""
+
+    async def emit(
+        self,
+        pattern: Any,
+        data: Any = None,
+        *,
+        queue: str | None = None,
+        exchange: str = "",
+        routing_key: str | None = None,
+        exchange_type: ExchangeKind | None = None,
+        headers: dict[str, Any] | None = None,
+        persistent: bool = True,
+        ttl: float | None = None,
+        timeout: float | None = None,
+        fire_and_forget: bool = False,
+    ) -> bool:
+        """Bắn một SỰ KIỆN theo khuôn NestJS — tương đương `client.emit()`.
+
+        Khác `publish()` ở đúng một chỗ: thân tin là gói `{"pattern", "data"}`
+        thay vì payload thô. Nhờ vậy một `@EventPattern` bên NestJS nhận được,
+        và ngược lại.
+
+        Không có `id` trong gói, nên bên kia biết là **không phải trả lời**.
+        """
+        ex, rk = self._dia_chi(queue, exchange, routing_key)
+        return await self.publish(
+            exchange=ex,
+            routing_key=rk,
+            payload=event_packet(pattern, data),
+            exchange_type=exchange_type,
+            headers=headers,
+            persistent=persistent,
+            ttl=ttl,
+            timeout=timeout,
+            fire_and_forget=fire_and_forget,
+        )
+
+    async def _kenh_rpc(self) -> Any:
+        """Kênh riêng vừa nghe hàng đợi trả lời vừa gửi yêu cầu đi.
+
+        Phải là MỘT kênh cho cả hai việc: `amq.rabbitmq.reply-to` là hàng đợi
+        giả gắn liền với kênh đang nghe nó, và RabbitMQ chỉ định tuyến câu trả
+        lời về đúng kênh đó. Gửi yêu cầu trên kênh khác thì `reply_to` trỏ vào
+        một chỗ kênh này không nghe, và câu trả lời rơi vào hư không.
+
+        Đổi lại ta không phải khai hàng đợi trả lời nào, không phải dọn, và
+        không để lại rác trên broker sau mỗi lần gọi — đây là cơ chế có sẵn của
+        RabbitMQ, cũng chính là thứ NestJS dùng.
+        """
+        kenh = self._rpc_channel
+        if kenh is not None and not kenh.is_closed:
+            return kenh
+
+        self._ready()
+        async with self._lock:
+            if self._rpc_channel is not None and not self._rpc_channel.is_closed:
+                return self._rpc_channel
+            kenh = await self._connection.channel()
+            # `ensure=False`: không khai báo thụ động: hàng đợi giả này không
+            # tồn tại cho tới khi có người nghe, hỏi nó sẽ đóng luôn kênh.
+            hang_doi = await kenh.get_queue(RMQ_REPLY_QUEUE, ensure=False)
+            await hang_doi.consume(self._nhan_tra_loi, no_ack=True)
+            self._rpc_channel = kenh
+            log.debug("mq.rpc_channel_opened")
+        return self._rpc_channel
+
+    async def _nhan_tra_loi(self, message: Any) -> None:
+        ma = message.correlation_id
+        if not ma:
+            log.warning("mq.reply_without_correlation_id")
+            return
+        if not self._so_cho.deliver(ma, decode(message.body)):
+            # Tới sau khi người gọi đã bỏ cuộc. Không phải lỗi, nhưng thấy
+            # nhiều dòng này nghĩa là `timeout` đang đặt ngắn hơn thực tế.
+            log.debug("mq.reply_too_late", correlation_id=ma)
+
+    async def send(
+        self,
+        pattern: Any,
+        data: Any = None,
+        *,
+        queue: str | None = None,
+        exchange: str = "",
+        routing_key: str | None = None,
+        exchange_type: ExchangeKind | None = None,
+        headers: dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        """Gửi một YÊU CẦU rồi **chờ trả lời** — tương đương `client.send()`.
+
+        Trả về đúng thứ handler bên kia trả về. Bên kia ném lỗi thì ném lại
+        `RpcRemoteError` kèm nguyên văn; quá `timeout` giây thì `RpcTimeoutError`.
+
+        Dùng `amq.rabbitmq.reply-to` nên không mọc thêm hàng đợi nào trên broker,
+        dù gọi bao nhiêu lần.
+
+        Nhớ: hết giờ KHÔNG bảo đảm bên kia chưa làm gì — xem docs/rpc.md.
+        """
+        ex, rk = self._dia_chi(queue, exchange, routing_key)
+        aio_pika = _require_aio_pika()
+        kenh = await self._kenh_rpc()
+
+        han = timeout or DEFAULT_RPC_TIMEOUT
+
+        # Giữ chỗ TRƯỚC khi gửi: bên kia có thể trả lời xong trước khi lệnh gửi
+        # của ta kịp trả về.
+        ma, cho = self._so_cho.open()
+        try:
+            goi = request_packet(pattern, data, ma)
+            message = aio_pika.Message(
+                body=json.dumps(goi, ensure_ascii=False, default=str).encode(),
+                content_type=CONTENT_TYPE,
+                content_encoding="utf-8",
+                message_id=uuid.uuid4().hex,
+                timestamp=utcnow(),
+                correlation_id=ma,
+                reply_to=RMQ_REPLY_QUEUE,
+                headers=headers or {},
+                # Yêu cầu đang có người đứng chờ: quá `timeout` thì nó vô giá
+                # trị, đừng để broker giữ lại rồi giao cho ai đó sau này.
+                expiration=han,
+            )
+            if ex:
+                dich_gui = await self._khai_tren_kenh(kenh, ex, exchange_type)
+            else:
+                dich_gui = kenh.default_exchange
+            await asyncio.wait_for(
+                dich_gui.publish(message, routing_key=rk),
+                self._config.publish_timeout_seconds,
+            )
+        except BaseException:
+            self._so_cho.deliver(ma, None)   # trả chỗ, đừng để sổ chờ phình
+            raise
+
+        rabbitmq_published.inc(exchange=ex, routing_key=rk)
+        return await self._so_cho.wait(ma, cho, han, dich=normalize_pattern(pattern))
+
+    async def _khai_tren_kenh(
+        self, kenh: Any, name: str, kind: ExchangeKind | None
+    ) -> Any:
+        """Khai exchange trên ĐÚNG kênh RPC.
+
+        Không dùng lại được sổ `_exchanges`: đối tượng exchange của aio-pika gắn
+        với kênh đã khai ra nó, publish qua nó là publish trên kênh đó — tức là
+        `reply_to` sẽ trỏ về một kênh khác kênh đang nghe.
+        """
+        aio_pika = _require_aio_pika()
+        kieu = kind or self._exchange_kinds.get(name) or "topic"
+        return await kenh.declare_exchange(name, aio_pika.ExchangeType(kieu), durable=True)
 
     def stats(self) -> dict[str, Any]:
         return {
