@@ -9,12 +9,15 @@ from __future__ import annotations
 import uuid
 from typing import Any, TypeVar
 
+from fastapi_modular.core.container import _ENTITIES
+from fastapi_modular.core.exceptions import ConflictError
 from fastapi_modular.infrastructure.database.base import (
     DatabaseBackend,
     DuplicateKeyViolation,
     Filters,
     Match,
     active_filters,
+    default_of,
     mapping_for,
     matches,
 )
@@ -144,6 +147,7 @@ class MemoryBackend(DatabaseBackend):
 
     async def save(self, entity: type[E], obj: E) -> E:
         self._check_unique(entity, obj)
+        self._check_references(entity, obj)
         if not getattr(obj, "id", None):
             obj.id = uuid.uuid4().hex  # type: ignore[attr-defined]
         self._table(entity)[obj.id] = obj  # type: ignore[attr-defined]
@@ -168,17 +172,86 @@ class MemoryBackend(DatabaseBackend):
                 if tuple(getattr(other, c, None) for c in columns) == values:
                     raise DuplicateKeyViolation(mapping.storage, columns, values)
 
+    def _check_references(self, entity: type, obj: Any) -> None:
+        """Bắt chước ràng buộc khoá ngoại LÚC GHI: cha phải có thật.
+
+        SQL thật ném `FOREIGN KEY constraint failed` khi ghi một `camera_id`
+        không trỏ tới camera nào. Không bắt chước thì backend memory cho ghi
+        thoải mái, `fam test` xanh, và production đổ đúng chỗ đó.
+        """
+        for column, ref in mapping_for(entity).references:
+            value = getattr(obj, column, None)
+            if value is None:                      # NULL nghĩa là "chưa gắn", hợp lệ
+                continue
+            if value not in self._table(ref.target):
+                raise ConflictError(
+                    f"{entity.__name__}.{column} = {value!r} nhưng không có "
+                    f"{ref.target.__name__} nào mang id đó."
+                )
+
+    # ------------------------------------------------------------ khoá ngoại
+    def _children_of(self, parent: type) -> list[tuple[type, str, Any]]:
+        """Mọi entity ĐANG BIẾT có cột trỏ tới `parent`.
+
+        "Đang biết" = đã có bản ghi trong backend này. Đủ cho test; SQL thật
+        thì chính database giữ danh sách này nên không có giới hạn đó.
+        """
+        found = []
+        for child in list(_ENTITIES.values()):
+            for column, ref in mapping_for(child).references:
+                if ref.target is parent:
+                    found.append((child, column, ref))
+        return found
+
+    async def _cascade(self, parent: type, ids: list[str]) -> None:
+        """Áp `on_delete` cho mọi bản ghi con, trước khi xoá cha.
+
+        SQL thật thì database làm việc này. Ở đây khung làm, để `fam test`
+        (chạy trên memory) cho cùng kết quả với production.
+        """
+        if not ids:
+            return
+        for child, column, ref in self._children_of(parent):
+            table = self._table(child)
+            con = [o for o in table.values() if getattr(o, column, None) in ids]
+            if not con:
+                continue
+
+            if ref.on_delete == "CASCADE":
+                await self.delete_where_ids(child, [o.id for o in con])
+            elif ref.on_delete == "SET NULL":
+                for obj in con:
+                    setattr(obj, column, None)
+            elif ref.on_delete == "SET DEFAULT":
+                value = default_of(child, column)
+                for obj in con:
+                    setattr(obj, column, value)
+            else:                                   # RESTRICT / NO ACTION
+                raise ConflictError(
+                    f"Không xoá được {parent.__name__} vì còn {len(con)} "
+                    f"{child.__name__} trỏ tới nó ({column}). Xoá chúng trước, "
+                    f'hoặc khai on_delete="CASCADE"/"SET NULL".'
+                )
+
+    async def delete_where_ids(self, entity: type, ids: list[str]) -> int:
+        """Xoá theo danh sách id, có áp khoá ngoại. Dùng nội bộ cho cascade."""
+        await self._cascade(entity, ids)
+        table = self._table(entity)
+        removed = 0
+        for id_ in ids:
+            removed += int(table.pop(id_, None) is not None)
+        return removed
+
     async def delete(self, entity: type[E], id_: str) -> bool:
-        return self._table(entity).pop(id_, None) is not None
+        if id_ not in self._table(entity):
+            return False
+        return await self.delete_where_ids(entity, [id_]) > 0
 
     async def delete_where(
         self, entity: type[E], *, filters: Filters, match: Match = None
     ) -> int:
-        table = self._table(entity)
         ids = [o.id for o in self._select(entity, filters, match)]
-        for id_ in ids:
-            del table[id_]
-        return len(ids)
+        return await self.delete_where_ids(entity, ids)
 
 
 def _read(row: dict[str, Any], column: Any) -> Any:

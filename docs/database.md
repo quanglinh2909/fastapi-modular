@@ -1,5 +1,22 @@
 # Hướng dẫn database
 
+## Bạn đang cần làm gì?
+
+| Việc bạn muốn làm | Đọc mục |
+|---|---|
+| "Khai một bảng dữ liệu mới" | [Khai báo entity](#khai-báo-entity) |
+| "Sự kiện phải thuộc về một camera" | [Khoá ngoại](#khoá-ngoại-nối-hai-bảng-với-nhau) |
+| "**Xoá camera thì xoá luôn sự kiện của nó**" | [`CASCADE`](#cascade--xoá-cha-thì-con-đi-theo) |
+| "**Xoá khu vực thì camera ở lại, chỉ mất chỗ gắn**" | [`SET NULL`](#set-null--con-ở-lại-mất-chỗ-gắn) |
+| "**Xoá camera thì thẻ về giá trị mặc định**" | [`SET DEFAULT`](#set-default--về-giá-trị-bạn-đặt-sẵn) |
+| "Còn hoá đơn thì KHÔNG cho xoá khách hàng" | [`RESTRICT`](#restrict--chặn-không-cho-xoá) |
+| "Đọc/ghi dữ liệu trong service" | [Dùng Repository trong code](#dùng-repository-trong-code) |
+| "Lọc lớn hơn, nhỏ hơn, NULL, nối bảng" | [Truy vấn phức tạp](#truy-vấn-phức-tạp--join-lớnbé-null) |
+| "Chọn database nào" | [Cách chọn driver](#cách-chọn-driver) |
+| "Thêm/xoá trường mà không mất dữ liệu" | [Tự chỉnh schema](#tự-chỉnh-schema-thêm--xoá-trường) |
+
+---
+
 Template hỗ trợ **4 backend**: `memory` (mặc định), `sqlite`, `postgres`, `mongodb`.
 Tại một thời điểm chỉ **một** backend được dùng, và **chỉ thư viện của backend đó
 cần được cài** — chọn Postgres thì máy không cần `aiosqlite` hay `motor`.
@@ -601,6 +618,239 @@ Dữ liệu **không** tự chuyển giữa các backend. Cần chuyển thì ph
 
 ---
 
+## Khai báo entity
+
+Một entity là một bảng. Viết vào `src/api/<module>/entities/`:
+
+```python
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from fastapi_modular.core.clock import utcnow
+from fastapi_modular.core.container import entity
+
+
+@entity()
+@dataclass(slots=True)
+class Camera:
+    id: str                                              # BẮT BUỘC, là khoá chính
+    name: str
+    ip: str
+    is_active: bool = True
+    fps: int = 25
+    created_at: datetime = field(default_factory=utcnow)
+    updated_at: datetime = field(default_factory=utcnow)
+```
+
+Chạy `fam dev` là bảng được tạo. Log khởi động:
+
+```
+db.schema_ready  mode=create  tables=['cameras']
+```
+
+**Không thấy tên bảng của bạn** nghĩa là file entity chưa được import — nó phải
+nằm trong `src/api/<module>/entities/` để khung quét thấy.
+
+### Bốn quy ước phải biết
+
+**`id: str` là bắt buộc và là khoá chính.** Để trống lúc `save()` thì khung tự
+sinh (UUID):
+
+```python
+cam = await repo.save(Camera(id="", name="Cổng chính", ip="10.0.0.1"))
+print(cam.id)     # "3f2a...", khung vừa sinh
+```
+
+**`created_at` / `updated_at` là tuỳ chọn, nhưng có thì khung tự lo.** Mỗi lần
+`save()` đóng dấu lại `updated_at` — không có chỗ nào quên, vì mọi đường ghi
+đều đi qua đó. Tương đương `@UpdateDateColumn` của TypeORM. Bản ghi mới thì hai
+mốc bằng nhau, nên "chưa từng sửa" nhận ra được bằng `created_at == updated_at`.
+
+**Tên bảng mặc định là tên class viết thường + `s`**: `Camera` → `cameras`. Đổi
+bằng `@entity(name="camera_list")`.
+
+**Kiểu trường quyết định kiểu cột.** Năm kiểu được ánh xạ thật:
+
+| Khai trong Python | Cột trong SQL |
+|---|---|
+| `str` | `VARCHAR` |
+| `int` | `INTEGER` |
+| `float` | `FLOAT` |
+| `bool` | `BOOLEAN` |
+| `datetime` | `TIMESTAMP WITH TIME ZONE` |
+| `Enum` | `VARCHAR(64)`, lưu bằng `.value` cho dễ đọc và dễ migrate |
+| *(kiểu khác)* | `VARCHAR` |
+
+Trường cho phép trống thì khai `| None` và cho mặc định `None`:
+
+```python
+zone_id: str | None = None
+```
+
+### Duy nhất và index
+
+Khai trên `@entity`, và ràng buộc được tạo **dưới database** chứ không chỉ kiểm
+trong service — kiểm rồi mới ghi là một cuộc đua, hai request đồng thời đều thấy
+"chưa có" rồi cùng ghi:
+
+```python
+@entity(
+    unique=["serial", ("owner_id", "name")],   # cụm: duy nhất theo CẶP
+    indexes=[("owner_id", "status")],          # cụm: hay lọc theo cả hai
+)
+```
+
+Ghi trùng thì nhận lỗi **409**, không phải 500. Chi tiết thứ tự cột trong cụm:
+[Ràng buộc duy nhất và index](#ràng-buộc-duy-nhất-và-index).
+
+---
+
+## Khoá ngoại: nối hai bảng với nhau
+
+Sự kiện phải thuộc về một camera. Camera thuộc về một khu vực. Khai bằng
+`reference(...)` đặt ngay trên cột:
+
+```python
+from fastapi_modular import reference
+
+
+@entity()
+@dataclass(slots=True)
+class Event:
+    id: str
+    label: str
+    camera_id: str = field(metadata=reference(Camera, on_delete="CASCADE"))
+    created_at: datetime = field(default_factory=utcnow)
+```
+
+Sinh ra khoá ngoại **thật** trong database:
+
+```sql
+FOREIGN KEY(camera_id) REFERENCES cameras (id) ON DELETE CASCADE
+```
+
+Đặt trên cột chứ không phải trên `@entity(...)`: khoá ngoại nói về **một cột cụ
+thể**, để cạnh nhau thì đọc một dòng là biết. TypeORM và Django đều đặt ở đây.
+
+### Nó chặn dữ liệu rác ngay lúc GHI
+
+```python
+await events.save(Event(id="", label="person", camera_id="khong-co-that"))
+# -> lỗi 409: không có Camera nào mang id đó
+```
+
+Không cần viết dòng kiểm tra nào. Cả `memory` lẫn SQL đều chặn như nhau, nên
+`fam test` bắt được đúng lỗi mà production sẽ gặp.
+
+`None` thì được — nó nghĩa là "chưa gắn", không phải "gắn sai":
+
+```python
+zone_id: str | None = field(default=None, metadata=reference(Zone, on_delete="SET NULL"))
+```
+
+### Xoá cha thì con thế nào?
+
+Đây là câu hỏi **nghiệp vụ**, không phải chi tiết kỹ thuật — nên khung bắt bạn
+nói rõ thay vì đoán hộ. Bốn lựa chọn:
+
+| Bạn muốn | Khai | Xoá cha thì |
+|---|---|---|
+| con không còn nghĩa gì nữa | `on_delete="CASCADE"` | **xoá luôn con** |
+| con vẫn có nghĩa, chỉ mất chỗ gắn | `on_delete="SET NULL"` | con ở lại, cột về `NULL` |
+| con phải trỏ đi đâu đó | `on_delete="SET DEFAULT"` | con ở lại, cột về giá trị mặc định |
+| con là dữ liệu không được mất | `on_delete="RESTRICT"` *(mặc định)* | **chặn, không cho xoá cha** |
+
+Mặc định là `RESTRICT` — cố ý chọn cái an toàn nhất. Không khai gì thì bạn được
+báo lỗi, chứ không mất dữ liệu trong im lặng.
+
+#### `CASCADE` — xoá cha thì con đi theo
+
+```python
+camera_id: str = field(metadata=reference(Camera, on_delete="CASCADE"))
+```
+
+```python
+await cameras.delete("cam-01")
+# mọi Event có camera_id = "cam-01" biến mất theo
+```
+
+Dùng khi con **không tồn tại độc lập được**: sự kiện của một camera đã gỡ, dòng
+chi tiết của một hoá đơn đã xoá, ảnh thu nhỏ của một bài viết đã xoá.
+
+> **Cẩn thận: nó lan theo chuỗi.** Xoá khu vực → xoá camera (nếu camera cũng khai
+> CASCADE) → xoá sự kiện. Một lệnh `delete()` có thể quét sạch một nhánh. Muốn
+> chuỗi dừng lại ở đâu thì khai `SET NULL` hoặc `RESTRICT` ở đúng bậc đó.
+
+#### `SET NULL` — con ở lại, mất chỗ gắn
+
+```python
+zone_id: str | None = field(default=None, metadata=reference(Zone, on_delete="SET NULL"))
+```
+
+```python
+await zones.delete("tang-1")
+# camera VẪN CÒN, chỉ là zone_id thành None
+```
+
+Dùng khi con **vẫn có nghĩa khi không có cha**: camera vẫn là camera dù khu vực
+bị xoá; bài viết vẫn còn dù chuyên mục bị xoá.
+
+Cột phải cho phép `None` — khai `str | None` và cho mặc định `None`. Khai
+`str` rồi đòi `SET NULL` là mâu thuẫn, database sẽ từ chối.
+
+#### `SET DEFAULT` — về giá trị bạn đặt sẵn
+
+```python
+camera_id: str = field(default="chua-gan", metadata=reference(Camera, on_delete="SET DEFAULT"))
+```
+
+```python
+await cameras.delete("cam-01")
+# thẻ vẫn còn, camera_id = "chua-gan"
+```
+
+Dùng khi bạn muốn con trỏ về một **bản ghi thay thế** thay vì để trống — ví dụ
+một camera "chưa phân loại". Trường bắt buộc phải có giá trị mặc định
+(`default=...`), nếu không khung báo lỗi ngay lúc khai báo.
+
+#### `RESTRICT` — chặn, không cho xoá
+
+```python
+customer_id: str = field(metadata=reference(Customer, on_delete="RESTRICT"))
+```
+
+```python
+await customers.delete("kh-01")
+# -> lỗi 409: "Không xoá được Customer vì còn 3 Invoice trỏ tới nó"
+```
+
+Đây là **mặc định**, và đúng cho dữ liệu tài chính hay pháp lý: hoá đơn không
+được biến mất chỉ vì có người bấm nhầm nút xoá khách hàng. Muốn xoá thật thì
+phải dọn con trước — và đó chính là điều bạn muốn phải xảy ra một cách có ý thức.
+
+### Ba điều phải biết trước
+
+**SQLite tắt khoá ngoại mặc định — khung tự bật.** Đây là cái bẫy đắt nhất của
+SQLite: không bật `PRAGMA foreign_keys=ON` thì DDL vẫn ghi `ON DELETE CASCADE`
+nhưng nó **chỉ nằm đó làm cảnh**. Đo được: xoá cha xong con vẫn còn nguyên,
+không lỗi, không cảnh báo, chỉ là dữ liệu mồ côi. Khung bật sẵn cho **mọi
+connection** trong pool — kiểm bằng `PRAGMA foreign_keys` phải trả về `1`.
+
+**MongoDB không có khoá ngoại.** Khung tự dọn bằng nhiều lệnh nối nhau, nên nó
+**không nguyên tử**: tiến trình chết giữa chừng thì còn lại cha đã xoá mà con
+chưa dọn. Cần bảo đảm thật thì dùng postgres.
+
+| Backend | Ai áp ràng buộc |
+|---|---|
+| `postgres`, `sqlite` | **chính database**, trong cùng transaction |
+| `memory` | khung, để `fam test` cho cùng kết quả |
+| `mongodb` | khung, **không nguyên tử** — xem trên |
+
+**Xoá nhiều cha một lúc cũng áp ràng buộc.** `delete_where(...)` chạy đúng luật
+như `delete(id)`, không phải đường tắt bỏ qua khoá ngoại.
+
+---
+
 ## Dùng Repository trong code
 
 Service chỉ khai báo kiểu, không cần biết backend nào:
@@ -614,20 +864,6 @@ class CameraService:
     async def find_online(self) -> list[Camera]:
         return await self._cameras.find(status="online", limit=50)
 ```
-
-Entity phải là dataclass có `@entity`:
-
-```python
-@entity                              # hoặc @entity(name="camera_list") để tự đặt tên bảng
-@dataclass(slots=True)
-class Camera:
-    id: str
-    name: str
-    status: str
-    created_at: datetime = field(default_factory=utcnow)
-```
-
-Tên bảng/collection mặc định là tên class viết thường cộng `s`: `Camera` → `cameras`.
 
 ### Bộ hàm có sẵn
 

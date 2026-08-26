@@ -16,9 +16,10 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from enum import Enum
 from functools import cache
-from typing import Any, Protocol, TypeVar, get_args, get_type_hints
+from typing import Any, Literal, Protocol, TypeVar, get_args, get_type_hints
 
 from fastapi_modular.core.compat import UTC, TimeoutErrors
+from fastapi_modular.core.exceptions import BadRequestError
 
 E = TypeVar("E")
 
@@ -38,6 +39,78 @@ def index_name(prefix: str, storage: str, columns: Sequence[str]) -> str:
     return f"{prefix}_{storage[:40]}_{digest}"
 
 
+OnDelete = Literal["CASCADE", "SET NULL", "SET DEFAULT", "RESTRICT", "NO ACTION"]
+
+_METADATA_KEY = "fastapi_modular.reference"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Reference:
+    """Một cột trỏ sang bảng khác — khoá ngoại.
+
+    `on_delete` quyết định chuyện gì xảy ra với **bản ghi con** khi bản ghi cha
+    bị xoá. Đây là câu hỏi nghiệp vụ, không phải chi tiết kỹ thuật, nên khung
+    bắt bạn nói rõ thay vì đoán:
+
+        "CASCADE"      xoá camera -> xoá luôn mọi sự kiện của nó
+        "SET NULL"     xoá camera -> sự kiện còn đó, camera_id thành NULL
+        "SET DEFAULT"  xoá camera -> camera_id về giá trị mặc định của trường
+        "RESTRICT"     còn sự kiện thì KHÔNG cho xoá camera (lỗi 409)
+        "NO ACTION"    để database tự quyết (thường giống RESTRICT)
+    """
+
+    target: type
+    on_delete: OnDelete = "RESTRICT"
+    column: str = "id"          # cột bên bảng cha; gần như luôn là khoá chính
+
+
+def reference(target: type, *, on_delete: OnDelete = "RESTRICT", column: str = "id") -> dict:
+    """Khai một cột là khoá ngoại. Đặt vào `metadata=` của trường:
+
+        @entity()
+        @dataclass(slots=True)
+        class Event:
+            id: str
+            camera_id: str = field(metadata=reference(Camera, on_delete="CASCADE"))
+
+    Đặt ngay trên cột chứ không phải trên `@entity(...)`: khoá ngoại nói về
+    MỘT cột cụ thể, và để cạnh nhau thì đọc một dòng là biết. TypeORM và Django
+    đều đặt ở đây.
+    """
+    if on_delete not in get_args(OnDelete):
+        raise BadRequestError(
+            f"`on_delete` phải là một trong {', '.join(get_args(OnDelete))} "
+            f"(đang là {on_delete!r})"
+        )
+    return {_METADATA_KEY: Reference(target=target, on_delete=on_delete, column=column)}
+
+
+def references_of(entity: type) -> dict[str, Reference]:
+    """{tên cột: Reference} của một entity, đọc từ metadata của dataclass."""
+    found: dict[str, Reference] = {}
+    for field in dataclasses.fields(entity):
+        ref = field.metadata.get(_METADATA_KEY)
+        if ref is not None:
+            found[field.name] = ref
+    return found
+
+
+def default_of(entity: type, column: str) -> Any:
+    """Giá trị mặc định của một trường — dùng cho `SET DEFAULT`."""
+    for field in dataclasses.fields(entity):
+        if field.name != column:
+            continue
+        if field.default is not dataclasses.MISSING:
+            return field.default
+        if field.default_factory is not dataclasses.MISSING:   # type: ignore[misc]
+            return field.default_factory()                     # type: ignore[misc]
+        raise BadRequestError(
+            f"{entity.__name__}.{column} khai `on_delete=\"SET DEFAULT\"` nhưng "
+            "trường này không có giá trị mặc định. Thêm `= giá_trị` vào khai báo."
+        )
+    raise BadRequestError(f"{entity.__name__} không có trường {column!r}")
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class EntityMapping:
     entity: type
@@ -45,6 +118,7 @@ class EntityMapping:
     fields: dict[str, type]      # tên trường -> kiểu đã giải
     unique: tuple[tuple[str, ...], ...]   # mỗi phần tử là một cột hoặc một cụm cột
     indexes: tuple[tuple[str, ...], ...]
+    references: tuple[tuple[str, Reference], ...] = ()   # (tên cột, khoá ngoại)
 
     def index_specs(self) -> list[tuple[str, tuple[str, ...], bool]]:
         """[(tên index, các cột, có unique không)] cho mọi index đã khai báo."""
@@ -67,6 +141,7 @@ def mapping_for(entity: type) -> EntityMapping:
         fields=fields,
         unique=tuple(getattr(entity, "__storage_unique__", ())),
         indexes=tuple(getattr(entity, "__storage_indexes__", ())),
+        references=tuple(references_of(entity).items()),
     )
 
 

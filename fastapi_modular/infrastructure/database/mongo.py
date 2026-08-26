@@ -13,13 +13,15 @@ from typing import Any, TypeVar
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 
-from fastapi_modular.core.exceptions import BadRequestError
+from fastapi_modular.core.container import _ENTITIES
+from fastapi_modular.core.exceptions import BadRequestError, ConflictError
 from fastapi_modular.core.logging import get_logger
 from fastapi_modular.infrastructure.database.base import (
     DatabaseBackend,
     Filters,
     Match,
     active_filters,
+    default_of,
     from_document,
     mapping_for,
     to_document,
@@ -182,7 +184,49 @@ class MongoBackend(DatabaseBackend):
         await self._collection(entity).replace_one({"_id": doc["_id"]}, doc, upsert=True)
         return obj
 
+    # ------------------------------------------------------------ khoá ngoại
+    async def _cascade(self, parent: type, ids: list[str]) -> None:
+        """Áp `on_delete` bằng tay, vì MongoDB KHÔNG có khoá ngoại.
+
+        Đây là khác biệt phải biết trước, không phải chi tiết vụn: với SQL thì
+        chính database áp ràng buộc, trong cùng một transaction, nên hoặc xong
+        hết hoặc không gì cả. Ở đây là khung chạy nhiều lệnh nối nhau — tiến
+        trình chết giữa chừng thì bạn còn lại bản ghi cha đã mất mà con chưa
+        dọn, hoặc ngược lại.
+
+        Cần bảo đảm thật thì dùng postgres, hoặc tự bọc trong transaction của
+        MongoDB (cần replica set).
+        """
+        if not ids:
+            return
+        for child in list(_ENTITIES.values()):
+            for column, ref in mapping_for(child).references:
+                if ref.target is not parent:
+                    continue
+                collection = self._collection(child)
+                loc = {column: {"$in": ids}}
+                if ref.on_delete == "CASCADE":
+                    con = [doc["_id"] async for doc in collection.find(loc, {"_id": 1})]
+                    if con:
+                        await self._cascade(child, con)
+                        await collection.delete_many(loc)
+                elif ref.on_delete == "SET NULL":
+                    await collection.update_many(loc, {"$set": {column: None}})
+                elif ref.on_delete == "SET DEFAULT":
+                    await collection.update_many(
+                        loc, {"$set": {column: default_of(child, column)}}
+                    )
+                else:                                # RESTRICT / NO ACTION
+                    con = await collection.count_documents(loc)
+                    if con:
+                        raise ConflictError(
+                            f"Không xoá được {parent.__name__} vì còn {con} "
+                            f"{child.__name__} trỏ tới nó ({column}). Xoá chúng "
+                            'trước, hoặc khai on_delete="CASCADE"/"SET NULL".'
+                        )
+
     async def delete(self, entity: type[E], id_: str) -> bool:
+        await self._cascade(entity, [id_])
         result = await self._collection(entity).delete_one({"_id": id_})
         return result.deleted_count > 0
 
@@ -195,5 +239,19 @@ class MongoBackend(DatabaseBackend):
             for obj in victims:
                 removed += int(await self.delete(entity, obj.id))  # type: ignore[attr-defined]
             return removed
-        result = await self._collection(entity).delete_many(self._query(filters))
+
+        query = self._query(filters)
+        if mapping_for(entity).references or _co_con(entity):
+            ids = [doc["_id"] async for doc in self._collection(entity).find(query, {"_id": 1})]
+            await self._cascade(entity, ids)
+        result = await self._collection(entity).delete_many(query)
         return int(result.deleted_count)
+
+
+def _co_con(parent: type) -> bool:
+    """Có entity nào trỏ tới `parent` không — để khỏi truy vấn id thừa."""
+    return any(
+        ref.target is parent
+        for child in list(_ENTITIES.values())
+        for _, ref in mapping_for(child).references
+    )

@@ -24,6 +24,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Float,
+    ForeignKey,
     Index,
     Integer,
     MetaData,
@@ -221,6 +222,11 @@ class SqlBackend(DatabaseBackend):
             "journal_mode": self._sqlite_journal_mode,
             "synchronous": self._sqlite_synchronous,
             "busy_timeout": int(self._sqlite_busy_timeout * 1000),
+            # SQLite TẮT khoá ngoại mặc định, và tắt nghĩa là `ON DELETE CASCADE`
+            # trong schema chỉ nằm đó làm cảnh: xoá cha thì con ở lại thành mồ
+            # côi, không lỗi, không cảnh báo. Đây là thiết lập của TỪNG
+            # connection nên phải đặt ở đây chứ không phải chạy một câu lệnh.
+            "foreign_keys": "ON",
         }
 
         @event.listens_for(engine.sync_engine, "connect")
@@ -259,15 +265,22 @@ class SqlBackend(DatabaseBackend):
         if table is not None:
             return table
 
-        columns = [
-            Column(
-                name,
-                _column_type(declared),
-                primary_key=(name == "id"),
-                nullable=(name != "id"),
+        references = dict(mapping.references)
+        columns = []
+        for name, declared in mapping.fields.items():
+            args: list[Any] = [name, _column_type(declared)]
+            ref = references.get(name)
+            if ref is not None:
+                target = mapping_for(ref.target)
+                # Bảng cha phải được dựng TRƯỚC trong cùng MetaData, nếu không
+                # SQLAlchemy không phân giải nổi "cameras.id".
+                self._table(ref.target)
+                args.append(
+                    ForeignKey(f"{target.storage}.{ref.column}", ondelete=ref.on_delete)
+                )
+            columns.append(
+                Column(*args, primary_key=(name == "id"), nullable=(name != "id"))
             )
-            for name, declared in mapping.fields.items()
-        ]
         table = Table(mapping.storage, self._metadata, *columns)
         self._tables[mapping.storage] = table
         return table
