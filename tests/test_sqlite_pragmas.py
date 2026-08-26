@@ -88,6 +88,26 @@ async def test_mac_dinh_la_wal_normal_busy5s(backend):
     }
 
 
+async def test_like_phan_biet_hoa_thuong_nhu_postgres(backend):
+    """`LIKE` của SQLite mặc định BỎ QUA hoa thường, Postgres và memory thì không.
+
+    Không bật pragma này thì `where(name__like="kho%")` ra kết quả ở sqlite mà
+    không ra gì ở postgres — lệch âm thầm, chỉ lộ khi đã lên production.
+    """
+    db = await backend()
+    async with db._engine.begin() as conn:
+        await conn.execute(text("CREATE TABLE t (name TEXT)"))
+        await conn.execute(text("INSERT INTO t VALUES ('Kho hàng')"))
+        thuong = (await conn.execute(text("SELECT name FROM t WHERE name LIKE 'kho%'"))).all()
+        hoa = (await conn.execute(text("SELECT name FROM t WHERE name LIKE 'Kho%'"))).all()
+        bo_qua = (await conn.execute(
+            text("SELECT name FROM t WHERE lower(name) LIKE lower('kHo%')"))).all()
+
+    assert thuong == [], "LIKE phải phân biệt hoa thường"
+    assert len(hoa) == 1
+    assert len(bo_qua) == 1, "ilike vẫn phải bỏ qua hoa thường"
+
+
 async def test_doi_duoc_ve_mac_dinh_goc(backend):
     """Ổ mạng không chạy được WAL, và có nơi cần bền vững tuyệt đối."""
     db = await backend(sqlite_journal_mode="DELETE", sqlite_synchronous="FULL")

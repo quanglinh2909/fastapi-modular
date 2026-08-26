@@ -228,6 +228,13 @@ class SqlBackend(DatabaseBackend):
             # côi, không lỗi, không cảnh báo. Đây là thiết lập của TỪNG
             # connection nên phải đặt ở đây chứ không phải chạy một câu lệnh.
             "foreign_keys": "ON",
+            # `LIKE` của SQLite mặc định KHÔNG phân biệt hoa thường (với ký tự
+            # ASCII), trong khi Postgres và backend memory thì có. Đo được:
+            # `LIKE 'kho%'` ra "Kho hàng" ở sqlite nhưng không ra gì ở hai chỗ
+            # kia. Bật pragma này để ba backend cho cùng kết quả — cần chữ hoa
+            # thường bỏ qua thì dùng `ilike`, chỗ nào cũng chạy. Nó còn cho
+            # SQLite dùng index với `LIKE 'tiền tố%'`.
+            "case_sensitive_like": "ON",
         }
 
         @event.listens_for(engine.sync_engine, "connect")

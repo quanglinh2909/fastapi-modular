@@ -388,6 +388,36 @@ def is_not_null(column: Any) -> Condition:
     return Compare(column_of(column), "isnull", False)
 
 
+def like(column: Any, pattern: str) -> Condition:
+    """`WHERE cot LIKE 'mẫu'` — PHÂN BIỆT hoa thường ở cả ba backend.
+
+        .where(like(Camera.name, "Cổng%"))
+
+    `%` là "bất kỳ bao nhiêu ký tự", `_` là "đúng một ký tự".
+    """
+    return Compare(column_of(column), "like", pattern)
+
+
+def ilike(column: Any, pattern: str) -> Condition:
+    """Như `like` nhưng BỎ QUA hoa thường: `ilike(Camera.name, "cổng%")`."""
+    return Compare(column_of(column), "ilike", pattern)
+
+
+def in_(column: Any, values: Iterable[Any]) -> Condition:
+    """`WHERE cot IN (...)`. Tên có gạch dưới vì `in` là từ khoá của Python."""
+    return Compare(column_of(column), "in", list(values))
+
+
+def not_in(column: Any, values: Iterable[Any]) -> Condition:
+    """`WHERE cot NOT IN (...)`."""
+    return Compare(column_of(column), "nin", list(values))
+
+
+def between(column: Any, low: Any, high: Any) -> Condition:
+    """`WHERE cot BETWEEN a AND b` — hai đầu đều TÍNH VÀO."""
+    return Compare(column_of(column), "between", [low, high])
+
+
 def and_(*parts: Any) -> Condition:        # `Any`: xem ghi chú ở `Query.where`
     return Group("and", tuple(as_condition(p) for p in parts))
 
@@ -747,6 +777,43 @@ class Query(Generic[E]):
         self._where.append(list(self._as_conditions(conditions, lookups)))
         self._spec.conditions = _compose(self._where)
         return self
+
+    # Bảy toán tử dưới đây là những thứ Python không có ký hiệu: `LIKE`, `IN`,
+    # `IS NULL`, `BETWEEN`. Để thẳng trên builder vì đây là chỗ DUY NHẤT IDE gợi
+    # ý được — `repo.query()` có kiểu `Query[E]` nên gõ `.` là hiện ra, còn
+    # `Camera.name` thì type checker vẫn tưởng là `str`.
+    def like(self, column: Any, pattern: str) -> Query[E]:
+        """`WHERE cot LIKE 'mẫu'`, PHÂN BIỆT hoa thường ở cả ba backend.
+
+            .like(Camera.name, "Cổng%")
+
+        `%` là "bao nhiêu ký tự cũng được", `_` là "đúng một ký tự".
+        """
+        return self.where(like(column, pattern))
+
+    def ilike(self, column: Any, pattern: str) -> Query[E]:
+        """Như `like` nhưng BỎ QUA hoa thường: `.ilike(Camera.name, "cổng%")`."""
+        return self.where(ilike(column, pattern))
+
+    def is_null(self, column: Any) -> Query[E]:
+        """`WHERE cot IS NULL`. Đừng viết `cot == None` — IDE gạch chân câu đó."""
+        return self.where(is_null(column))
+
+    def is_not_null(self, column: Any) -> Query[E]:
+        """`WHERE cot IS NOT NULL`."""
+        return self.where(is_not_null(column))
+
+    def in_(self, column: Any, values: Iterable[Any]) -> Query[E]:
+        """`WHERE cot IN (...)`. Gạch dưới vì `in` là từ khoá của Python."""
+        return self.where(in_(column, values))
+
+    def not_in(self, column: Any, values: Iterable[Any]) -> Query[E]:
+        """`WHERE cot NOT IN (...)`."""
+        return self.where(not_in(column, values))
+
+    def between(self, column: Any, low: Any, high: Any) -> Query[E]:
+        """`WHERE cot BETWEEN a AND b` — hai đầu đều TÍNH VÀO."""
+        return self.where(between(column, low, high))
 
     def _as_conditions(self, conditions: tuple, lookups: dict) -> list[Condition]:
         return [
@@ -1392,13 +1459,18 @@ __all__ = [
     "QuerySpec",
     "and_",
     "avg",
+    "between",
     "count",
     "evaluate",
+    "ilike",
+    "in_",
     "is_not_null",
     "is_null",
+    "like",
     "max_",
     "min_",
     "not_",
+    "not_in",
     "or_",
     "sort_key",
     "sum_",

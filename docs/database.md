@@ -21,7 +21,8 @@
 | "**Trả về sự kiện kèm object camera**" | [Dữ liệu lồng nhau](#dữ-liệu-lồng-nhau-include) |
 | "**Lọc theo sự kiện nhưng trả về camera ở ngoài**" | [`nest_under`](#đảo-chiều-nest_under) |
 | "**Bảng nhiều cột quá, tôi muốn bỏ bớt một cột**" | [`exclude`](#chọn-cột-trả-về) |
-| "Chỉ lấy dòng có cột này để trống" | [Lọc NULL](#lọc-null) |
+| "Chỉ lấy dòng có cột này để trống" | [`is_null`](#like-in-is-null-between--bảy-toán-tử-không-có-ký-hiệu) |
+| "Tìm theo tên gần đúng" | [`like` / `ilike`](#like-in-is-null-between--bảy-toán-tử-không-có-ký-hiệu) |
 | "Chọn database nào" | [Cách chọn driver](#cách-chọn-driver) |
 | "Thêm/xoá trường mà không mất dữ liệu" | [Tự chỉnh schema](#tự-chỉnh-schema-thêm--xoá-trường) |
 
@@ -129,6 +130,10 @@ APP_DB__ECHO=false
 | `APP_DB__SQLITE_JOURNAL_MODE` | không | `WAL` | `DELETE` là mặc định gốc của SQLite và **chậm 20 lần** — xem bên dưới |
 | `APP_DB__SQLITE_SYNCHRONOUS` | không | `NORMAL` | `FULL` / `NORMAL` / `OFF`; đi liền với journal mode |
 | `APP_DB__SQLITE_BUSY_TIMEOUT_SECONDS` | không | `5.0` | chờ bao lâu khi người khác đang giữ khoá ghi |
+
+Hai PRAGMA nữa luôn bật, không có cờ tắt vì tắt là **lệch với Postgres**:
+`foreign_keys=ON` (thiếu nó thì `ON DELETE CASCADE` chỉ nằm trong schema làm
+cảnh) và `case_sensitive_like=ON` (thiếu nó thì `LIKE` bỏ qua hoa thường).
 
 ```bash
 fam dev
@@ -1101,28 +1106,62 @@ Thiếu ngoặc thì `Event.score >= 0.9 & Event.label` chạy trước và bạ
 
 `~` là NOT: `.where(~or_(Event.label == "fire", Event.label == "car"))`.
 
-### Lọc NULL
+### LIKE, IN, IS NULL, BETWEEN — bảy toán tử không có ký hiệu
 
-Ba cách viết, chạy y hệt nhau — chọn theo việc IDE của bạn có gợi ý được không:
+`>=`, `==`, `<` viết thẳng được. Bảy toán tử còn lại của SQL thì Python không có
+ký hiệu tương ứng, nên chúng nằm **ngay trên builder**:
 
 ```python
-from fastapi_modular.infrastructure.database import is_null, is_not_null
+q = cameras.query
 
-.where(is_null(Camera.rtsp))        # IDE gợi ý được `is_null`, không cảnh báo gì
-.where(Camera.rtsp.is_null())       # gọn nhất, cần `class Camera(Entity)`
-.where(rtsp__isnull=True)           # kiểu ngắn
+await q().like(Camera.name, "Cổng%").all()        # LIKE, phân biệt hoa thường
+await q().ilike(Camera.name, "cổng%").all()       # LIKE, bỏ qua hoa thường
+await q().is_null(Camera.ip).all()                # IS NULL
+await q().is_not_null(Camera.ip).all()            # IS NOT NULL
+await q().in_(Camera.fps, [24, 25, 30]).all()     # IN (...)
+await q().not_in(Camera.fps, [15]).all()          # NOT IN (...)
+await q().between(Camera.fps, 24, 30).all()       # BETWEEN, hai đầu TÍNH VÀO
+
+# nối AND với nhau và với where như thường
+await (cameras.query()
+       .like(Camera.name, "Cổng%")
+       .between(Camera.fps, 24, 30)
+       .where(is_active=True)
+       .all())
 ```
 
-**Đừng viết `Camera.rtsp == None`.** Nó chạy đúng, nhưng IDE gạch chân
-*"Comparison with None performed with equality operators"* — mà `is None` thì
-Python không cho nạp chồng, nên không có cách nào làm nó vừa lòng.
+Chúng là `where` viết gọn: nối AND với nhau và với mọi `where` khác, và
+`or_where` vẫn cắt nhánh như thường.
 
-**`Camera.rtsp.is_null()` sẽ không bao giờ được IDE gợi ý.** Type checker đọc
-khai báo `rtsp: str | None` nên với nó `Camera.rtsp` là một `str`, và `str`
-không có `is_null` — nó báo *"Unresolved attribute reference 'is_null' for class
-'str'"*. Câu lệnh vẫn chạy đúng (metaclass chỉ có lúc chạy), nhưng nếu bạn muốn
-IDE giúp thì dùng `is_null(Camera.rtsp)`: đó là một hàm thật, gợi ý được, và
-tham số khai `Any` nên không cảnh báo.
+**Đây là chỗ duy nhất IDE gợi ý được.** `repo.query()` có kiểu `Query[E]` nên
+gõ dấu chấm là hiện ra đủ bảy cái. Ba cách viết còn lại thì không:
+
+| Viết | Chạy | IDE |
+|---|---|---|
+| `.like(Camera.name, "Cổng%")` | mọi entity | **gợi ý được** |
+| `.where(like(Camera.name, "Cổng%"))` | mọi entity | gợi ý được tên hàm |
+| `.where(Camera.name.like("Cổng%"))` | cần `class Camera(Entity)` | ❌ *"Unresolved attribute reference 'like' for class 'str'"* |
+| `.where(name__like="Cổng%")` | mọi entity | ❌ chuỗi thì không gợi ý được |
+
+Vì sao cách thứ ba không bao giờ được gợi ý: type checker đọc khai báo
+`name: str` nên với nó `Camera.name` là một `str`, mà `str` không có `.like`.
+Câu lệnh vẫn chạy đúng — metaclass chỉ tồn tại lúc chạy — nhưng IDE thì chịu.
+
+**Đừng viết `Camera.rtsp == None`.** Nó chạy đúng nhưng IDE gạch chân
+*"Comparison with None performed with equality operators"*, mà `is None` thì
+Python không cho nạp chồng. Dùng `.is_null(Camera.rtsp)`.
+
+### `like` phân biệt hoa thường, ở cả ba backend
+
+```python
+await cameras.query().like(Camera.name, "kho%").all()     # KHÔNG khớp "Kho hàng"
+await cameras.query().ilike(Camera.name, "kho%").all()    # khớp
+```
+
+SQLite mặc định làm ngược lại: `LIKE` của nó bỏ qua hoa thường với ký tự ASCII,
+nên cùng một câu lệnh ra kết quả khác Postgres. Khung bật
+`PRAGMA case_sensitive_like=ON` để ba backend giống nhau — đo được: không bật
+thì `LIKE 'kho%'` ra "Kho hàng" ở sqlite mà không ra gì ở memory và Postgres.
 
 ### Sắp xếp
 
@@ -1499,7 +1538,11 @@ postgres/sqlite.
 | `.having(count() > 5)` · `.or_having(...)` | lọc theo kết quả gộp |
 | `.join(Entity, on=…, outer=False, alias="")` | `on=` nhận `Entity.cot`, `"cot"`, `("cot","cot_kia")`, hoặc cả một điều kiện |
 | `.where(*điều_kiện, **kwargs)` | nhiều lần `where` nối bằng AND |
-| `is_null(X.cot)` · `is_not_null(X.cot)` | `IS NULL` / `IS NOT NULL`, không cần `Entity` |
+| `.like(X.cot, "a%")` · `.ilike(...)` | `LIKE` / `ILIKE`; `like` phân biệt hoa thường |
+| `.is_null(X.cot)` · `.is_not_null(X.cot)` | `IS NULL` / `IS NOT NULL` |
+| `.in_(X.cot, [...])` · `.not_in(...)` | `IN` / `NOT IN` |
+| `.between(X.cot, a, b)` | `BETWEEN`, hai đầu tính vào |
+| `like(X.cot, "a%")`, `is_null(X.cot)`, … | cùng bảy cái, dạng hàm — dùng trong `or_()`/`or_where` |
 | `.or_where(*điều_kiện, **kwargs)` | mở nhánh OR mới |
 | `.order_by_asc("name")` · `.order_by_desc("created_at")` | chiều nằm trong TÊN HÀM; nhận `X.cot` và `count()` |
 | `.limit(n)` · `.offset(n)` · `.distinct()` | |

@@ -28,11 +28,16 @@ from fastapi_modular.infrastructure.database import (
     Repository,
     and_,
     avg,
+    between,
     count,
+    ilike,
+    in_,
     is_not_null,
     is_null,
+    like,
     max_,
     min_,
+    not_in,
     or_,
     reference,
     sum_,
@@ -146,6 +151,74 @@ async def test_in_between_like(kho):
     assert ids(await events.query().where(label__like="pers%").all()) == ["e0", "e1", "e3", "e5"]
     assert ids(await events.query().where(label__startswith="per").all()) == ["e0", "e1", "e3", "e5"]
     assert ids(await events.query().where(label__contains="ers").all()) == ["e0", "e1", "e3", "e5"]
+
+
+async def test_like_ilike_ca_dang_ham_lan_dang_method(kho):
+    """`like(X.cot, ...)` chạy ở mọi entity; `X.cot.like(...)` cần kế thừa `Entity`."""
+    _, cameras = kho
+
+    assert ids(await cameras.query().where(like(QCamera.name, "Cổng%")).all()) == ["c1"]
+    assert ids(await cameras.query().where(QCamera.name.like("Cổng%")).all()) == ["c1"]
+    assert ids(await cameras.query().where(name__like="Cổng%").all()) == ["c1"]
+
+    # QEvent KHÔNG kế thừa Entity: dạng hàm vẫn chạy, dạng method thì không
+    events, _ = kho
+    assert ids(await events.query().where(like(QEvent.label, "pers%")).all()) == [
+        "e0", "e1", "e3", "e5"
+    ]
+    with pytest.raises(AttributeError):
+        QEvent.label.like("pers%")
+
+
+async def test_toan_tu_ngay_tren_builder(kho):
+    """`query().like(...)` — chỗ DUY NHẤT IDE gợi ý được, vì query() có kiểu Query[E]."""
+    events, cameras = kho
+
+    assert ids(await cameras.query().like(QCamera.name, "Cổng%").all()) == ["c1"]
+    assert ids(await cameras.query().ilike(QCamera.name, "kHo%").all()) == ["c2"]
+    assert ids(await cameras.query().is_null(QCamera.parent_id).all()) == ["c1"]
+    assert ids(await cameras.query().is_not_null(QCamera.parent_id).all()) == ["c2", "c3"]
+    assert ids(await events.query().in_(QEvent.label, ["fire", "car"]).all()) == ["e2", "e4"]
+    assert ids(await events.query().not_in(QEvent.label, ["person"]).all()) == ["e2", "e4"]
+    assert ids(await events.query().between(QEvent.score, 0.5, 0.9).all()) == ["e1", "e4"]
+
+
+async def test_toan_tu_tren_builder_noi_AND_nhu_where(kho):
+    """Chúng là `where` viết gọn, nên nối AND với nhau và với `where`."""
+    events, _ = kho
+    rows = await (events.query()
+                  .like(QEvent.label, "pers%")
+                  .between(QEvent.score, 0.9, 1.0)
+                  .where(reviewed_at__isnull=True)
+                  .all())
+    assert ids(rows) == ["e0", "e3"]
+
+    nhanh = await (events.query()
+                   .like(QEvent.label, "fire")
+                   .or_where(F(QEvent).score >= 0.99)
+                   .all())
+    assert ids(nhanh) == ["e2", "e5"]
+
+
+async def test_like_phan_biet_hoa_thuong_con_ilike_thi_khong(kho):
+    """Hai backend phải cho CÙNG kết quả — sqlite mặc định thì không."""
+    _, cameras = kho
+    assert ids(await cameras.query().where(like(QCamera.name, "kho%")).all()) == []
+    assert ids(await cameras.query().where(ilike(QCamera.name, "kHo%")).all()) == ["c2"]
+    assert ids(await cameras.query().where(QCamera.name.ilike("kHo%")).all()) == ["c2"]
+    assert ids(await cameras.query().where(name__ilike="kHo%").all()) == ["c2"]
+
+
+async def test_in_not_in_between_dang_ham(kho):
+    events, _ = kho
+    assert ids(await events.query().where(in_(QEvent.label, ["fire", "car"])).all()) == \
+        ["e2", "e4"]
+    assert ids(await events.query().where(not_in(QEvent.label, ["fire", "car"])).all()) == \
+        ["e0", "e1", "e3", "e5"]
+    assert ids(await events.query().where(between(QEvent.score, 0.5, 0.9)).all()) == ["e1", "e4"]
+    # Hai đầu đều TÍNH VÀO: e1 đúng 0.60 ở cận dưới, e0 và e3 đúng 0.95 ở cận trên
+    assert ids(await events.query().between(QEvent.score, 0.60, 0.95).all()) == \
+        ["e0", "e1", "e3", "e4"]
 
 
 async def test_where_null_va_not_null(kho):
