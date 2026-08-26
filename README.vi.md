@@ -34,7 +34,8 @@ fam init && fam dev
 | `.leftJoin()` / `.orWhere()` (TypeORM) | `.left_join(X)` / `.or_where(…)` — mỗi kiểu nối một method |
 | `.orderBy('x', 'DESC')` (TypeORM) | `.order_by_desc("x")` — chiều nằm trong tên hàm |
 | `Like()` / `In()` / `IsNull()` (TypeORM) | `.like(X.name, "a%")` · `.in_(X.zone, [...])` · `.is_null(X.ip)` — ngay trên builder |
-| `select([...])` / `AS` (TypeORM) | `.select(fields=…, exclude=…, rename={"tên mới": "cột"})` — ba tên đó dùng chung với `include` |
+| `select([...])` / `AS` (TypeORM) | `.select(fields=…, exclude=…, rename={"tên mới": "cột"})` — dùng chung tên với `include` |
+| `addSelect()` (TypeORM) | `.select(add={"ten_camera": Camera.name})` — giữ đủ cột, thêm một cột |
 | `find({relations: {events: true}})` (TypeORM) | `.include(Event)` — dữ liệu lồng nhau, thêm ĐÚNG một câu lệnh |
 | *(TypeORM không có)* | `.nest_under(Camera)` — lọc theo sự kiện, nhận về camera kèm sự kiện bên trong |
 | `@ManyToOne(…, {onDelete: 'CASCADE'})` (TypeORM) | `field(metadata=reference(Camera, on_delete="CASCADE"))` — khoá ngoại THẬT dưới database |
@@ -421,7 +422,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              1023 test chạy không cần hạ tầng, 228 test nữa cần driver/server thật
+tests/              1027 test chạy không cần hạ tầng, 232 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 

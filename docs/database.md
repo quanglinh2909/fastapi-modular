@@ -28,6 +28,7 @@ builder, không có transaction, không có migration.
 | "**Lọc theo sự kiện nhưng trả về camera ở ngoài**" | [`nest_under`](#đảo-chiều-nest_under) |
 | "**Bảng nhiều cột quá, tôi muốn bỏ bớt một cột**" | [`select(exclude=…)`](#chọn-cột-trả-về) |
 | "**Đổi tên trường trả về**" | [`select(rename=…)`](#chọn-cột-trả-về) |
+| "**Giữ đủ cột, thêm một cột của bảng đã join**" | [`select(add=…)`](#chọn-cột-trả-về) |
 | "Chỉ lấy dòng có cột này để trống" | [`is_null`](#like-in-is-null-between--bảy-toán-tử-không-có-ký-hiệu) |
 | "Tìm theo tên gần đúng" | [`like` / `ilike`](#like-in-is-null-between--bảy-toán-tử-không-có-ký-hiệu) |
 | "Chọn database nào" | [Cách chọn driver](#cách-chọn-driver) |
@@ -1385,14 +1386,47 @@ là dataclass `slots=True` — không gắn thêm trường vào một object nh
 
 ### Chọn cột trả về
 
-Một chỗ duy nhất: `select` cho bảng gốc, và ba tham số cùng tên ở `include` /
-`nest_under` cho bảng kia. **Ba tham số, ba việc khác nhau:**
+**`select` là CHỌN, không phải THÊM.** Kể tên cột nào thì kết quả **chỉ có**
+những cột đó, giống hệt `SELECT` của SQL:
+
+```python
+await repo.query().join(Camera).select(ten_camera=Camera.name).all()
+# [{"ten_camera": "Cổng chính"}]     <- chỉ đúng một cột, không phải "mọi cột + ten_camera"
+```
+
+Muốn giữ đủ cột thì nói rõ bằng `add=` hoặc `rename=`. Bốn tham số, bốn việc:
 
 | Viết | Nghĩa |
 |---|---|
 | `fields=["id", "name"]` | **chỉ** những cột này |
 | `exclude=["raw_payload"]` | mọi cột **trừ** những cột này |
-| `rename={"ma": "id"}` | giữ nguyên tập cột, chỉ **đổi tên** trả về |
+| `rename={"ma": "id"}` | giữ đủ cột, chỉ **đổi tên** trả về |
+| `add={"ten_camera": Camera.name}` | giữ đủ cột, **thêm** một cột nữa |
+
+```python
+await (events.query().join(Camera)
+       .select(add={"ten_camera": Camera.name})
+       .all())
+# [{"id": "e1", "label": "person", "score": 0.95, ..., "ten_camera": "Cổng chính"}]
+```
+
+```sql
+SELECT events.id, events.label, events.score, …, cameras.name AS ten_camera
+FROM events JOIN cameras ON …
+```
+
+`include` / `nest_under` nhận `fields=`, `exclude=`, `rename=` cùng luật (không
+có `add=` vì bên đó "đủ cột" đã là mặc định).
+
+**`add=` không nhận hàm gộp**, và đây không phải hạn chế của khung mà của SQL:
+`SELECT *, count(x)` là câu lỗi ở PostgreSQL — gộp rồi thì một dòng kết quả
+không còn ứng với một bản ghi nào để mà "giữ đủ cột". Lỗi nói luôn hai cách
+viết đúng:
+
+```python
+.group_by(Event.camera_id).select("camera_id", so_luong=count())   # đếm theo nhóm
+.select(so_luong=count())                                          # gộp CẢ BẢNG -> 1 dòng
+```
 
 ```python
 await (cameras.query()
@@ -1567,7 +1601,7 @@ bỏ qua mọi dòng có `reviewed_at` NULL. Backend `memory` giữ y hệt lu�
 | `.limit(n)` · `.offset(n)` · `.distinct()` | |
 | `.select("id", ten_khac=X.cot)` | đổi kiểu trả về sang `list[dict]` |
 | `.select("id", ten_khac=X.cot)` | chọn cột bảng gốc; kết quả thành `list[dict]` |
-| `.select(fields=…, exclude=…, rename=…)` | chỉ những cột này · trừ những cột này · đổi tên |
+| `.select(fields=…, exclude=…, rename=…, add=…)` | chỉ những cột này · trừ những cột này · đổi tên · giữ đủ và thêm |
 | `.include(Entity, name=…, fields=…, exclude=…, rename=…, where=…, order_by_asc=…, order_by_desc=…)` | gắn dữ liệu lồng nhau |
 | `async with db.transaction() as tx:` · `await tx.rollback()` | xem [Transaction](#transaction--ghi-nhiều-bảng-thì-cùng-thành-công-hoặc-cùng-không) |
 | `.nest_under(Entity, name=…, fields=…, exclude=…, rename=…)` | đảo chiều: cha ra ngoài, bảng gốc vào trong |

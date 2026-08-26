@@ -706,6 +706,44 @@ async def test_rename_di_cung_exclude_va_o_include(kho):
     assert kem["qevents"] == [{"id": "e3", "nhan": "person"}, {"id": "e4", "nhan": "car"}]
 
 
+async def test_add_giu_du_cot_va_them_cot_bang_da_join(kho):
+    """`SELECT events.*, cameras.name AS ten` — giữ đủ cột gốc, thêm một cột nữa."""
+    events, _ = kho
+    row = (await events.query().where(id="e3").join(QCamera)
+           .select(add={"ten_camera": QCamera.name}).all())[0]
+
+    assert row["ten_camera"] == "Kho hàng"
+    assert row["id"] == "e3" and row["score"] == 0.95, "cột gốc phải còn đủ"
+    assert set(row) == {"id", "camera_id", "label", "score", "reviewed_at",
+                        "created_at", "updated_at", "ten_camera"}
+    assert next(reversed(row)) == "ten_camera", "cột thêm nằm cuối"
+
+
+async def test_add_di_cung_rename_va_exclude(kho):
+    events, _ = kho
+    row = (await events.query().where(id="e3").join(QCamera)
+           .select(exclude=["created_at", "updated_at", "reviewed_at", "camera_id"],
+                   rename={"ma": "id"}, add={"ten_camera": QCamera.name}).all())[0]
+    assert row == {"ma": "e3", "label": "person", "score": 0.95, "ten_camera": "Kho hàng"}
+
+
+async def test_add_ham_gop_bi_chan_va_chi_cach_dung_dung(kho):
+    """`SELECT *, count(...)` là câu lỗi ở PostgreSQL — chặn, và nói cách viết đúng."""
+    events, _ = kho
+    with pytest.raises(BadRequestError) as loi:
+        events.query().select(add={"so_luong": count()})
+
+    assert "group_by" in str(loi.value), "phải chỉ luôn cách viết đúng"
+
+
+async def test_select_ke_ten_cot_nao_thi_chi_con_cot_do(kho):
+    """`select` là CHỌN chứ không phải THÊM — ghim lại để khỏi đổi ngầm."""
+    events, _ = kho
+    row = (await events.query().where(id="e3").join(QCamera)
+           .select(ten_camera=QCamera.name).all())[0]
+    assert row == {"ten_camera": "Kho hàng"}
+
+
 async def test_rename_viet_nguoc_chieu_thi_bao_ngay(kho):
     """`{tên mới: tên cột}` — viết ngược thì tên mới không phải cột, báo lỗi luôn."""
     _, cameras = kho

@@ -1117,17 +1117,23 @@ class Query(Generic[E]):
         fields: Any = (),
         exclude: Sequence[Any] = (),
         rename: dict[str, Any] | None = None,
+        add: dict[str, Any] | None = None,
         **renamed: Any,
     ) -> Query[E]:
         """Chọn cột trả về. Có gọi `select` thì kết quả là `list[dict]`.
 
-            .select("id", "score")                    # vài cột của bảng gốc
+            .select("id", "score")                    # CHỈ hai cột này
             .select(fields=["id", "score"])           # y hệt, dạng danh sách
             .select(fields={"ma": "id", "diem": "score"})   # chỉ 2 cột, đổi tên luôn
-            .select(rename={"ma": "id"})              # ĐỦ cột, chỉ đổi tên `id`
             .select(exclude=["raw_payload"])          # mọi cột TRỪ cái này
+            .select(rename={"ma": "id"})              # ĐỦ cột, chỉ đổi tên `id`
+            .select(add={"ten_camera": Camera.name})  # ĐỦ cột, THÊM một cột nữa
             .select("id", camera_name=Camera.name)    # cột bảng đã join, đặt tên
             .select(so_luong=count())                 # hàm gộp, bắt buộc đặt tên
+
+        **`select` là CHỌN, không phải THÊM.** Kể tên cột nào thì kết quả chỉ có
+        những cột đó — giống hệt `SELECT` của SQL. Muốn giữ đủ cột rồi thêm một
+        cột nữa thì dùng `add=`, muốn giữ đủ mà đổi tên thì `rename=`.
 
         `fields=` và `exclude=` đặt tên giống hệt `include(...)`, để chỗ nào
         chọn cột cũng viết một kiểu. `exclude=` lấy mọi cột của **bảng gốc** rồi
@@ -1136,14 +1142,27 @@ class Query(Generic[E]):
 
         Không gọi `select` thì trả về `list[Event]` như `find()`.
 
-        Một hạn chế nhỏ: không đặt được tên cột kết quả là `fields` hay
-        `exclude`, vì hai tên đó đã là tham số. Cần thì đặt tên khác.
+        Một hạn chế nhỏ: không đặt được tên cột kết quả là `fields`, `exclude`,
+        `rename` hay `add`, vì bốn tên đó đã là tham số. Cần thì đặt tên khác,
+        hoặc đưa vào `add={"exclude": ...}`.
         """
-        if exclude or rename or isinstance(fields, dict):
-            # `rename` không kèm `fields` nghĩa là "đủ cột, chỉ đổi tên vài cái".
+        if exclude or rename or add or isinstance(fields, dict):
+            # `rename`/`add` không kèm `fields` nghĩa là "giữ đủ cột bảng gốc".
             for ten, cot in _fields_of(self._spec.entity, fields, exclude, rename):
                 self._spec.selects[ten] = Column(self._spec.entity, cot)
             fields = ()
+
+        for ten, item in (add or {}).items():
+            if isinstance(item, Aggregate):
+                raise BadRequestError(
+                    f"`add={{{ten!r}: {item!r}}}` không được: hàm gộp làm câu lệnh "
+                    f"thành câu GỘP, mà đã gộp thì không còn 'mọi cột' nào để giữ "
+                    f"— `SELECT *, {item!r}` là câu lỗi ở PostgreSQL. Viết "
+                    f"`.group_by(cot).select('cot', {ten}={item!r})` để đếm theo "
+                    f"nhóm, hoặc `.select({ten}={item!r})` để gộp cả bảng thành "
+                    f"một dòng."
+                )
+            self._spec.selects[ten] = column_of(item, fallback=self._spec.entity)
 
         for item in (*columns, *fields):
             if isinstance(item, Aggregate):
