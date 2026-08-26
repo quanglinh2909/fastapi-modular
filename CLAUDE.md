@@ -18,11 +18,54 @@ Mọi thứ ngoài database đều **mặc định tắt**, thư viện chỉ đ
 Chi tiết đầy đủ: [docs/architecture.md](docs/architecture.md). Đọc file đó trước
 khi sửa thứ gì đụng tới cấu trúc.
 
+## Docs trong `docs/` là HƯỚNG DẪN DÙNG, không phải tài liệu kỹ thuật
+
+Người đọc là **người chưa biết dùng tính năng đó**. Họ mở trang này với một câu
+hỏi dạng "tôi muốn làm X thì viết thế nào", không phải "cơ chế bên trong ra
+sao". Viết cho họ.
+
+Mỗi trang đi theo đúng thứ tự này:
+
+| Thứ tự | Phần | Nội dung |
+|---|---|---|
+| 1 | **Bạn đang cần làm gì?** | bảng "việc muốn làm" -> link tới mục. Câu chữ lấy từ miệng người dùng ("cứ 5 giây kiểm tra camera"), không phải tên kỹ thuật ("periodic scheduling") |
+| 2 | **Làm thế nào** | ví dụ chép-dán-chạy được: đủ import, đủ `@injectable`, ghi rõ file đặt ở đâu |
+| 3 | **Kiểm xem nó chạy chưa** | dòng log phải thấy, và "không thấy dòng này nghĩa là..." |
+| 4 | **Lưu ý** | từng cái bẫy một, mỗi cái mở đầu bằng câu mệnh lệnh in đậm |
+| 5 | **Hỏng thì tra ở đây** | bảng *triệu chứng -> nguyên nhân*, tra bằng thứ người ta NHÌN THẤY (dòng log, hành vi sai) |
+| 6 | **Tra cứu** | chữ ký, bảng biến môi trường, số đo, số đo hiệu năng — dồn xuống CUỐI |
+
+Quy tắc viết:
+
+- **Mở đầu bằng việc, không phải bằng khái niệm.** Sai: "`@worker` là vòng lặp
+  sống mãi với vòng đời do WorkerPool quản lý". Đúng: "Mỗi camera một luồng đọc
+  RTSP chạy suốt — viết thế này".
+- **Ví dụ phải chạy được nguyên xi.** Thiếu `@injectable` hay thiếu import là
+  người ta chép vào rồi ngồi tìm lý do không chạy.
+- **Cái bẫy đặt ngay cạnh chỗ người ta sẽ vấp**, không dồn vào một mục "Chú ý"
+  ở cuối. `timezone` của `@cron` phải nằm ngay dưới ví dụ `@cron`.
+- **Nói cách sửa, đừng chỉ nói cái sai.** "Đừng viết `while True:`" là nửa câu;
+  nửa còn lại là đoạn code `while ctx.running:` + `ctx.wait(1)` đặt cạnh nó.
+- **Phần "vì sao" giữ lại, nhưng rút xuống một hai câu** và đặt sau phần "làm
+  thế nào". Người đọc cần chạy được trước, hiểu sau.
+- **Số liệu đo được thì giữ**, nhưng dồn vào mục "Tra cứu" và mở đầu bằng "chỉ
+  đọc nếu bạn đang cân nhắc X". Nó là bằng chứng cho một quyết định, không phải
+  nội dung chính.
+- **Đừng mô tả nội bộ trừ khi người dùng phải làm gì đó khác đi vì nó.** Biết
+  `ctx.blocking` dùng pool thread daemon chỉ đáng viết vì nó dẫn tới lời khuyên
+  "đặt timeout cho hàm chặn".
+
+Docstring trong `fastapi_modular/**.py` thì ngược lại — ở đó viết cho người
+**sửa code**, nên phần "vì sao thiết kế vậy" và chi tiết nội bộ nằm ở đó.
+
+**Mẫu để theo: [`docs/background.md`](docs/background.md).** Những trang còn
+lại trong `docs/` vẫn viết theo lối tra cứu cũ; sửa trang nào thì chuyển trang
+đó sang lối này, đừng viết thêm trang mới theo lối cũ.
+
 ## Quy tắc BẮT BUỘC: sửa code là phải sửa docs
 
-Mỗi thay đổi code phải cập nhật tài liệu tương ứng **trong cùng commit**. Docs ở
-đây là tài liệu tra cứu, người đọc tin vào từng con số và từng tên cờ — lệch một
-chỗ là họ gõ theo rồi lỗi.
+Mỗi thay đổi code phải cập nhật tài liệu tương ứng **trong cùng commit**. Người
+đọc tin vào từng con số và từng tên cờ — lệch một chỗ là họ gõ theo rồi lỗi.
 
 | Sửa ở đâu | Bắt buộc soi lại |
 |---|---|
@@ -35,12 +78,19 @@ chỗ là họ gõ theo rồi lỗi.
 | API công khai (`fastapi_modular/__init__.py`, decorator, method) | doc của phần đó, và `docs/README.md` nếu đổi bảng đối chiếu |
 | thêm/bớt test | con số test ở **cả hai README** (cây thư mục) và `docs/architecture.md` (mục Chất lượng mã) |
 
-Hai cái bẫy đã từng làm docs sai:
+Ba cái bẫy đã từng làm docs sai:
 
 1. **Con số viết tay** — "299 test", "78 test", "11 biến". Đo lại trước khi giữ
    nguyên, đừng chép.
 2. **Bảng liệt kê** — thêm một biến vào `Settings` hay một lệnh vào CLI mà quên
    thêm dòng vào bảng thì bảng lặng lẽ thiếu, không ai báo.
+3. **Số hiệu năng viết theo cảm giác.** Đã hai lần viết một con số vào docs rồi
+   mới đo, và cả hai lần sai hơn 3 lần ("1.300.000 lượt/giây" — thật ra 66.000;
+   "66.000 -> 96.000" — thật ra 220.000). **Đo trước, viết sau.** Và khi đo,
+   kiểm luôn là mình đang đo đúng thứ: một lần cả bảng đo RabbitMQ hoá ra đang
+   đo RTT ra Internet vì `.env` trỏ sang server thật, một lần khác thì
+   `log.debug` lọt vào phép đo vì structlog dùng `PrintLoggerFactory` nên
+   `logging.disable()` không có tác dụng.
 
 ## README song ngữ: sửa một bản là phải sửa bản kia
 
@@ -78,6 +128,17 @@ mọi biến `APP_*` trong docs với `Settings` thật. Thêm một **nhóm** b
 không biến có thật vẫn bị báo là "không thuộc nhóm nào".
 
 Số test ở đây cũng là con số viết tay — sửa khi nó đổi.
+
+Docs thì không có test tự động cho phần văn xuôi, nhưng ba phép kiểm này bắt
+gần hết lỗi và chạy trong vài giây — **viết script rồi chạy, đừng đọc tay**:
+
+1. **Link và neo** — mọi `[x](y.md#z)` trong `docs/` phải trỏ tới file có thật
+   và tiêu đề có thật. Slug của GitHub thay **từng** khoảng trắng bằng `-`,
+   KHÔNG gộp nhiều khoảng trắng thành một.
+2. **Import trong code block** — trích mọi `from fastapi_modular... import X`
+   rồi `importlib` + `hasattr` thật.
+3. **Kwarg trong code block** — bắt mọi `ast.Call`, so tên tham số với
+   `inspect.signature` thật. Đây là phép bắt được nhiều nhất khi vừa đổi API.
 
 ## Phát hành
 
