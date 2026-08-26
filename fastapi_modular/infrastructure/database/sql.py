@@ -52,6 +52,7 @@ from fastapi_modular.infrastructure.database.base import (
     Filters,
     Match,
     active_filters,
+    coerce_value,
     from_document,
     mapping_for,
     to_document,
@@ -670,8 +671,23 @@ class SqlBackend(DatabaseBackend):
         async with self._conn() as conn:
             rows = (await conn.execute(stmt)).fetchall()
         if spec.selects:
-            return [dict(row._mapping) for row in rows]
+            return [self._select_row(spec, dict(row._mapping)) for row in rows]
         return [self._row_to_entity(spec.entity, row) for row in rows]
+
+    @staticmethod
+    def _select_row(spec: Any, raw: dict[str, Any]) -> dict[str, Any]:
+        """Ép kiểu từng cột đã chọn, để dict của `.select()` giống hệt memory."""
+        from fastapi_modular.infrastructure.database.query import Aggregate
+
+        out: dict[str, Any] = {}
+        for name, item in spec.selects.items():
+            value = raw.get(name)
+            if isinstance(item, Aggregate):
+                out[name] = value          # count/avg/sum: kiểu do database quyết
+            else:
+                declared = mapping_for(item.entity).fields[item.field]
+                out[name] = coerce_value(declared, value)
+        return out
 
     async def count_query(self, spec: Any) -> int:
         # Đếm ở database, không kéo dòng nào về. Bỏ order/limit vì chúng vô

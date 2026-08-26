@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from fastapi_modular.core.clock import utcnow
+from fastapi_modular.core.compat import StrEnum
 from fastapi_modular.core.config import DatabaseSettings
 from fastapi_modular.core.container import entity
 from fastapi_modular.core.exceptions import BadRequestError, NotFoundError
@@ -39,12 +40,18 @@ from fastapi_modular.infrastructure.database.factory import create_backend
 CO_SQLITE = bool(os.getenv("TEST_SQLITE")) and importlib.util.find_spec("aiosqlite") is not None
 
 
+class QTrangThai(StrEnum):
+    ON = "online"
+    OFF = "offline"
+
+
 @entity()
 @dataclass(slots=True)
 class QCamera(Entity):
     id: str
     name: str
     zone: str
+    status: QTrangThai = QTrangThai.OFF
     threshold: float = 0.5
     parent_id: str | None = None
     created_at: datetime = field(default_factory=utcnow)
@@ -89,7 +96,8 @@ async def kho(request, tmp_path):
     db = _Db(backend)
     events, cameras = Repository(QEvent, db), Repository(QCamera, db)
 
-    await cameras.save(QCamera(id="c1", name="Cổng chính", zone="Tầng 1", threshold=0.7))
+    await cameras.save(QCamera(id="c1", name="Cổng chính", zone="Tầng 1", threshold=0.7,
+                               status=QTrangThai.ON))
     await cameras.save(QCamera(id="c2", name="Kho hàng", zone="Tầng 2", threshold=0.9,
                                parent_id="c1"))
     await cameras.save(QCamera(id="c3", name="Bãi xe", zone="Tầng 1", threshold=0.5,
@@ -305,6 +313,7 @@ async def test_ke_thua_entity_khong_lam_doi_tuong_nang_them(kho):
         id: str
         name: str
         zone: str
+        status: QTrangThai = QTrangThai.OFF
         threshold: float = 0.5
         parent_id: str | None = None
         created_at: datetime = field(default_factory=utcnow)
@@ -397,6 +406,149 @@ async def test_self_join_sinh_ra_alias_that_trong_SQL(tmp_path):
     assert "JOIN qcameras AS cha ON qcameras.parent_id = cha.id" in sql
     assert "cha.name" in sql
     await backend.shutdown()
+
+
+async def test_select_ep_kieu_y_het_luc_tra_ve_entity(kho):
+    """Enum và datetime trong dict phải giống hệt trong entity — hai backend cũng vậy.
+
+    Trước đây sqlite trả thẳng giá trị thô: `'online'` thay vì `QTrangThai.ON`,
+    và datetime KHÔNG mang múi giờ. Test chạy trên memory thì xanh, production
+    trên sqlite/postgres lại ra kiểu khác.
+    """
+    _, cameras = kho
+    row = (await cameras.query().where(id="c1").fields("status", "created_at").all())[0]
+    entity_ = (await cameras.query().where(id="c1").all())[0]
+
+    assert row["status"] is QTrangThai.ON is entity_.status
+    assert row["created_at"].tzinfo is not None, "datetime phải mang múi giờ như entity"
+    assert row["created_at"] == entity_.created_at
+
+
+# ------------------------------------------------- dữ liệu lồng nhau (include)
+async def test_include_gan_list_con_vao_cha(kho):
+    """Camera kèm danh sách sự kiện, tên trường mặc định là `qevents`."""
+    _, cameras = kho
+    rows = await cameras.query().fields("id").include(QEvent, fields=["id"]).order_by("id").all()
+
+    assert rows[0]["id"] == "c1"
+    assert [e["id"] for e in rows[0]["qevents"]] == ["e0", "e1", "e2", "e5"]
+    assert rows[2] == {"id": "c3", "qevents": []}, "không có con thì là list rỗng"
+
+
+async def test_include_gan_object_cha_vao_con(kho):
+    """Chiều ngược lại: khoá ngoại nằm bên QEvent nên mỗi sự kiện có MỘT camera."""
+    events, _ = kho
+    rows = await (events.query().where(id="e3").fields("id")
+                  .include(QCamera, fields=["id", "name"]).all())
+    assert rows == [{"id": "e3", "qcamera": {"id": "c2", "name": "Kho hàng"}}]
+
+
+async def test_include_doi_ten_truong(kho):
+    _, cameras = kho
+    rows = await (cameras.query().where(id="c2").fields("id")
+                  .include(QEvent, name="su_kien", fields=["id"]).all())
+    assert rows == [{"id": "c2", "su_kien": [{"id": "e3"}, {"id": "e4"}]}]
+
+
+async def test_include_chon_va_loai_tru_cot_cua_bang_con(kho):
+    _, cameras = kho
+    rows = await (cameras.query().where(id="c2").fields("id")
+                  .include(QEvent, exclude=["created_at", "updated_at", "camera_id",
+                                            "reviewed_at", "score"]).all())
+    assert rows[0]["qevents"][0].keys() == {"id", "label"}
+
+
+async def test_include_loc_va_sap_bang_con(kho):
+    _, cameras = kho
+    rows = await (cameras.query().where(id="c1").fields("id")
+                  .include(QEvent, fields=["id", "score"],
+                           where=F(QEvent).score >= 0.9, order_by="-score").all())
+    assert [e["id"] for e in rows[0]["qevents"]] == ["e5", "e0"]
+
+
+async def test_include_khong_lam_lo_cot_ghep_khong_ai_xin(kho):
+    """`camera_id` phải có mặt để ghép, nhưng người dùng không xin thì đừng trả."""
+    events, _ = kho
+    rows = await events.query().where(id="e0").fields("id").include(QCamera).all()
+    assert set(rows[0]) == {"id", "qcamera"}
+
+
+async def test_include_chi_them_MOT_cau_lenh_chu_khong_phai_moi_dong_mot_cau(kho):
+    """Đây là cả điểm của include: 3 camera -> 2 câu lệnh, không phải 4."""
+    _, cameras = kho
+    backend = cameras._db.backend
+    that = backend.run_query
+    dem = []
+
+    async def dem_lai(spec):
+        dem.append(spec.entity.__name__)
+        return await that(spec)
+
+    backend.run_query = dem_lai
+    try:
+        await cameras.query().include(QEvent).all()
+    finally:
+        backend.run_query = that
+    assert dem == ["QCamera", "QEvent"]
+
+
+async def test_include_chia_me_khi_qua_nhieu_id(kho, monkeypatch):
+    """SQLite bản cũ chỉ cho 999 tham số một câu, nên `IN (...)` phải chia mẻ.
+
+    Không dựng nổi 999 camera trong một test, nên hạ ngưỡng xuống 2 rồi đếm số
+    câu lệnh: 3 camera chia mẻ 2 phải thành 2 câu con, và không được mất dòng
+    nào khi ghép lại.
+    """
+    from fastapi_modular.infrastructure.database import query as mod
+
+    monkeypatch.setattr(mod, "IN_CHUNK", 2)
+    _, cameras = kho
+    backend = cameras._db.backend
+    that = backend.run_query
+    dem = []
+
+    async def dem_lai(spec):
+        dem.append(spec.entity.__name__)
+        return await that(spec)
+
+    backend.run_query = dem_lai
+    try:
+        rows = await (cameras.query().fields("id")
+                      .include(QEvent, fields=["id"]).order_by("id").all())
+    finally:
+        backend.run_query = that
+
+    assert dem == ["QCamera", "QEvent", "QEvent"], "3 id, mẻ 2 -> 2 câu con"
+    assert sum(len(r["qevents"]) for r in rows) == 6, "chia mẻ mà mất dòng là hỏng"
+
+
+async def test_include_khong_co_khoa_ngoai_thi_bao_ro(kho):
+    events, _ = kho
+
+    @entity()
+    @dataclass(slots=True)
+    class QRoi:
+        id: str
+
+    with pytest.raises(BadRequestError) as loi:
+        events.query().include(QRoi)
+    assert "reference" in str(loi.value)
+
+
+async def test_fields_va_exclude_bat_ten_sai_ngay(kho):
+    events, _ = kho
+    with pytest.raises(BadRequestError) as loi:
+        events.query().fields("khong_co_truong_nay")
+    assert "Có:" in str(loi.value)
+
+    with pytest.raises(BadRequestError):
+        events.query().exclude("khong_co_truong_nay")
+
+
+async def test_exclude_bo_dung_mot_cot(kho):
+    events, _ = kho
+    row = (await events.query().where(id="e0").exclude("score").all())[0]
+    assert "score" not in row and "label" in row and "camera_id" in row
 
 
 # -------------------------------------------------------------- RIGHT JOIN

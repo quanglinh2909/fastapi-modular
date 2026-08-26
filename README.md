@@ -35,6 +35,7 @@ public API, and this README, are in English. Start with
 | `Repository.find({where: {score: MoreThan(…)}})` (TypeORM) | `class Event(Entity)` then `.where(Event.score >= …)`, or `.where(score__gte=…)` |
 | `.groupBy().having()` (TypeORM) | `.group_by(Event.camera_id).select(n=count()).having(count() > 5)` |
 | `.leftJoin()` / `.orWhere()` (TypeORM) | `.left_join(X)` / `.or_where(…)` — one method per join kind |
+| `find({relations: {events: true}})` (TypeORM) | `.include(Event)` — nested rows, one extra query, not N+1 |
 | `@ManyToOne(…, {onDelete: 'CASCADE'})` (TypeORM) | `field(metadata=reference(Camera, on_delete="CASCADE"))` — a real FK in the database |
 | `@UseGuards()` | `guards=[...]` on the controller or a single route |
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
@@ -416,7 +417,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              969 tests that need no infrastructure, 141 more with real drivers/servers
+tests/              981 tests that need no infrastructure, 153 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 

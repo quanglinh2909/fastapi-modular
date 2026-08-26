@@ -74,6 +74,7 @@ quét nó đi". Xếp khác thì nói ra một lần trong `src/main.py`:
 | `forwardRef(() => X)` | `Lazy[X]` |
 | `@InjectRepository(X) repo: Repository<X>` | `repo: Repository[X]` |
 | `repo.createQueryBuilder()` (TypeORM) | `repo.query()` — `join`/`left_join`/`right_join`/`outer_join`, `where`/`or_where`, `group_by`/`having`; xem [database.md](database.md#truy-vấn-phức-tạp--join-lớnbé-null) |
+| `find({relations: …})` (TypeORM) | `.include(Event, fields=…, exclude=…)` — dữ liệu lồng nhau |
 | `@ManyToOne(…, {onDelete})` (TypeORM) | `reference(X, on_delete=…)` — xem [database.md](database.md#khoá-ngoại-nối-hai-bảng-với-nhau) |
 | `@Entity()` | `@entity` |
 | `extends BaseEntity` | `class X(Entity)` — chỉ để lọc bằng toán tử: `.where(X.score >= 0.8)` |
@@ -260,7 +261,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 969 test trên backend memory (141 test nữa cần hạ tầng hoặc driver thật)
+fam test       # 981 test trên backend memory (153 test nữa cần hạ tầng hoặc driver thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

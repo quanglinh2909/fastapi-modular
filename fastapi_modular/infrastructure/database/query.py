@@ -441,6 +441,38 @@ def table_of(column: Column) -> str:
     return column.alias or _alias_of(column.entity)
 
 
+# ---------------------------------------------------------------- include
+@dataclasses.dataclass(frozen=True, slots=True)
+class Include:
+    """Một bảng được lấy kèm và gắn vào kết quả dưới dạng trường lồng nhau."""
+
+    entity: type
+    name: str                        # tên trường trong kết quả
+    root_field: str                  # cột bên bảng gốc dùng để ghép
+    other_field: str                 # cột bên bảng kia
+    to_list: bool                    # một-nhiều -> list, nhiều-một -> một object
+    fields: tuple[str, ...] = ()
+    conditions: tuple[Condition, ...] = ()
+    orders: tuple[Order, ...] = ()
+
+
+# Số id nhét vào một câu `WHERE ... IN (...)`. SQLite mặc định chỉ cho 999 tham
+# số một câu lệnh, nên phải chia mẻ chứ không thể ném cả nghìn id vào một lần.
+IN_CHUNK = 500
+
+
+def _fields_of(entity: type, fields: Sequence[str], exclude: Sequence[str]) -> tuple[str, ...]:
+    """Chốt danh sách cột sẽ trả về, và bắt tên sai NGAY chứ không im lặng bỏ qua."""
+    known = mapping_for(entity).fields
+    for name in (*fields, *exclude):
+        if name not in known:
+            raise BadRequestError(
+                f"{entity.__name__} không có trường {name!r}. Có: {', '.join(sorted(known))}"
+            )
+    chosen = tuple(fields) if fields else tuple(known)
+    return tuple(f for f in chosen if f not in set(exclude))
+
+
 # ------------------------------------------------------------------- spec
 @dataclasses.dataclass(slots=True)
 class QuerySpec:
@@ -461,6 +493,7 @@ class QuerySpec:
     distinct: bool = False
     groups: list[Column] = dataclasses.field(default_factory=list)
     havings: list[Condition] = dataclasses.field(default_factory=list)
+    includes: list[Include] = dataclasses.field(default_factory=list)
 
     def entity_of(self, alias: str) -> type:
         if alias == _alias_of(self.entity):
@@ -730,6 +763,107 @@ class Query(Generic[E]):
                 self._spec.orders.append(Order(column_of(item)))
         return self
 
+    def include(
+        self,
+        entity: type,
+        *,
+        name: str = "",
+        on: Any = _INFER,
+        fields: Sequence[str] = (),
+        exclude: Sequence[str] = (),
+        where: Any = None,
+        order_by: Any = None,
+    ) -> Query[E]:
+        """Lấy kèm bảng khác và gắn vào kết quả thành trường lồng nhau.
+
+            # mỗi camera kèm danh sách sự kiện của nó, trường "events"
+            await cameras.query().include(Event).all()
+            # [{"id": "c1", ..., "events": [{...}, {...}]}]
+
+            # mỗi sự kiện kèm camera của nó, trường "camera"
+            await events.query().include(Camera).all()
+            # [{"id": "e1", ..., "camera": {...}}]
+
+        Chiều nào là do khoá ngoại quyết định, không phải bạn khai: khoá ngoại
+        nằm bên `Event` thì một camera có NHIỀU sự kiện (trả list), nằm bên bảng
+        gốc thì ngược lại (trả một object hoặc `None`).
+
+        Tên trường mặc định là tên class viết thường, thêm `s` nếu là list
+        (`events`, `camera`). Đổi bằng `name="su_kien"`.
+
+        `fields=` / `exclude=` chọn cột của bảng ĐƯỢC LẤY KÈM. `where=` và
+        `order_by=` lọc và sắp bảng đó.
+
+        **Có `include` thì kết quả là `list[dict]`, không phải `list[Entity]`** —
+        entity là dataclass `slots=True`, không gắn thêm trường vào được.
+
+        Mỗi `include` là MỘT câu lệnh nữa (`WHERE khoá IN (...)`), không phải
+        một câu cho mỗi dòng. Mười camera thì hai câu, không phải mười một.
+        """
+        root_field, other_field, to_list = self._relation(entity, on)
+        self._spec.includes.append(Include(
+            entity=entity,
+            name=name or (f"{entity.__name__.lower()}s" if to_list else entity.__name__.lower()),
+            root_field=root_field,
+            other_field=other_field,
+            to_list=to_list,
+            fields=_fields_of(entity, fields, exclude),
+            conditions=tuple(as_condition(c) for c in (
+                where if isinstance(where, (list, tuple)) else [where] if where is not None else []
+            )),
+            orders=tuple(_orders_of(entity, order_by)),
+        ))
+        return self
+
+    def _relation(self, entity: type, on: Any) -> tuple[str, str, bool]:
+        """(cột bảng gốc, cột bảng kia, có phải một-nhiều không)."""
+        if on is not _INFER:
+            column = column_of(on)
+            if column.entity is entity:
+                return "id", column.field, True
+            if column.entity is self._spec.entity:
+                return column.field, "id", False
+            raise BadRequestError(
+                f"`on={column!r}` không thuộc {entity.__name__} lẫn "
+                f"{self._spec.entity.__name__}."
+            )
+
+        root = self._spec.entity
+        pairs: list[tuple[str, str, bool]] = [
+            *((ref.column, field, True)
+              for field, ref in mapping_for(entity).references if ref.target is root),
+            *((field, ref.column, False)
+              for field, ref in mapping_for(root).references if ref.target is entity),
+        ]
+        if len(pairs) == 1:
+            return pairs[0]
+        if not pairs:
+            raise BadRequestError(
+                f"Không biết lấy {entity.__name__} theo cột nào: giữa nó và "
+                f"{root.__name__} chưa có khoá ngoại nào khai bằng `reference(...)`. "
+                f"Nói rõ bằng `on={entity.__name__}.ten_cot`."
+            )
+        raise BadRequestError(
+            f"Lấy {entity.__name__} theo cột nào? Có {len(pairs)} khoá ngoại khớp. "
+            f"Chọn một bằng `on=...`."
+        )
+
+    def fields(self, *names: str) -> Query[E]:
+        """Chỉ trả về những cột này của bảng gốc. Kết quả thành `list[dict]`.
+
+            await repo.query().fields("id", "name").all()
+        """
+        for name in _fields_of(self._spec.entity, names, ()):
+            self._spec.selects[name] = Column(self._spec.entity, name)
+        return self
+
+    def exclude(self, *names: str) -> Query[E]:
+        """Trả về mọi cột TRỪ những cột này — cho bảng nhiều cột mà chỉ thừa vài cái.
+
+            await repo.query().exclude("raw_payload").all()
+        """
+        return self.fields(*_fields_of(self._spec.entity, (), names))
+
     def group_by(self, *fields: Any) -> Query[E]:
         """Gộp dòng thành nhóm. Bắt buộc đi kèm `.select(...)`.
 
@@ -827,15 +961,63 @@ class Query(Generic[E]):
     async def all(self) -> list[Any]:
         """Chạy và trả về mọi dòng khớp."""
         self._need_select()
-        return await self._backend().run_query(self._spec)
+        if not self._spec.includes:
+            return await self._backend().run_query(self._spec)
+
+        # Cột dùng để ghép phải có trong kết quả mới ghép được. Người dùng
+        # không xin thì tự thêm rồi bỏ đi lúc trả về.
+        them = {
+            inc.root_field for inc in self._spec.includes
+            if self._spec.selects and inc.root_field not in self._spec.selects
+        }
+        for name in them:
+            self._spec.selects[name] = Column(self._spec.entity, name)
+        try:
+            rows = await self._backend().run_query(self._spec)
+            rows = [_as_dict(self._spec.entity, row) for row in rows]
+            for inc in self._spec.includes:
+                await self._attach(inc, rows)
+        finally:
+            for name in them:
+                del self._spec.selects[name]
+        for row in rows:
+            for name in them:
+                row.pop(name, None)
+        return rows
+
+    async def _attach(self, inc: Include, rows: list[dict[str, Any]]) -> None:
+        """Một câu lệnh cho cả mẻ: `WHERE khoá IN (...)`, rồi ghép bằng dict."""
+        keys = {row.get(inc.root_field) for row in rows} - {None}
+        found: list[Any] = []
+        keys_list = sorted(keys, key=str)
+        for i in range(0, len(keys_list), IN_CHUNK):
+            child: Query[Any] = Query(inc.entity, self._db)
+            child._spec.conditions = [
+                Compare(Column(inc.entity, inc.other_field), "in", keys_list[i:i + IN_CHUNK]),
+                *inc.conditions,
+            ]
+            child._spec.orders = list(inc.orders)
+            found.extend(await child._backend().run_query(child._spec))
+
+        theo_khoa: dict[Any, Any] = {}
+        for obj in found:
+            key = getattr(obj, inc.other_field, None)
+            shaped = {name: getattr(obj, name, None) for name in inc.fields}
+            if inc.to_list:
+                theo_khoa.setdefault(key, []).append(shaped)
+            else:
+                theo_khoa.setdefault(key, shaped)
+
+        for row in rows:
+            key = row.get(inc.root_field)
+            row[inc.name] = theo_khoa.get(key, [] if inc.to_list else None)
 
     async def first(self) -> Any | None:
         """Dòng đầu tiên, hoặc None. Tự đặt `LIMIT 1`."""
-        self._need_select()
         keep = self._spec.limit
         self._spec.limit = 1
         try:
-            rows = await self._backend().run_query(self._spec)
+            rows = await self.all()
         finally:
             self._spec.limit = keep
         return rows[0] if rows else None
@@ -886,6 +1068,29 @@ class Query(Generic[E]):
             f"<Query[{spec.entity.__name__}] joins={len(spec.joins)} "
             f"where={len(spec.conditions)} limit={spec.limit}>"
         )
+
+
+def _as_dict(entity: type, row: Any) -> dict[str, Any]:
+    """Dòng kết quả -> dict. `.select()` đã cho dict rồi thì giữ nguyên."""
+    if isinstance(row, dict):
+        return row
+    return {name: getattr(row, name, None) for name in mapping_for(entity).fields}
+
+
+def _orders_of(entity: type, order_by: Any) -> list[Order]:
+    """`order_by=` của `include`: nhận chuỗi có dấu trừ, Column, hoặc list của chúng."""
+    if order_by is None:
+        return []
+    items = order_by if isinstance(order_by, (list, tuple)) else [order_by]
+    out: list[Order] = []
+    for item in items:
+        if isinstance(item, Order):
+            out.append(item)
+        elif isinstance(item, str):
+            out.append(Order(Column(entity, item.lstrip("-+")), descending=item.startswith("-")))
+        else:
+            out.append(Order(column_of(item)))
+    return out
 
 
 def _compose(branches: list[list[Condition]]) -> list[Condition]:
@@ -1022,6 +1227,7 @@ __all__ = [
     "Column",
     "Condition",
     "F",
+    "Include",
     "Join",
     "Order",
     "Query",

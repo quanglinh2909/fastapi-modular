@@ -227,6 +227,30 @@ def _defaults_of(entity: type) -> dict[str, Callable[[], Any]]:
     return out
 
 
+def coerce_value(declared: Any, value: Any) -> Any:
+    """Giá trị thô từ driver -> đúng kiểu đã khai trong entity.
+
+    Dùng ở hai chỗ: dựng entity, và dựng dict của `.select()`/`.fields()`. Phải
+    là một hàm dùng chung, vì nếu chỉ entity được ép kiểu thì `.select()` trên
+    sqlite trả chuỗi `'online'` còn trên memory trả `Trang_thai.ON` — test xanh
+    ở memory rồi hỏng ở production, đúng kiểu lỗi khó tìm nhất.
+    """
+    if value is None:
+        return None
+    if isinstance(declared, type) and issubclass(declared, Enum):
+        return declared(value)
+    if declared is datetime:
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value)
+        if isinstance(value, datetime) and value.tzinfo is None:
+            # SQLite và MongoDB trả datetime KHÔNG mang múi giờ (cả hai lưu
+            # theo UTC nhưng không kèm tzinfo). Gắn lại UTC ở đây để ba driver
+            # cho ra cùng một dạng, và để một response không lẫn lộn "có Z"
+            # với "không Z".
+            value = value.replace(tzinfo=UTC)
+    return value
+
+
 def from_document(entity: type[E], doc: dict[str, Any]) -> E:
     """dict -> entity, ép lại Enum/datetime và bù giá trị mặc định.
 
@@ -244,18 +268,8 @@ def from_document(entity: type[E], doc: dict[str, Any]) -> E:
 
         if value is None and not _allows_none(declared) and name in defaults:
             value = defaults[name]()
-        elif value is not None:
-            if isinstance(declared, type) and issubclass(declared, Enum):
-                value = declared(value)
-            elif declared is datetime:
-                if isinstance(value, str):
-                    value = datetime.fromisoformat(value)
-                if isinstance(value, datetime) and value.tzinfo is None:
-                    # SQLite và MongoDB trả datetime KHÔNG mang múi giờ (cả hai
-                    # lưu theo UTC nhưng không kèm tzinfo). Gắn lại UTC ở đây để
-                    # ba driver cho ra cùng một dạng, và để một response không
-                    # lẫn lộn "có Z" với "không Z".
-                    value = value.replace(tzinfo=UTC)
+        else:
+            value = coerce_value(declared, value)
 
         kwargs[name] = value
 

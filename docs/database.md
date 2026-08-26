@@ -17,6 +17,9 @@
 | "**Chỉ lấy camera có hơn 5 sự kiện**" | [HAVING](#having--lọc-theo-kết-quả-gộp) |
 | "Camera cha của camera này tên gì" | [Nối bảng với chính nó](#nối-bảng-với-chính-nó-self-join) |
 | "Giữ cả camera chưa có sự kiện nào" | [Bốn kiểu nối](#bốn-kiểu-nối-bốn-method) |
+| "**Trả về camera kèm danh sách sự kiện của nó**" | [Dữ liệu lồng nhau](#dữ-liệu-lồng-nhau-include) |
+| "**Trả về sự kiện kèm object camera**" | [Dữ liệu lồng nhau](#dữ-liệu-lồng-nhau-include) |
+| "**Bảng nhiều cột quá, tôi muốn bỏ bớt một cột**" | [`exclude`](#chọn-cột-trả-về) |
 | "Chọn database nào" | [Cách chọn driver](#cách-chọn-driver) |
 | "Thêm/xoá trường mà không mất dữ liệu" | [Tự chỉnh schema](#tự-chỉnh-schema-thêm--xoá-trường) |
 
@@ -1274,6 +1277,85 @@ mở nhánh mới y hệt `or_where`. `or_(...)` dùng được ở đây luôn.
 `.count()` trên một truy vấn có `group_by` đếm **số nhóm**, đúng như
 `SELECT count(*) FROM (...)` của SQL.
 
+### Dữ liệu lồng nhau (`include`)
+
+`join` để **lọc**. Muốn trả về dữ liệu **lồng nhau** thì dùng `include`:
+
+```python
+# mỗi camera kèm danh sách sự kiện của nó
+rows = await cameras.query().include(Event).all()
+# [{"id": "c1", "name": "Cổng chính", ..., "events": [{...}, {...}]},
+#  {"id": "c3", ..., "events": []}]
+
+# chiều ngược lại: mỗi sự kiện kèm MỘT object camera
+rows = await events.query().include(Camera).all()
+# [{"id": "e1", "score": 0.95, ..., "camera": {"id": "c1", "name": "Cổng chính", ...}}]
+```
+
+**Chiều nào là do khoá ngoại quyết định, không phải bạn khai.** Khoá ngoại nằm
+bên `Event` nên một camera có NHIỀU sự kiện (trả `list`), còn một sự kiện chỉ
+có MỘT camera (trả object, hoặc `None` nếu cột khoá ngoại đang NULL). Không có
+con nào thì là `[]`, không phải `None`.
+
+Tên trường mặc định là tên class viết thường, thêm `s` nếu là danh sách:
+`events`, `camera`. Đổi bằng `name=`:
+
+```python
+await cameras.query().include(Event, name="su_kien").all()
+```
+
+**Có `include` thì kết quả là `list[dict]`, không phải `list[Entity]`.** Entity
+là dataclass `slots=True` — không gắn thêm trường vào một object như vậy được.
+
+### Chọn cột trả về
+
+Ba chỗ chọn cột, cùng một luật:
+
+```python
+await (cameras.query()
+       .fields("id", "name")                       # cột của bảng GỐC
+       .include(Event, fields=["id", "label"])     # cột của bảng lấy kèm
+       .all())
+```
+
+Nhiều cột quá mà chỉ muốn bỏ vài cái thì đi từ chiều ngược lại:
+
+```python
+await cameras.query().exclude("threshold").all()                    # bảng gốc
+await cameras.query().include(Event, exclude=["created_at"]).all()  # bảng lấy kèm
+```
+
+`fields` và `exclude` **bắt tên sai ngay lúc dựng câu lệnh**, kèm danh sách tên
+đúng — không im lặng bỏ qua rồi để bạn ngồi tìm cột biến đâu mất.
+
+Cột dùng để ghép (`camera_id`) được tự thêm vào câu lệnh nếu bạn không xin, rồi
+**bỏ khỏi kết quả** — bạn không phải nhớ nó.
+
+### Lọc và sắp bảng được lấy kèm
+
+```python
+await (cameras.query()
+       .include(Event,
+                fields=["id", "score"],
+                where=F(Event).score >= 0.9,      # chỉ lấy sự kiện điểm cao
+                order_by="-score")                # mới nhất/cao nhất lên đầu
+       .all())
+```
+
+**Chưa có: giới hạn số con MỖI cha** ("mỗi camera 5 sự kiện gần nhất"). Cái đó
+cần window function, chưa làm. `limit` ở câu ngoài giới hạn số CAMERA, không
+phải số sự kiện của mỗi camera.
+
+### `include` tốn thêm mấy câu lệnh?
+
+**Một câu cho mỗi `include`, không phải một câu cho mỗi dòng.** Lấy 100 camera
+kèm sự kiện là 2 câu: một câu lấy camera, một câu
+`WHERE camera_id IN (100 id)`. Đây là chỗ N+1 hay nằm, nên có test đếm đúng số
+câu lệnh để nó không lặng lẽ thành 101.
+
+Danh sách id được chia mẻ 500 một câu — SQLite bản cũ chỉ cho 999 tham số một
+câu lệnh.
+
 ### Lấy cột của bảng đã join
 
 Mặc định chỉ trả entity gốc. Cần cột bảng kia thì nói rõ — khi đó trả `list[dict]`:
@@ -1332,6 +1414,8 @@ postgres/sqlite.
 | `.order_by("-created_at")` | dấu trừ = giảm dần; nhận cả `X.cot` và `F(X).cot.desc()` |
 | `.limit(n)` · `.offset(n)` · `.distinct()` | |
 | `.select("id", ten_khac=X.cot)` | đổi kiểu trả về sang `list[dict]` |
+| `.fields("id", "name")` · `.exclude("cot")` | chọn cột bảng gốc; cũng thành `list[dict]` |
+| `.include(Entity, name=…, fields=…, exclude=…, where=…, order_by=…)` | gắn dữ liệu lồng nhau |
 | `.select(so=count(), tb=avg(X.cot))` | hàm gộp, phải đặt tên |
 
 | Cột | |
