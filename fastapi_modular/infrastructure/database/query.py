@@ -2,19 +2,15 @@
 
 `repo.find()` chỉ so bằng (`=`). Khi cần hơn thế thì dùng cái này:
 
-    events = await (
-        repo.query()
-        .join(Camera, on="camera_id")
-        .where(score__gte=0.8, label="person")
-        .where(deleted_at__isnull=True)
-        .where(camera__name__like="Cổng%")
-        .order_by("-created_at")
-        .limit(20)
-        .all()
-    )
+    query = repo.query().join(Camera).where(score__gte=0.8, label="person")
+    events = await query.where(camera__name__like="Cổng%").order_by("-created_at").all()
 
 Kết quả là `list[Event]` như `find()` — JOIN ở đây để **lọc**, không đổi kiểu
 trả về. Cần cột của bảng kia thì nói rõ bằng `.select(...)`.
+
+`.join(Camera)` không cần nói cột nối: khoá ngoại khai bằng `reference(Camera)`
+đã đủ. Muốn chỉ rõ thì `on=Event.camera_id` — cột thật, không phải chuỗi, nên
+đổi tên trường là gãy ngay lúc import chứ không phải lúc chạy câu lệnh.
 
 ## Mọi thứ chạy DƯỚI database
 
@@ -56,6 +52,7 @@ demo và sai ở production. Thà nói không.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -182,6 +179,39 @@ def F(entity: type) -> Any:
     return _Fields(entity)
 
 
+def column_of(value: Any, *, fallback: type | None = None) -> Column:
+    """Chuyển thứ người dùng đưa vào thành `Column`.
+
+    Nhận ba cách viết một cột, để chỗ nào nhận cột thì nhận cả ba:
+
+        Event.camera_id          # gọn nhất, IDE tự gợi ý, đổi tên trường là gãy ngay
+        F(Event).camera_id       # khi entity không khai `slots=True`
+        "camera_id"              # chuỗi, chỉ hiểu được khi biết bảng gốc (`fallback`)
+
+    Cách đầu chạy được vì `@dataclass(slots=True)` để lại một `member_descriptor`
+    ở thân lớp, và descriptor đó mang sẵn tên trường lẫn lớp chủ. Entity KHÔNG
+    khai `slots=True` thì `Event.camera_id` là giá trị mặc định của trường (hoặc
+    `AttributeError` nếu trường không có mặc định) — không cứu được, nên lỗi ở
+    đây nói thẳng cách viết khác.
+    """
+    if isinstance(value, Column):
+        return value
+    if inspect.ismemberdescriptor(value):
+        return Column(value.__objclass__, value.__name__)
+    if isinstance(value, str):
+        if fallback is None:
+            raise BadRequestError(
+                f"Cột {value!r} chưa rõ thuộc bảng nào. Viết `Entity.{value}` "
+                f"hoặc `F(Entity).{value}`."
+            )
+        return Column(fallback, value)
+    raise BadRequestError(
+        f"{value!r} không phải một cột. Viết `Entity.ten_cot` (entity phải khai "
+        f"`@dataclass(slots=True)` thì cách này mới chạy), `F(Entity).ten_cot`, "
+        f"hoặc chuỗi \"ten_cot\"."
+    )
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class Order:
     column: Column
@@ -247,6 +277,23 @@ def not_(part: Condition) -> Condition:
 
 
 # ------------------------------------------------------------------- join
+class _Infer:
+    """Giá trị mặc định của `on=`: chưa nói gì, đọc khoá ngoại mà suy.
+
+    Không dùng `None` được vì entity không khai `slots=True` thì
+    `Event.camera_id` chính là `None` — sẽ nuốt mất một lỗi gõ nhầm thành
+    "tự suy".
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<suy từ khoá ngoại>"
+
+
+_INFER = _Infer()
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class Join:
     entity: type
@@ -310,15 +357,25 @@ class Query(Generic[E]):
         self,
         entity: type,
         *,
-        on: str | tuple[str, str] | Condition,
+        on: Any = _INFER,
         outer: bool = False,
         alias: str = "",
     ) -> Query[E]:
         """Nối thêm một bảng để LỌC theo cột của nó.
 
-            .join(Camera, on="camera_id")          # Event.camera_id = Camera.id
+            .join(Camera)                          # đã khai `reference(Camera)` thì đủ
+            .join(Camera, on=Event.camera_id)      # chỉ đúng cột nối
+            .join(Camera, on="camera_id")          # cũng được, nhưng đổi tên trường không gãy
             .join(Camera, on=("camera_id", "id"))  # nói rõ cả hai vế
             .join(Camera, on=F(Event).camera_id == F(Camera).id)
+
+        Không truyền `on` thì cột nối đọc từ khoá ngoại đã khai bằng
+        `reference(...)`. Có đúng một khoá ngoại khớp thì dùng; không có hoặc
+        có nhiều thì báo lỗi kèm danh sách, chứ không đoán bừa.
+
+        `on=Event.camera_id` nhận cột của bảng nào cũng được: cột thuộc bảng
+        đang nối thì vế kia là khoá chính của bảng gốc, và ngược lại. Nhờ vậy
+        chiều một-nhiều (`.join(Event, on=Event.camera_id)`) viết y hệt.
 
         `outer=True` cho `LEFT JOIN` — giữ cả những dòng không có bên phải.
         Cần khi bạn muốn lọc kiểu "camera CHƯA có sự kiện nào".
@@ -329,14 +386,71 @@ class Query(Generic[E]):
                 f"Đã có bảng tên {name!r} trong truy vấn. Truyền `alias=` để đặt tên khác."
             )
 
-        if isinstance(on, Condition):
-            condition = on
-        else:
-            left, right = (on, "id") if isinstance(on, str) else on
-            condition = Column(self._spec.entity, left) == Column(entity, right)
-
-        self._spec.joins.append(Join(entity=entity, alias=name, on=condition, outer=outer))
+        self._spec.joins.append(
+            Join(entity=entity, alias=name, on=self._on_condition(entity, on), outer=outer)
+        )
         return self
+
+    def _known(self) -> list[type]:
+        """Các bảng đã có trong truy vấn, bảng gốc trước."""
+        return [self._spec.entity, *(j.entity for j in self._spec.joins)]
+
+    def _on_condition(self, entity: type, on: Any) -> Condition:
+        if on is _INFER:
+            return self._infer_on(entity)
+        if isinstance(on, Condition):
+            return on
+        if isinstance(on, tuple):
+            left, right = on
+            return Column(self._spec.entity, left) == Column(entity, right)
+        if isinstance(on, str):
+            return Column(self._spec.entity, on) == Column(entity, "id")
+
+        column = column_of(on)
+        if column.entity is entity:
+            # Cột nằm ở bảng ĐANG nối: chiều một-nhiều, vế kia là khoá chính bảng gốc.
+            return column == Column(self._spec.entity, "id")
+        if column.entity in self._known():
+            return column == Column(entity, "id")
+        raise BadRequestError(
+            f"`on={column!r}` không dùng được: {column.entity.__name__} không phải "
+            f"{entity.__name__} lẫn bảng nào đã có trong truy vấn "
+            f"({', '.join(k.__name__ for k in self._known())})."
+        )
+
+    def _infer_on(self, entity: type) -> Condition:
+        """Đọc `reference(...)` để tìm cột nối, khi người dùng không nói."""
+        known = self._known()
+        if len(set(known)) != len(known):
+            raise BadRequestError(
+                "Truy vấn đang có cùng một bảng hai lần nên không suy được cột "
+                "nối. Nói rõ bằng `on=...`."
+            )
+
+        pairs: list[tuple[Column, Column]] = []
+        for owner in known:
+            for field, ref in mapping_for(owner).references:
+                if ref.target is entity:
+                    pairs.append((Column(owner, field), Column(entity, ref.column)))
+        for field, ref in mapping_for(entity).references:
+            if ref.target in known:
+                pairs.append((Column(entity, field), Column(ref.target, ref.column)))
+
+        if len(pairs) == 1:
+            left, right = pairs[0]
+            return left == right
+        names = ", ".join(k.__name__ for k in known)
+        if not pairs:
+            raise BadRequestError(
+                f"Không biết nối {entity.__name__} vào đâu: giữa nó và {names} chưa "
+                f"có khoá ngoại nào khai bằng `reference(...)`. Nói rõ bằng "
+                f"`on={entity.__name__}.ten_cot` hoặc `on=\"ten_cot\"`."
+            )
+        raise BadRequestError(
+            f"Nối {entity.__name__} với {names} theo cột nào? Có {len(pairs)} khoá "
+            f"ngoại khớp: " + "; ".join(f"{left} = {right}" for left, right in pairs)
+            + ". Chọn một bằng `on=...`."
+        )
 
     def where(self, *conditions: Condition, **lookups: Any) -> Query[E]:
         """Thêm điều kiện. Nhiều lời gọi `where` nối với nhau bằng AND.
@@ -390,22 +504,23 @@ class Query(Generic[E]):
             return Compare(Column(entity, field), "like", pattern)
         return Compare(Column(entity, field), op, value)
 
-    def order_by(self, *fields: str | Column | Order) -> Query[E]:
+    def order_by(self, *fields: Any) -> Query[E]:
         """`order_by("-created_at")` — dấu trừ là giảm dần.
 
-        Nhận cả `F(Event).created_at.desc()` khi cần sắp theo cột bảng đã join.
+        Nhận cả `Event.created_at`, `F(Event).created_at.desc()` khi cần sắp
+        theo cột của bảng đã join.
         """
         for item in fields:
             if isinstance(item, Order):
                 self._spec.orders.append(item)
-            elif isinstance(item, Column):
-                self._spec.orders.append(Order(item))
-            else:
+            elif isinstance(item, str):
                 descending = item.startswith("-")
                 name = item.lstrip("-+")
                 self._spec.orders.append(
                     Order(Column(self._spec.entity, name), descending=descending)
                 )
+            else:
+                self._spec.orders.append(Order(column_of(item)))
         return self
 
     def limit(self, count: int | None) -> Query[E]:
@@ -422,23 +537,20 @@ class Query(Generic[E]):
         self._spec.distinct = yes
         return self
 
-    def select(self, *fields: str | Column, **renamed: str | Column) -> Query[E]:
+    def select(self, *fields: Any, **renamed: Any) -> Query[E]:
         """Đổi kiểu trả về sang `list[dict]` để lấy được cột của bảng đã join.
 
-            rows = await (repo.query()
-                .join(Camera, on="camera_id")
-                .select("id", "score", camera_name=F(Camera).name)
-                .all())
+            query = repo.query().join(Camera).select("id", "score", camera_name=Camera.name)
+            rows = await query.all()
             # [{"id": ..., "score": ..., "camera_name": "Cổng chính"}]
 
         Không gọi `select` thì trả về `list[Event]` như `find()`.
         """
         for item in fields:
-            column = item if isinstance(item, Column) else Column(self._spec.entity, item)
+            column = column_of(item, fallback=self._spec.entity)
             self._spec.selects[column.field] = column
         for name, item in renamed.items():
-            column = item if isinstance(item, Column) else Column(self._spec.entity, item)
-            self._spec.selects[name] = column
+            self._spec.selects[name] = column_of(item, fallback=self._spec.entity)
         return self
 
     # ------------------------------------------------------------- chạy

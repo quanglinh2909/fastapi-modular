@@ -900,7 +900,7 @@ Gần như mọi thứ trước đây phải dùng `match=` thì nay viết đư
 | lớn hơn / nhỏ hơn | `match=lambda o: o.score >= 0.8` | `.query().where(score__gte=0.8)` |
 | bằng NULL | `match=lambda o: o.owner_id is None` | `.query().where(owner_id__isnull=True)` |
 | nằm trong danh sách | `match=lambda o: o.label in [...]` | `.query().where(label__in=[...])` |
-| nối bảng khác | *(không làm được)* | `.query().join(Camera, on="camera_id")` |
+| nối bảng khác | *(không làm được)* | `.query().join(Camera)` |
 
 `match=` chỉ còn đúng cho điều kiện không có trong SQL — ví dụ gọi một hàm Python
 để tính. Khi dữ liệu lớn, cách tốt hơn là chuẩn hoá lúc ghi (lưu sẵn
@@ -919,7 +919,7 @@ from fastapi_modular.infrastructure.database import F, or_
 
 events = await (
     repo.query()
-    .join(Camera, on="camera_id")              # Event.camera_id = Camera.id
+    .join(Camera)                              # cột nối đọc từ `reference(Camera)`
     .where(score__gte=0.8, label="person")     # >= và =
     .where(reviewed_at__isnull=True)           # IS NULL
     .where(camera__name__like="Cổng%")         # lọc theo cột bảng đã join
@@ -935,12 +935,29 @@ về — nên `.score`, `.label` vẫn gõ được như thường.
 Không có gì chạy cho tới khi bạn gọi `.all()`, `.first()`, `.count()` hoặc
 `.exists()`.
 
+**Cặp `()` bọc ngoài chỉ để xuống dòng**, không phải cú pháp của builder. Viết
+một dòng thì bỏ luôn:
+
+```python
+return await self._repo.query().join(Camera).where(label="person").all()
+```
+
+Muốn nhiều dòng mà không thích dấu ngoặc thì đặt tên cho câu truy vấn — đọc còn
+dễ hơn, và tách được điều kiện theo nhánh `if`:
+
+```python
+query = self._repo.query().join(Camera).where(label="person")
+if zone:
+    query = query.where(camera__zone=zone)
+return await query.order_by("-created_at").limit(20).all()
+```
+
 ### Xem câu SQL sinh ra
 
 Đây là cách nhanh nhất khi truy vấn cho kết quả lạ — nhanh hơn đọc lại builder:
 
 ```python
-print(repo.query().join(Camera, on="camera_id").where(score__gte=0.8).limit(5).sql())
+print(repo.query().join(Camera).where(score__gte=0.8).limit(5).sql())
 ```
 
 ```sql
@@ -993,13 +1010,45 @@ gõ sai không phải đợi tới lúc chạy mới biết.
 
 Nối điều kiện bằng `&`, `|`, `~` cũng được: `.where((E.score >= 0.9) & ~(E.label == "car"))`.
 
-### Ba kiểu JOIN
+### Nối theo cột nào
+
+Khai `reference(Camera)` ở entity rồi thì **không phải nói gì thêm** — builder
+đọc khoá ngoại đó ra:
 
 ```python
-.join(Camera, on="camera_id")               # Event.camera_id = Camera.id
+.join(Camera)
+```
+
+Muốn nói rõ thì đưa thẳng **cột thật** vào. Đây là cách nên dùng khi bảng có hơn
+một cột trỏ sang cùng một bảng, vì gõ sai tên là hỏng ngay lúc import, không đợi
+tới lúc câu lệnh chạy:
+
+```python
+.join(Camera, on=Event.camera_id)           # Event.camera_id = Camera.id
+.join(Event,  on=Event.camera_id)           # đảo chiều, một-nhiều: Camera.id = Event.camera_id
+```
+
+`Event.camera_id` viết được là nhờ `@dataclass(slots=True)`. Entity của bạn
+không khai `slots=True` thì dùng `F(Event).camera_id` — y hệt, chỉ dài hơn.
+
+Ba cách cũ vẫn chạy nguyên:
+
+```python
+.join(Camera, on="camera_id")               # chuỗi
 .join(Camera, on=("camera_id", "id"))       # nói rõ cả hai vế
 .join(Camera, on=F(Event).camera_id == F(Camera).id)
 ```
+
+**Chưa khai `reference` mà `.join(X)` trần thì báo lỗi, không đoán.** Lỗi nói
+đúng cái thiếu:
+
+```
+Không biết nối Camera vào đâu: giữa nó và Event chưa có khoá ngoại nào khai
+bằng `reference(...)`. Nói rõ bằng `on=Camera.ten_cot` hoặc `on="ten_cot"`.
+```
+
+Hai cột cùng trỏ sang một bảng (`vao_id`, `ra_id` cùng trỏ `Camera`) cũng vậy —
+liệt kê cả hai rồi bắt bạn chọn.
 
 `outer=True` cho `LEFT JOIN` — giữ cả dòng không có bên phải. Đây là cách tìm
 "cái nào còn trống":
@@ -1018,11 +1067,14 @@ Mặc định chỉ trả entity gốc. Cần cột bảng kia thì nói rõ —
 
 ```python
 rows = await (repo.query()
-              .join(Camera, on="camera_id")
-              .select("id", "score", camera_name=F(Camera).name)
+              .join(Camera)
+              .select("id", "score", camera_name=Camera.name)
               .all())
 # [{"id": "e1", "score": 0.95, "camera_name": "Cổng chính"}]
 ```
+
+`select` và `order_by` nhận cột thật y như `join`: `select(Event.id)`,
+`order_by(Event.score)`.
 
 ### Lưu ý
 
@@ -1055,11 +1107,12 @@ postgres/sqlite.
 
 | Dựng | |
 |---|---|
-| `.join(Entity, on=…, outer=False, alias="")` | nối bảng |
+| `.join(Entity)` | nối bảng, cột lấy từ `reference(...)` |
+| `.join(Entity, on=…, outer=False, alias="")` | `on=` nhận `Entity.cot`, `"cot"`, `("cot","cot_kia")`, hoặc cả một điều kiện |
 | `.where(*điều_kiện, **kwargs)` | nhiều lần `where` nối bằng AND |
-| `.order_by("-created_at")` | dấu trừ = giảm dần; nhận cả `F(X).cot.desc()` |
+| `.order_by("-created_at")` | dấu trừ = giảm dần; nhận cả `X.cot` và `F(X).cot.desc()` |
 | `.limit(n)` · `.offset(n)` · `.distinct()` | |
-| `.select("id", ten_khac=F(X).cot)` | đổi kiểu trả về sang `list[dict]` |
+| `.select("id", ten_khac=X.cot)` | đổi kiểu trả về sang `list[dict]` |
 
 | Chạy | Trả về |
 |---|---|

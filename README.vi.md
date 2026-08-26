@@ -26,7 +26,7 @@ fam init && fam dev
 | `@Injectable({scope: Scope.REQUEST})` | `@injectable(scope=Scope.REQUEST)` |
 | `forwardRef(() => X)` | `Lazy[X]` |
 | `@InjectRepository(X) repo: Repository<X>` | `repo: Repository[X]` |
-| `repo.createQueryBuilder()` (TypeORM) | `repo.query().join(X, on=…).where(score__gte=…)` — SQL thật, xem bằng `.sql()` |
+| `repo.createQueryBuilder()` (TypeORM) | `repo.query().join(X).where(score__gte=…)` — SQL thật, xem bằng `.sql()` |
 | `@ManyToOne(…, {onDelete: 'CASCADE'})` (TypeORM) | `field(metadata=reference(Camera, on_delete="CASCADE"))` — khoá ngoại THẬT dưới database |
 | `@UseGuards()` | `guards=[...]` ở controller hoặc từng route |
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
@@ -411,7 +411,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              931 test chạy không cần hạ tầng, 102 test nữa cần driver/server thật
+tests/              940 test chạy không cần hạ tầng, 111 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 

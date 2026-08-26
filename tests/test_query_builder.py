@@ -21,7 +21,7 @@ from fastapi_modular.core.clock import utcnow
 from fastapi_modular.core.config import DatabaseSettings
 from fastapi_modular.core.container import entity
 from fastapi_modular.core.exceptions import BadRequestError, NotFoundError
-from fastapi_modular.infrastructure.database import F, Repository, or_
+from fastapi_modular.infrastructure.database import F, Repository, or_, reference
 from fastapi_modular.infrastructure.database.factory import create_backend
 
 CO_SQLITE = bool(os.getenv("TEST_SQLITE")) and importlib.util.find_spec("aiosqlite") is not None
@@ -42,7 +42,7 @@ class QCamera:
 @dataclass(slots=True)
 class QEvent:
     id: str
-    camera_id: str
+    camera_id: str = field(metadata=reference(QCamera))
     label: str
     score: float
     reviewed_at: datetime | None = None
@@ -152,6 +152,61 @@ async def test_so_sanh_voi_null_luon_sai_giong_SQL(kho):
 
 
 # ------------------------------------------------------------------- join
+async def test_join_khong_can_noi_cot_nao(kho):
+    """`.join(QCamera)` trần — cột nối đọc từ `reference(QCamera)` đã khai."""
+    events, _ = kho
+    rows = await events.query().join(QCamera).where(qcamera__zone="Tầng 2").all()
+    assert ids(rows) == ["e3", "e4"]
+
+
+async def test_join_bang_cot_that_thay_vi_chuoi(kho):
+    """`on=QEvent.camera_id` — cột thật, gõ sai là gãy lúc import."""
+    events, _ = kho
+    rows = await events.query().join(QCamera, on=QEvent.camera_id).where(qcamera__zone="Tầng 2").all()
+    assert ids(rows) == ["e3", "e4"]
+
+
+async def test_join_bang_cot_cua_bang_kia_la_chieu_mot_nhieu(kho):
+    """Cùng một cột, đảo bảng gốc: `cameras.join(QEvent, on=QEvent.camera_id)`."""
+    _, cameras = kho
+    rows = await cameras.query().join(QEvent, on=QEvent.camera_id).where(qevent__label="car").all()
+    assert ids(rows) == ["c2"]
+
+
+async def test_join_tu_suy_ca_chieu_nguoc(kho):
+    """`cameras.join(QEvent)` cũng suy được, dù khoá ngoại nằm bên QEvent."""
+    _, cameras = kho
+    rows = await cameras.query().join(QEvent).where(qevent__label="car").all()
+    assert ids(rows) == ["c2"]
+
+
+async def test_bon_cach_viet_on_cho_cung_mot_cau_SQL(kho):
+    """Ba cách viết mới và cách cũ phải sinh ra cùng một điều kiện nối."""
+    events, _ = kho
+    cach = [
+        events.query().join(QCamera),
+        events.query().join(QCamera, on=QEvent.camera_id),
+        events.query().join(QCamera, on="camera_id"),
+        events.query().join(QCamera, on=("camera_id", "id")),
+        events.query().join(QCamera, on=F(QEvent).camera_id == F(QCamera).id),
+    ]
+    dieu_kien = {repr(q._spec.joins[0].on) for q in cach}
+    assert len(dieu_kien) == 1, dieu_kien
+
+
+async def test_order_by_va_select_nhan_cot_that(kho):
+    events, _ = kho
+    rows = await (
+        events.query()
+        .join(QCamera)
+        .select(QEvent.id, ten=QCamera.name)
+        .order_by(QEvent.score)
+        .limit(1)
+        .all()
+    )
+    assert rows == [{"id": "e2", "ten": "Cổng chính"}]
+
+
 async def test_join_de_loc_van_tra_ve_entity_goc(kho):
     events, _ = kho
     rows = await events.query().join(QCamera, on="camera_id").where(qcamera__zone="Tầng 2").all()
@@ -274,6 +329,45 @@ async def test_chua_join_ma_loc_theo_bang_kia_thi_bao_ro(kho):
         events.query().where(khong_co_bang__zone="Tầng 1")
 
 
+async def test_khong_co_khoa_ngoai_thi_bao_chu_khong_doan(kho):
+    """`.join(X)` mà giữa hai bảng chưa khai `reference` — phải nói rõ thiếu gì."""
+    events, _ = kho
+
+    @entity()
+    @dataclass(slots=True)
+    class QLa:
+        id: str
+
+    with pytest.raises(BadRequestError) as loi:
+        events.query().join(QLa)
+    assert "chưa" in str(loi.value) and "reference" in str(loi.value)
+
+
+async def test_hai_khoa_ngoai_cung_bang_thi_bat_chon(kho):
+    """Hai cột cùng trỏ sang QCamera thì không đoán bừa, bắt nói rõ."""
+    _, cameras = kho
+
+    @entity()
+    @dataclass(slots=True)
+    class QCap:
+        id: str
+        vao_id: str = field(metadata=reference(QCamera))
+        ra_id: str = field(metadata=reference(QCamera))
+
+    with pytest.raises(BadRequestError) as loi:
+        cameras.query().join(QCap)
+    assert "2 khoá ngoại" in str(loi.value)
+    assert "QCap.vao_id" in str(loi.value) and "QCap.ra_id" in str(loi.value)
+
+
+async def test_on_khong_phai_cot_thi_bao_ro(kho):
+    """Entity không khai `slots=True` thì `X.truong` là giá trị mặc định, không phải cột."""
+    events, _ = kho
+    with pytest.raises(BadRequestError) as loi:
+        events.query().join(QCamera, on=None)
+    assert "slots=True" in str(loi.value)
+
+
 async def test_join_trung_ten_bi_chan(kho):
     events, _ = kho
     with pytest.raises(BadRequestError, match="alias="):
@@ -324,6 +418,8 @@ async def test_limit_ap_o_DATABASE_chu_khong_phai_trong_python(tmp_path):
     await backend.startup()
     await backend.create_schema(QCamera, QEvent)
     events = Repository(QEvent, _Db(backend))
+    # QEvent.camera_id là khoá ngoại thật, phải có camera trước mới ghi được sự kiện.
+    await Repository(QCamera, _Db(backend)).save(QCamera(id="c1", name="Cổng", zone="Tầng 1"))
     for i in range(50):
         await events.save(QEvent(id=f"x{i}", camera_id="c1", label="person", score=i / 100))
 
