@@ -295,9 +295,10 @@ def _co_ham_gop(spec: Any) -> bool:
 def _group(spec: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Gộp dòng theo `spec.groups`, giữ nguyên thứ tự nhóm xuất hiện lần đầu.
 
-    Dòng đại diện lấy từ bản ghi ĐẦU TIÊN của nhóm — cột không nằm trong
-    `group_by` vì vậy có giá trị của bản ghi đó. PostgreSQL từ chối hẳn kiểu
-    truy vấn này; SQLite thì cho, và cho đúng như vậy.
+    Dòng đại diện lấy từ bản ghi ĐẦU TIÊN của nhóm. Builder chỉ cho trả về cột
+    đã gộp hoặc hàm gộp (xem `Query._check_grouped`), nên phần "bản ghi đầu
+    tiên" chỉ còn ảnh hưởng tới cột ghép của `include` — mà cột đó cũng bắt
+    buộc nằm trong `group_by`.
     """
     from fastapi_modular.infrastructure.database.query import BUCKET_KEY, _value_of
 

@@ -1307,17 +1307,57 @@ rows = await (events.query()
 `group_by` **bắt buộc đi với `.select(...)`**: sau khi gộp thì một dòng không
 còn là một bản ghi nữa. Không có `.select` thì báo lỗi chứ không trả entity bịa.
 
+**Cột trả về phải nằm trong `group_by`, hoặc phải bọc trong hàm gộp.** Không có
+đường thứ ba:
+
+```python
+.group_by(Event.camera_id).select("camera_id", "label", so=count())   # LỖI
+.group_by(Event.camera_id).select("camera_id", nhan=max_(Event.label), so=count())   # được
+.group_by(Event.camera_id, Event.label).select("camera_id", "label", so=count())     # được
+```
+
+Lý do không phải hình thức: một nhóm có nhiều `label` khác nhau, trả về cái nào
+cũng là bịa. SQLite im lặng trả giá trị của **một dòng bất kỳ** trong nhóm, còn
+Postgres từ chối hẳn — tức là câu lệnh chạy ngon ở `fam dev` rồi đổ ở
+production. Khung chặn ngay để hai nơi giống nhau.
+
+**`include` đi cùng `group_by` được, với điều kiện gộp theo đúng cột ghép:**
+
+```python
+# được: mỗi nhóm đúng một camera
+await (events.query().group_by(Event.camera_id)
+       .select("camera_id", so=count())
+       .include(Camera, fields=["name"]).all())
+# [{"camera_id": "c1", "so": 12, "camera": {"name": "Cổng chính"}}]
+
+# LỖI: gộp theo label thì một nhóm trải trên nhiều camera
+await (events.query().group_by(Event.label)
+       .select("label", so=count()).include(Camera).all())
+```
+
 | Hàm | SQL | Ghi chú |
 |---|---|---|
-| `count()` | `count(*)` | đếm dòng |
-| `count(Event.label)` | `count(label)` | **bỏ qua NULL** |
-| `count(Event.label, distinct=True)` | `count(DISTINCT label)` | đếm giá trị khác nhau |
+| `count()` | `count(*)` | đếm DÒNG |
+| `count(Event.label)` | `count(label)` | đếm dòng có `label` **khác NULL** |
+| `count(Event.label, distinct=True)` | `count(DISTINCT label)` | đếm **giá trị khác nhau** |
 | `sum_(Event.score)` | `sum(score)` | |
 | `avg(Event.score)` | `avg(score)` | |
 | `min_(...)` `max_(...)` | `min` `max` | |
 
 Tên có gạch dưới (`sum_`, `min_`, `max_`) vì `sum`, `min`, `max` là hàm sẵn có
 của Python.
+
+**`count()` là `count(*)`; đếm theo cột thì truyền cột vào.** Ba cái này khác
+nhau, và khác nhau đúng ở chỗ NULL:
+
+```python
+.select("camera_id",
+        moi_dong=count(),                              # 4
+        da_duyet=count(Event.reviewed_at),             # 1  — bỏ dòng chưa duyệt
+        nhan_khac_nhau=count(Event.label, distinct=True))   # 2  — person, fire
+```
+
+Cột của bảng đã `join` cũng đếm được: `count(Camera.name)`.
 
 **Nhóm rỗng cho `NULL` chứ không phải 0.** `sum_` của một nhóm không có dòng
 nào là `None` — đúng luật SQL, và backend `memory` giữ y hệt để `fam test`

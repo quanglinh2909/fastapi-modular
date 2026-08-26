@@ -902,6 +902,55 @@ async def test_group_by_va_cac_ham_gop(kho):
     assert round(rows[1]["tong"], 6) == 1.8
 
 
+async def test_count_theo_cot_khac_count_moi_dong(kho):
+    """`count()` đếm dòng; `count(cot)` bỏ qua NULL; `distinct=True` đếm giá trị khác nhau."""
+    events, _ = kho
+    rows = await (events.query().group_by(QEvent.camera_id)
+                  .select("camera_id",
+                          moi_dong=count(),
+                          da_duyet=count(QEvent.reviewed_at),
+                          nhan_khac_nhau=count(QEvent.label, distinct=True))
+                  .order_by_asc("camera_id").all())
+    assert rows == [
+        {"camera_id": "c1", "moi_dong": 4, "da_duyet": 1, "nhan_khac_nhau": 2},
+        {"camera_id": "c2", "moi_dong": 2, "da_duyet": 0, "nhan_khac_nhau": 2},
+    ]
+
+
+async def test_count_duoc_ca_cot_cua_bang_da_join(kho):
+    events, _ = kho
+    rows = await (events.query().join(QCamera).group_by(QEvent.camera_id)
+                  .select("camera_id", ten=count(QCamera.name))
+                  .order_by_asc("camera_id").all())
+    assert [r["ten"] for r in rows] == [4, 2]
+
+
+async def test_cot_khong_gop_khong_duoc_tra_ve(kho):
+    """SQLite im lặng trả giá trị của một dòng bất kỳ, Postgres thì đổ. Chặn cả hai."""
+    events, _ = kho
+    with pytest.raises(BadRequestError) as loi:
+        await (events.query().group_by(QEvent.camera_id)
+               .select("camera_id", "label", so=count()).all())
+    assert "group_by" in str(loi.value) and "max_" in str(loi.value)
+
+
+async def test_include_canh_group_by_phai_gop_theo_dung_cot_ghep(kho):
+    events, _ = kho
+
+    # gộp theo chính cột ghép: chạy được, mỗi nhóm đúng một camera
+    duoc = await (events.query().group_by(QEvent.camera_id)
+                  .select("camera_id", so=count())
+                  .include(QCamera, fields=["name"])
+                  .order_by_asc("camera_id").all())
+    assert [r["qcamera"]["name"] for r in duoc] == ["Cổng chính", "Kho hàng"]
+
+    # gộp theo cột khác: một nhóm trải trên nhiều camera -> chặn
+    with pytest.raises(BadRequestError) as loi:
+        await (events.query().group_by(QEvent.label)
+               .select("label", so=count()).include(QCamera).all())
+    assert "camera_id" in str(loi.value) and "group_by" in str(loi.value)
+
+
 async def test_having_loc_theo_nhom_chu_khong_theo_dong(kho):
     events, _ = kho
     rows = await (events.query().group_by(QEvent.camera_id)

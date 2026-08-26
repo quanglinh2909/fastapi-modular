@@ -1131,9 +1131,42 @@ class Query(Generic[E]):
                 f"{thieu[0].entity.__name__} làm bảng gốc rồi `left_join`."
             )
 
+    def _check_grouped(self) -> None:
+        """Sau `group_by`, mỗi cột trả về phải là cột đã gộp hoặc một hàm gộp.
+
+        Cột khác thì mỗi nhóm có NHIỀU giá trị khác nhau, lấy cái nào cũng là
+        bịa. SQLite im lặng trả về giá trị của một dòng bất kỳ trong nhóm,
+        Postgres thì từ chối hẳn — tức là câu lệnh chạy được ở dev rồi đổ ở
+        production. Chặn ở đây để hai nơi giống nhau.
+        """
+        if not self._spec.groups:
+            return
+        grouped = {(table_of(c), c.field) for c in self._spec.groups}
+
+        for name, item in self._spec.selects.items():
+            if isinstance(item, Aggregate) or (table_of(item), item.field) in grouped:
+                continue
+            raise BadRequestError(
+                f"`select({name}={item!r})`: sau `group_by` thì {item!r} phải nằm trong "
+                f"`group_by`, hoặc phải bọc trong hàm gộp — mỗi nhóm có nhiều giá trị "
+                f"{item.field!r} khác nhau. Ví dụ: `group_by({item!r})` hay "
+                f"`{name}=max_({item!r})`."
+            )
+
+        for inc in self._spec.includes:
+            if (_alias_of(self._spec.entity), inc.root_field) in grouped:
+                continue
+            raise BadRequestError(
+                f"`include({inc.entity.__name__})` cần cột ghép {inc.root_field!r} nằm "
+                f"trong `group_by` — nếu không thì một nhóm có thể trải trên nhiều "
+                f"{inc.entity.__name__}, lấy cái nào cũng là bịa. Thêm "
+                f"`group_by(\"{inc.root_field}\")`, hoặc bỏ `include`."
+            )
+
     async def all(self) -> list[Any]:
         """Chạy và trả về mọi dòng khớp."""
         self._need_select()
+        self._check_grouped()
         if not self._spec.includes and self._spec.nest is None:
             return await self._backend().run_query(self._spec)
 
