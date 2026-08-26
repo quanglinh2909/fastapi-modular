@@ -8,6 +8,7 @@ Phần cần broker thật nằm ở tests/test_rabbitmq.py.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 from typing import Any
 
@@ -630,6 +631,71 @@ def test_hai_cach_khai_dia_chi_khong_tron_lan(monkeypatch):
         broker._address("viec", "events", "a.b")
     with pytest.raises(Exception, match="Chưa nói gửi đi đâu"):
         broker._address(None, "", None)
+
+
+async def test_emit_many_gui_song_song_va_dem_dung(monkeypatch):
+    """Cả điểm của `emit_many` là nhiều tin BAY CÙNG LÚC.
+
+    Vòng `for ... await emit(...)` chỉ để một tin bay mỗi lần, nên nó chờ đủ
+    một lượt xác nhận cho từng tin — đo được 130 tin/s với tin `persistent`,
+    so với 6.100 tin/s khi gửi song song.
+    """
+    broker, _ = _broker_gia_lap(monkeypatch)
+    dang_bay, dinh_cao = 0, 0
+
+    async def publish(**kwargs):
+        nonlocal dang_bay, dinh_cao
+        dang_bay += 1
+        dinh_cao = max(dinh_cao, dang_bay)
+        await asyncio.sleep(0.005)          # thay cho lượt chờ xác nhận của broker
+        dang_bay -= 1
+        return True
+
+    monkeypatch.setattr(broker, "publish", publish)
+    sent = await broker.emit_many("cam.event", [{"i": i} for i in range(20)], queue="viec")
+
+    assert sent == 20
+    assert dinh_cao > 1, "phải gửi song song, không phải lần lượt"
+
+
+async def test_emit_many_ton_trong_tran_concurrency(monkeypatch):
+    """Trần này giữ cho một lô lớn không chiếm hết bộ đệm gửi của tiến trình."""
+    broker, _ = _broker_gia_lap(monkeypatch)
+    dang_bay, dinh_cao = 0, 0
+
+    async def publish(**kwargs):
+        nonlocal dang_bay, dinh_cao
+        dang_bay += 1
+        dinh_cao = max(dinh_cao, dang_bay)
+        await asyncio.sleep(0.002)
+        dang_bay -= 1
+        return True
+
+    monkeypatch.setattr(broker, "publish", publish)
+    await broker.emit_many("x", [{} for _ in range(50)], queue="viec", concurrency=5)
+
+    assert dinh_cao <= 5
+
+
+async def test_emit_many_mot_tin_hong_khong_mat_ca_lo(monkeypatch):
+    """Gửi 500 sự kiện mà một cái sai thì mất 499 cái kia là quá đắt."""
+    broker, _ = _broker_gia_lap(monkeypatch)
+
+    async def publish(*, payload, **kwargs):
+        return payload["data"]["i"] != 3
+
+    monkeypatch.setattr(broker, "publish", publish)
+    sent = await broker.emit_many("x", [{"i": i} for i in range(10)], queue="viec")
+
+    assert sent == 9, "so số trả về với số đưa vào là biết có mất gì không"
+
+
+async def test_emit_many_lo_rong_va_concurrency_sai(monkeypatch):
+    broker, _ = _broker_gia_lap(monkeypatch)
+    assert await broker.emit_many("x", [], queue="viec") == 0
+
+    with pytest.raises(BadRequestError, match="concurrency"):
+        await broker.emit_many("x", [{}], queue="viec", concurrency=0)
 
 
 async def test_emit_gui_dung_khuon_goi_nestjs(monkeypatch):

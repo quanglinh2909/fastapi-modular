@@ -107,6 +107,61 @@ await self._mq.publish(
 )
 ```
 
+### Gửi nhiều tin một lúc
+
+Vòng `for` gửi tin đi rất chậm, và không phải vì RabbitMQ chậm:
+
+```python
+for event in events:
+    await self._mq.emit("cam.event", event, queue="events")   # 130 tin/s
+```
+
+Mỗi lần `emit` chờ broker **xác nhận** (publisher confirm) rồi mới gửi tin sau.
+Với tin `persistent` (mặc định) vào hàng đợi `durable`, xác nhận đó phải đợi
+RabbitMQ fsync xuống đĩa — khoảng 7,7 ms. Vòng `for` chỉ để **một tin bay mỗi
+lần**, nên 7,7 ms đó không bao giờ được che đi.
+
+```python
+await self._mq.emit_many("cam.event", events, queue="events")  # 6.100 tin/s
+```
+
+Đo trên broker localhost, tin `persistent`, hàng đợi `durable`, lô 2.000 tin,
+trung vị 5 lần đo:
+
+| Cách gửi | Tốc độ | Mỗi tin |
+|---|---|---|
+| `for ... await emit(...)` | 130 tin/s | 7,7 ms |
+| `emit_many(..., concurrency=25)` | 1.841 tin/s | 0,54 ms |
+| `emit_many(..., concurrency=50)` | 3.520 tin/s | 0,28 ms |
+| **`emit_many(...)`** *(mặc định 100)* | **6.132 tin/s** | **0,16 ms** |
+
+**Không đánh đổi gì về độ bền vững**: tin vẫn `persistent`, vẫn chờ xác nhận
+từng cái. Chỉ là nhiều tin bay cùng lúc nên RabbitMQ gộp được các lần fsync.
+
+Đặt `concurrency` cao hơn 100 *có thể* nhanh hơn nhưng dao động rất rộng — 400
+đo được từ 4.761 tới 12.947 tin/s giữa các lần, tuỳ lúc broker gộp fsync. Nó
+còn khiến một lô lớn chiếm hết bộ đệm gửi và làm nghẽn những lời `publish` khác
+của tiến trình.
+
+```python
+sent = await self._mq.emit_many(
+    "cam.event", events,
+    queue="events",
+    persistent=True,        # như emit()
+    concurrency=100,        # số tin cho phép bay cùng lúc
+)
+if sent < len(events):
+    log.warning("mất tin", thieu=len(events) - sent)
+```
+
+Tin nào hỏng thì ghi cảnh báo và không tính, **cả lô vẫn đi tiếp** — gửi 500 sự
+kiện mà một cái sai thì mất 499 cái kia là quá đắt. So số trả về với số phần tử
+đưa vào là biết có mất gì không.
+
+Không cần bền vững (vị trí xe, nhiệt độ, tin theo dõi trực tiếp) thì
+`persistent=False` cũng đưa vòng `for` lên 4.319 tin/s — nhưng broker restart là
+mất sạch phần chưa ai lấy.
+
 ### Đặt tên routing key
 
 `alert.created.hanoi` — từ rộng đến hẹp, vì mẫu khớp từ trái sang:

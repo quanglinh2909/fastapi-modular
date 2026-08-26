@@ -28,6 +28,11 @@ chạy thật hai chiều với `@nestjs/microservices` 11.2.1 — xem [mục cu
 | MQTT | `mqtt.emit/send(p, d)` | `@mqtt_responder(p)` |
 | Kafka | `kafka.emit/send(p, d)` | `@kafka_responder(p, group="…")` |
 
+RabbitMQ có thêm `broker.emit_many(pattern, items, queue="…")` — không có bên
+NestJS, và cần thật: vòng `for ... await emit(...)` chỉ để một tin bay mỗi lần
+nên chạy 130 tin/s, còn `emit_many` là 6.100 tin/s với **cùng** độ bền vững.
+Xem [rabbitmq.md](rabbitmq.md#gửi-nhiều-tin-một-lúc).
+
 Một decorator lo cả hai, vì bên nhận không tự chọn được: **tin có `id` thì phải
 trả lời, không có `id` thì không**. Người GỬI quyết định điều đó bằng cách gọi
 `send` hay `emit`. NestJS cũng phân loại đúng theo dấu hiệu này.

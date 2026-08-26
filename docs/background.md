@@ -239,12 +239,18 @@ gọi, một lần `await` thẳng và một lần qua `ctx.run(...)` từ threa
 
 | Lời gọi | `await` thẳng | qua `ctx.run` | Chênh |
 |---|---|---|---|
-| coroutine rỗng *(chi phí trần)* | 15.800.000/s | 53.000/s | **+0,019 ms** |
-| WebSocket broadcast | 1.557.000/s | 47.000/s | **+0,020 ms** |
-| MQTT emit qos=1 | 4.180 tin/s | 4.619 tin/s | ~0 |
-| Kafka emit acks=all | 1.714 tin/s | 2.786 tin/s | ~0 |
-| RabbitMQ emit | 117 tin/s | 112 tin/s | ~0 |
+| coroutine rỗng *(chi phí trần)* | 20.000.000/s | 50.700/s | **+0,020 ms** |
+| WebSocket broadcast | 1.351.000/s | 47.600/s | **+0,020 ms** |
+| MQTT emit qos=1 | 7.494 tin/s | 5.959 tin/s | ~0 |
+| Kafka emit acks=all | 1.745 tin/s | 4.299 tin/s | ~0 |
+| RabbitMQ emit `persistent=False` | 4.319 tin/s | 4.563 tin/s | ~0 |
+| RabbitMQ emit `persistent=True` *(mặc định)* | 126 tin/s | 118 tin/s | ~0 |
 | SQLite INSERT *(WAL+NORMAL)* | 1.269 ghi/s | 811 ghi/s | +0,4 ms |
+
+Hai dòng RabbitMQ chênh nhau 34 lần **không phải vì `ctx.run`**: tin
+`persistent` vào hàng đợi `durable` bắt RabbitMQ fsync xuống đĩa rồi mới xác
+nhận, và vòng `for` chỉ để một tin bay mỗi lần. Cách sửa là `broker.emit_many(...)`
+— xem [rabbitmq.md](rabbitmq.md#gửi-nhiều-tin-một-lúc).
 
 Đọc bảng này theo đúng một cách: **`ctx.run` tốn cố định khoảng 0,02 ms.**
 
