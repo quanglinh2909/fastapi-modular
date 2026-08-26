@@ -955,6 +955,10 @@ class Query(Generic[E]):
         Mỗi `include` là MỘT câu lệnh nữa (`WHERE khoá IN (...)`), không phải
         một câu cho mỗi dòng. Mười camera thì hai câu, không phải mười một.
         """
+        nest = self._spec.nest
+        if nest is not None and nest.entity is entity:
+            raise BadRequestError(_trung_bang(entity.__name__))
+
         root_field, other_field, to_list = self._relation(entity, on)
         self._spec.includes.append(Include(
             entity=entity,
@@ -1045,6 +1049,8 @@ class Query(Generic[E]):
         """
         if self._spec.groups:
             raise BadRequestError("`nest_under` và `group_by` không dùng chung được.")
+        if any(inc.entity is entity for inc in self._spec.includes):
+            raise BadRequestError(_trung_bang(entity.__name__))
 
         child_field, parent_field, to_list = self._relation(entity, on)
         if to_list:
@@ -1391,6 +1397,16 @@ class Query(Generic[E]):
             f"<Query[{spec.entity.__name__}] joins={len(spec.joins)} "
             f"where={len(spec.conditions)} limit={spec.limit}>"
         )
+
+
+def _trung_bang(ten: str) -> str:
+    """Cùng một bảng vừa đưa ra ngoài vừa gắn vào trong — gần như luôn là nhầm."""
+    return (
+        f"`nest_under({ten})` đã đưa {ten} ra NGOÀI rồi, mà `include({ten})` lại gắn "
+        f"đúng {ten} đó vào TỪNG dòng bên trong — cùng một dữ liệu nằm hai chỗ. "
+        f"Bỏ `include({ten})` đi; chọn cột cho lớp ngoài bằng chính "
+        f'`nest_under({ten}, fields=["id", "name"])`.'
+    )
 
 
 def _as_dict(entity: type, row: Any) -> dict[str, Any]:

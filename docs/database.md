@@ -1531,9 +1531,38 @@ So với `cameras.query().include(Event, where=...)`:
 | `cameras.query().include(Event, where=…)` | **mọi** camera; camera không có sự kiện khớp thì `events: []` |
 | `events.query().where(…).nest_under(Camera)` | **chỉ** camera có sự kiện khớp |
 
-`.select(...)` chọn cột của bảng gốc (nằm trong); `fields=`, `exclude=`,
-`rename=` chọn cột của bảng cha (nằm ngoài), cùng luật với `select`. Tên trường
-mặc định là tên bảng gốc viết thường + `s`, đổi bằng `name=`.
+**Ai quyết định cột nào** — chỗ nhầm nhiều nhất khi mới dùng:
+
+| Lớp | Cột do ai quyết định |
+|---|---|
+| **ngoài** (Camera) | `nest_under(Camera, fields=…, exclude=…, rename=…)` |
+| **trong** (list Event) | `.select(...)` của chính câu truy vấn |
+| tên trường chứa danh sách | `nest_under(Camera, name="su_kien")`; mặc định là tên bảng gốc + `s` |
+
+```python
+await (events.query()
+       .select(exclude=["reviewed_at"], rename={"dd": "created_at"})  # lớp TRONG
+       .nest_under(Camera, fields=["id", "name"])                     # lớp NGOÀI
+       .all())
+# [{"id": "c1", "name": "demo",
+#   "events": [{"id": "e1", "label": "…", "camera_id": "c1", "dd": "…"}]}]
+```
+
+**Đừng thêm `include(Camera)` khi đã có `nest_under(Camera)`.** Camera đã nằm
+lớp ngoài rồi; `include` sẽ gắn đúng camera đó vào TỪNG dòng bên trong nữa —
+cùng một dữ liệu ở hai chỗ. Khung chặn và nói luôn cách sửa:
+
+```
+`nest_under(Camera)` đã đưa Camera ra NGOÀI rồi, mà `include(Camera)` lại gắn
+đúng Camera đó vào TỪNG dòng bên trong — cùng một dữ liệu nằm hai chỗ. Bỏ
+`include(Camera)` đi; chọn cột cho lớp ngoài bằng chính
+`nest_under(Camera, fields=["id", "name"])`.
+```
+
+`include` một bảng **khác** thì vẫn dùng chung được bình thường.
+
+**`join(Camera)` cũng không cần** nếu bạn không lọc theo cột nào của Camera:
+`nest_under` tự lấy camera bằng một câu lệnh riêng.
 
 Ba điều dễ vấp:
 

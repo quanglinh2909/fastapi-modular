@@ -920,6 +920,38 @@ async def test_nest_under_sai_chieu_thi_chi_sang_include(kho):
     assert "include" in str(loi.value), "phải chỉ luôn cách làm đúng"
 
 
+async def test_cot_lop_ngoai_do_nest_under_quyet_dinh(kho):
+    """Ca hay nhầm: đặt `fields` ở `include` rồi tưởng lớp NGOÀI sẽ đổi theo."""
+    events, _ = kho
+    rows = await (events.query().where(id="e4").select("id")
+                  .nest_under(QCamera, fields=["id", "name"]).all())
+    assert rows == [{"id": "c2", "name": "Kho hàng", "qevents": [{"id": "e4"}]}]
+
+
+async def test_include_va_nest_under_cung_mot_bang_bi_chan(kho):
+    """`nest_under(X)` + `include(X)` = cùng dữ liệu ở hai chỗ, gần như luôn là nhầm."""
+    events, _ = kho
+    for dung_truoc in (True, False):
+        q = events.query()
+        with pytest.raises(BadRequestError) as loi:
+            if dung_truoc:
+                q.include(QCamera).nest_under(QCamera)
+            else:
+                q.nest_under(QCamera).include(QCamera)
+        assert "nest_under(QCamera, fields=" in str(loi.value), "phải chỉ luôn cách sửa"
+
+
+async def test_nest_under_van_include_duoc_bang_KHAC(kho):
+    """Chốt chỉ được bắt ĐÚNG bảng bị trùng, không được chặn bừa mọi `include`."""
+    _, cameras = kho
+    rows = await (cameras.query().where(id="c2").select("id")
+                  .include(QEvent, fields=["id"])
+                  .nest_under(QCamera, on=QCamera.parent_id, name="con",
+                              fields=["name"]).all())
+    assert rows == [{"name": "Cổng chính",
+                     "con": [{"id": "c2", "qevents": [{"id": "e3"}, {"id": "e4"}]}]}]
+
+
 async def test_nest_under_khong_dung_chung_voi_group_by(kho):
     events, _ = kho
     with pytest.raises(BadRequestError):
