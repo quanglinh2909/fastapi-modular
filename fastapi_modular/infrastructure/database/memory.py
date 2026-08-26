@@ -7,9 +7,11 @@ một bản riêng nên KHÔNG được chạy nhiều worker với backend này
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any, TypeVar
 
-from fastapi_modular.core.container import _ENTITIES
+from fastapi_modular.core.container import _ENTITIES, Scope, injectable
 from fastapi_modular.core.exceptions import ConflictError
 from fastapi_modular.infrastructure.database.base import (
     DatabaseBackend,
@@ -24,6 +26,32 @@ from fastapi_modular.infrastructure.database.base import (
 from fastapi_modular.infrastructure.database.query import BUCKET_KEY as _BUCKET
 
 E = TypeVar("E")
+
+
+@injectable(scope=Scope.REQUEST)
+class MemoryUnitOfWork:
+    """Chụp ảnh dữ liệu ở lần GHI đầu tiên của request, trả lại nếu request hỏng.
+
+    Có nó để backend memory không nói dối: với sqlite/postgres, handler ném
+    exception là cả request ROLLBACK. Không làm gì tương tự ở đây thì một test
+    kiểu "request hỏng thì không được ghi gì" sẽ đỏ trên `fam test` (memory)
+    trong khi production (postgres) chạy đúng — và người ta sẽ học được rằng
+    lời hứa rollback là không đáng tin.
+    """
+
+    def __init__(self) -> None:
+        self._backend: MemoryBackend | None = None
+        self._snapshot: dict[str, dict[str, Any]] | None = None
+
+    def join(self, backend: MemoryBackend) -> None:
+        if self._snapshot is None:
+            self._backend = backend
+            self._snapshot = backend._copy_tables()
+
+    async def on_request_end(self, error: BaseException | None) -> None:
+        if error is not None and self._backend is not None and self._snapshot is not None:
+            self._backend._restore_tables(self._snapshot)
+        self._backend, self._snapshot = None, None
 
 
 class MemoryBackend(DatabaseBackend):
@@ -43,6 +71,52 @@ class MemoryBackend(DatabaseBackend):
 
     def _table(self, entity: type) -> dict[str, Any]:
         return self._tables.setdefault(mapping_for(entity).storage, {})
+
+    def _copy_tables(self) -> dict[str, dict[str, Any]]:
+        """Bản sao NÔNG của từng bản ghi là đủ: trường entity đều là scalar,
+        datetime hoặc Enum — không sửa tại chỗ được."""
+        import copy
+
+        return {
+            ten: {khoa: copy.copy(obj) for khoa, obj in bang.items()}
+            for ten, bang in self._tables.items()
+        }
+
+    def _restore_tables(self, snapshot: dict[str, dict[str, Any]]) -> None:
+        self._tables.clear()
+        self._tables.update(snapshot)
+
+    def _join_request(self) -> None:
+        """Nối vào transaction của request đang chạy, nếu đang ở trong request."""
+        from fastapi_modular.core.container import container
+
+        try:
+            uow = container.resolve(MemoryUnitOfWork)
+        except RuntimeError:
+            return          # ngoài request: mỗi thao tác tự đứng một mình
+        uow.join(self)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[None]:
+        """Chụp ảnh dữ liệu lúc vào, có lỗi thì trả lại y như cũ.
+
+        Backend memory không có transaction thật, nhưng nếu để nó KHÔNG rollback
+        thì một test kiểu "hỏng giữa chừng thì không được ghi gì" sẽ đỏ ở memory
+        trong khi production chạy đúng — `fam test` nói dối theo hướng tệ nhất.
+
+        Chụp cả bản sao NÔNG của từng bản ghi, vì `save()` một object đã sửa
+        thẳng tại chỗ thì khôi phục dict thôi không đủ. Nông là đủ: trường của
+        entity đều là scalar/datetime/Enum, không sửa tại chỗ được.
+
+        Lồng nhau thì khối trong tự chụp ảnh riêng, nên nó huỷ được phần của
+        mình mà không đụng phần ngoài — giống SAVEPOINT của SQL.
+        """
+        anh = self._copy_tables()
+        try:
+            yield
+        except BaseException:
+            self._restore_tables(anh)
+            raise
 
     def _select(self, entity: type, filters: Filters, match: Match) -> list[Any]:
         active = active_filters(filters)
@@ -172,6 +246,7 @@ class MemoryBackend(DatabaseBackend):
         return len(self._rows_for(spec))
 
     async def save(self, entity: type[E], obj: E) -> E:
+        self._join_request()
         self._check_unique(entity, obj)
         self._check_references(entity, obj)
         if not getattr(obj, "id", None):
@@ -260,7 +335,11 @@ class MemoryBackend(DatabaseBackend):
                 )
 
     async def delete_where_ids(self, entity: type, ids: list[str]) -> int:
-        """Xoá theo danh sách id, có áp khoá ngoại. Dùng nội bộ cho cascade."""
+        """Xoá theo danh sách id, có áp khoá ngoại. Dùng nội bộ cho cascade.
+
+        Mọi đường xoá đều đi qua đây, nên chỉ cần nối vào transaction ở đây.
+        """
+        self._join_request()
         await self._cascade(entity, ids)
         table = self._table(entity)
         removed = 0

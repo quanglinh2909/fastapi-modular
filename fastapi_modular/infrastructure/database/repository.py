@@ -13,13 +13,15 @@ xuống SQL/Mongo (backend sẽ lấy dữ liệu về rồi mới lọc).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from typing import Any, Generic, TypeVar
 
 from fastapi_modular.core.clock import utcnow
 from fastapi_modular.core.config import Settings
 from fastapi_modular.core.container import injectable
 from fastapi_modular.core.logging import get_logger
+from fastapi_modular.core.providers import CapabilityNotSupportedError
 from fastapi_modular.infrastructure.database.base import DatabaseBackend, is_transient_error
 from fastapi_modular.infrastructure.database.factory import create_backend
 from fastapi_modular.infrastructure.database.query import Query
@@ -110,6 +112,41 @@ class Database:
 
     async def ping(self) -> bool:
         return await self._backend.ping()
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[None]:
+        """Gộp nhiều thao tác ghi thành một: cùng thành công, hoặc cùng không.
+
+            async with self._db.transaction():
+                camera = await self._cameras.save(Camera(id="", name=ten))
+                await self._logs.save(CameraLog(id="", camera_id=camera.id))
+
+        Ghi bảng thứ hai hỏng thì bảng thứ nhất cũng bị huỷ — không còn camera
+        mồ côi. Mọi repository trong khối đều đi chung một connection, nên gọi
+        `transaction()` từ đâu cũng bao trùm tất cả.
+
+        **Trong HTTP handler thì đã có sẵn một transaction cho cả request**, nên
+        chỉ cần dùng khối này khi bạn muốn huỷ một PHẦN mà vẫn chạy tiếp:
+
+            try:
+                async with self._db.transaction():   # SAVEPOINT
+                    ...
+            except Exception:
+                ...                                  # request vẫn tiếp tục
+
+        Ngoài request — worker, job, cron, script — thì KHÔNG có sẵn gì cả: mỗi
+        `save()` tự commit ngay. Ở đó bắt buộc phải bọc nếu cần nguyên tử.
+
+        MongoDB một node không có transaction đa-document nên khối này ném lỗi
+        nói rõ, thay vì chạy tiếp rồi để lại dữ liệu nửa vời.
+        """
+        tx = getattr(self._backend, "transaction", None)
+        if tx is None:
+            raise CapabilityNotSupportedError(
+                f"Backend {self._backend.name!r} chưa có transaction."
+            )
+        async with tx():
+            yield
 
 
 @injectable

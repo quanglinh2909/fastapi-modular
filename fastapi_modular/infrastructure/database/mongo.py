@@ -9,12 +9,18 @@ document nên không tốn thêm index.
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any, TypeVar
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 
 from fastapi_modular.core.container import _ENTITIES
-from fastapi_modular.core.exceptions import BadRequestError, ConflictError
+from fastapi_modular.core.exceptions import (
+    BadRequestError,
+    CapabilityNotSupportedError,
+    ConflictError,
+)
 from fastapi_modular.core.logging import get_logger
 from fastapi_modular.infrastructure.database.base import (
     DatabaseBackend,
@@ -176,6 +182,21 @@ class MongoBackend(DatabaseBackend):
 
     async def count_query(self, spec: Any) -> int:
         return await self.run_query(spec)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[None]:
+        """MongoDB một node KHÔNG có transaction đa-document — nói thẳng, không giả vờ.
+
+        Giả vờ (chạy tiếp rồi không rollback được) là cách chắc chắn nhất để
+        một lỗi giữa chừng để lại dữ liệu nửa vời mà không ai biết.
+        """
+        raise CapabilityNotSupportedError(
+            "MongoDB chỉ có transaction đa-document khi chạy replica set, và "
+            "template không bật. Cách khác: gộp dữ liệu cần ghi cùng lúc vào MỘT "
+            "document (Mongo bảo đảm nguyên tử ở mức một document), hoặc đổi "
+            "APP_DB__DRIVER sang postgres/sqlite."
+        )
+        yield       # pragma: no cover - để hàm này vẫn là async generator
 
     async def save(self, entity: type[E], obj: E) -> E:
         if not getattr(obj, "id", None):

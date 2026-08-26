@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from enum import Enum
 from typing import Any, TypeVar
@@ -84,6 +85,14 @@ def _column_type(declared: type) -> Any:
     if isinstance(declared, type) and issubclass(declared, Enum):
         return String(64)  # Enum lưu bằng .value cho dễ đọc và dễ migrate
     return _COLUMN_TYPES.get(declared, String)
+
+
+# Connection của một `async with db.transaction():` đang mở. ContextVar chứ
+# không phải thuộc tính của backend: hai request (hoặc hai task asyncio) chạy
+# song song phải thấy transaction của riêng mình.
+_open_transaction: ContextVar[AsyncConnection | None] = ContextVar(
+    "sql_open_transaction", default=None
+)
 
 
 @injectable(scope=Scope.REQUEST)
@@ -464,10 +473,19 @@ class SqlBackend(DatabaseBackend):
     # ------------------------------------------------------------------ kết nối
     @asynccontextmanager
     async def _conn(self) -> AsyncIterator[AsyncConnection]:
-        """Dùng connection của request nếu có; ngoài request thì mở tạm một cái."""
+        """Connection nào cũng theo thứ tự này: transaction đang mở -> request -> tạm.
+
+        Thứ tự quan trọng: đang trong `async with db.transaction()` thì MỌI thao
+        tác phải đi qua đúng connection đó, nếu không hai câu lệnh nằm ở hai
+        transaction khác nhau và "cùng thành công hoặc cùng không" mất nghĩa.
+        """
         from fastapi_modular.core.container import container
 
         assert self._engine is not None, "backend chưa startup()"
+        mo = _open_transaction.get()
+        if mo is not None:
+            yield mo
+            return
         try:
             uow = container.resolve(SqlUnitOfWork)
         except RuntimeError:
@@ -475,6 +493,61 @@ class SqlBackend(DatabaseBackend):
                 yield conn
             return
         yield await uow.connection(self._engine)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[None]:
+        """Gộp nhiều thao tác thành một: cùng thành công, hoặc cùng không.
+
+        Ba ca, ba cách nối vào:
+
+        - Đã ở trong `async with db.transaction()` khác -> mở SAVEPOINT, để
+          khối trong hỏng thì chỉ khối trong bị huỷ.
+        - Đang trong một HTTP request -> dùng chung connection của request và
+          mở SAVEPOINT trên đó, vì request đã mở transaction từ trước.
+        - Ngoài request (worker, job, script) -> mở hẳn một connection mới,
+          COMMIT khi thoát êm, ROLLBACK khi có exception.
+        """
+        from fastapi_modular.core.container import container
+
+        assert self._engine is not None, "backend chưa startup()"
+
+        dang_mo = _open_transaction.get()
+        if dang_mo is None:
+            try:
+                dang_mo = await container.resolve(SqlUnitOfWork).connection(self._engine)
+            except RuntimeError:
+                dang_mo = None
+
+        if dang_mo is not None:
+            # Đã có transaction bao ngoài: SAVEPOINT là cách duy nhất để khối
+            # này huỷ được phần của mình mà không đụng phần bên ngoài.
+            token = _open_transaction.set(dang_mo)
+            nested = await dang_mo.begin_nested()
+            try:
+                yield
+            except BaseException:
+                await nested.rollback()
+                raise
+            else:
+                await nested.commit()
+            finally:
+                _open_transaction.reset(token)
+            return
+
+        conn = await self._engine.connect()
+        token = _open_transaction.set(conn)
+        try:
+            await conn.begin()
+            try:
+                yield
+            except BaseException:
+                await conn.rollback()
+                raise
+            else:
+                await conn.commit()
+        finally:
+            _open_transaction.reset(token)
+            await conn.close()
 
     def _where(self, table: Table, filters: Filters) -> list[Any]:
         return [table.c[k] == v for k, v in active_filters(filters).items() if k in table.c]

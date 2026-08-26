@@ -11,6 +11,7 @@
 | "**Xoá camera thì thẻ về giá trị mặc định**" | [`SET DEFAULT`](#set-default--về-giá-trị-bạn-đặt-sẵn) |
 | "Còn hoá đơn thì KHÔNG cho xoá khách hàng" | [`RESTRICT`](#restrict--chặn-không-cho-xoá) |
 | "Đọc/ghi dữ liệu trong service" | [Dùng Repository trong code](#dùng-repository-trong-code) |
+| "**Ghi 2 bảng, hỏng thì huỷ cả hai**" | [Transaction](#transaction--ghi-nhiều-bảng-thì-cùng-thành-công-hoặc-cùng-không) |
 | "Lọc lớn hơn, nhỏ hơn, NULL, nối bảng" | [Truy vấn phức tạp](#truy-vấn-phức-tạp--join-lớnbé-null) |
 | "**Điều kiện này HOẶC điều kiện kia**" | [`or_where`](#or-or_where-mở-nhánh-mới) |
 | "**Mỗi camera có bao nhiêu sự kiện**" | [Gộp nhóm](#gộp-nhóm-đếm-tính-trung-bình) |
@@ -1771,20 +1772,111 @@ Hai quy ước:
 
 ---
 
-## Transaction
+## Transaction — ghi nhiều bảng thì cùng thành công hoặc cùng không
 
-Với `sqlite`/`postgres`, mỗi HTTP request dùng chung **một** connection và **một**
-transaction, do `SqlUnitOfWork` giữ (provider `Scope.REQUEST`):
+### Trong HTTP handler: đã có sẵn, không phải làm gì
 
-- Handler chạy xong không lỗi → `COMMIT`
+Mỗi request là **một** transaction. Ghi hai bảng rồi ném lỗi thì cả hai bị huỷ:
+
+```python
+@post("")
+async def tao(self, body: CameraCreate) -> CameraOut:
+    camera = await self._cameras.save(Camera(id="", name=body.name))
+    await self._logs.save(CameraLog(id="", camera_id=camera.id, message="tạo"))
+    # ném lỗi ở đây -> KHÔNG còn camera nào được ghi
+    return CameraOut.model_validate(camera)
+```
+
+- Handler xong không lỗi → `COMMIT`
 - Handler ném exception → `ROLLBACK`
 
-Commit xảy ra **trước khi** response được gửi đi, nên client ghi xong đọc lại ngay
-sẽ thấy dữ liệu mới. Chi tiết vì sao chỗ này quan trọng: xem ghi chú đầu file
-[`fastapi_modular/middleware/request_context.py`](../fastapi_modular/middleware/request_context.py).
+Commit xảy ra **trước khi** response được gửi đi, nên client ghi xong đọc lại
+ngay sẽ thấy dữ liệu mới.
 
-Gọi repository **ngoài** một HTTP request (script, worker, test) vẫn được — backend
-sẽ tự mở một connection tạm và commit ngay sau thao tác.
+### Ngoài request (worker, job, cron, script): PHẢI tự bọc
+
+Ở đó không có request nào để bám vào, nên **mỗi `save()` tự commit ngay**. Ghi
+bảng thứ hai hỏng thì bảng thứ nhất đã nằm lại rồi:
+
+```python
+@worker(thread=False)
+async def dong_bo(self, ctx: WorkerContext) -> None:
+    async with self._db.transaction():                 # <-- bắt buộc ở đây
+        camera = await self._cameras.save(Camera(id="", name="Cổng"))
+        await self._logs.save(CameraLog(id="", camera_id=camera.id, message="tạo"))
+```
+
+`self._db` là `Database`, khai như mọi provider khác:
+
+```python
+@injectable
+class CameraService:
+    def __init__(self, db: Database, cameras: Repository[Camera],
+                 logs: Repository[CameraLog]) -> None:
+        self._db, self._cameras, self._logs = db, cameras, logs
+```
+
+**Mọi repository trong khối đều đi chung một connection**, nên gọi
+`transaction()` ở đâu cũng bao trùm tất cả — không phải truyền gì qua lại.
+
+### Huỷ một PHẦN mà vẫn chạy tiếp
+
+Khối lồng nhau thành `SAVEPOINT`: khối trong hỏng thì chỉ phần của nó bị huỷ.
+
+```python
+for cam in danh_sach:
+    try:
+        async with self._db.transaction():
+            await self._cameras.save(cam)
+            await self._logs.save(CameraLog(id="", camera_id=cam.id, message="tạo"))
+    except Exception:
+        loi.append(cam.id)        # camera này bị huỷ, những cái trước vẫn còn
+```
+
+Dùng được cả trong HTTP handler — ở đó nó là SAVEPOINT trên transaction của
+request.
+
+### Kiểm xem nó chạy chưa
+
+Cách nhanh nhất là làm nó hỏng có chủ đích rồi đếm lại:
+
+```python
+try:
+    async with db.transaction():
+        await cameras.save(Camera(id="c1", name="X"))
+        raise RuntimeError("thử")
+except RuntimeError:
+    pass
+assert await cameras.query().count() == 0     # còn 1 là transaction chưa ăn
+```
+
+### Lưu ý
+
+**Backend `memory` cũng rollback**, cả trong `transaction()` lẫn khi handler ném
+lỗi — nó chụp ảnh dữ liệu rồi trả lại. Không có phần này thì test kiểu "hỏng
+giữa chừng thì không được ghi gì" sẽ đỏ ở `fam test` trong khi production chạy
+đúng.
+
+**MongoDB một node thì `transaction()` ném lỗi**, không giả vờ. Mongo chỉ có
+transaction đa-document khi chạy replica set. Cách khác: gộp thứ cần ghi cùng
+lúc vào **một** document — Mongo bảo đảm nguyên tử ở mức một document.
+
+**Kiểu lỗi khác nhau giữa hai backend.** Vi phạm khoá ngoại: `memory` ném
+`ConflictError`, `sqlite`/`postgres` ném `IntegrityError` của SQLAlchemy. Ở
+tầng HTTP thì cả hai đều thành 409 nên không thấy khác biệt; bắt lỗi trong
+code (worker, service) thì đừng bắt riêng `ConflictError`.
+
+**Đừng giữ transaction trong lúc gọi mạng.** Gọi API bên ngoài, chờ MQTT, ngủ
+— tất cả nằm ngoài khối. Với SQLite, một transaction giữ khoá ghi quá 5 giây
+là các request khác nhận `database is locked`.
+
+| Đang ở | Có sẵn transaction? | Cần làm gì |
+|---|---|---|
+| HTTP handler | có, cả request | không gì cả |
+| worker / job / cron / script | **không** | `async with db.transaction():` |
+| trong `transaction()` khác | có | khối lồng thành `SAVEPOINT` |
+| `memory` | có (chụp ảnh) | như trên |
+| `mongodb` | **không có** | gộp vào một document |
 
 ---
 
