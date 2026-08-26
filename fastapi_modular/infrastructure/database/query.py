@@ -513,6 +513,7 @@ class Nest:
     child_field: str                 # cột khoá ngoại bên bảng gốc
     parent_field: str                # cột bên bảng cha
     fields: tuple[tuple[str, str], ...] = ()      # (tên kết quả, tên cột)
+    explicit: bool = False           # người dùng có tự chọn cột ở đây không
 
 
 # Số id nhét vào một câu `WHERE ... IN (...)`. SQLite mặc định chỉ cho 999 tham
@@ -955,10 +956,6 @@ class Query(Generic[E]):
         Mỗi `include` là MỘT câu lệnh nữa (`WHERE khoá IN (...)`), không phải
         một câu cho mỗi dòng. Mười camera thì hai câu, không phải mười một.
         """
-        nest = self._spec.nest
-        if nest is not None and nest.entity is entity:
-            raise BadRequestError(_trung_bang(entity.__name__))
-
         root_field, other_field, to_list = self._relation(entity, on)
         self._spec.includes.append(Include(
             entity=entity,
@@ -1049,8 +1046,6 @@ class Query(Generic[E]):
         """
         if self._spec.groups:
             raise BadRequestError("`nest_under` và `group_by` không dùng chung được.")
-        if any(inc.entity is entity for inc in self._spec.includes):
-            raise BadRequestError(_trung_bang(entity.__name__))
 
         child_field, parent_field, to_list = self._relation(entity, on)
         if to_list:
@@ -1065,6 +1060,7 @@ class Query(Generic[E]):
             child_field=child_field,
             parent_field=parent_field,
             fields=_fields_of(entity, fields, exclude, rename),
+            explicit=bool(fields or exclude or rename),
         )
         return self
 
@@ -1239,34 +1235,69 @@ class Query(Generic[E]):
                 f"`group_by(\"{inc.root_field}\")`, hoặc bỏ `include`."
             )
 
+    def _resolve_nest(self) -> tuple[Nest | None, list[Include]]:
+        """Gộp `include(X)` vào `nest_under(X)` khi cả hai nói về cùng một bảng.
+
+        Hai câu đó nói hai việc khác nhau: `include(X, fields=…)` khai X trả về
+        NHỮNG CỘT NÀO, `nest_under(X)` khai X nằm Ở ĐÂU. Đi cùng nhau thì cột
+        lấy từ `include`, và X chỉ xuất hiện MỘT lần — ở lớp ngoài, không lồng
+        thêm vào từng dòng bên trong nữa.
+        """
+        nest, includes = self._spec.nest, list(self._spec.includes)
+        if nest is None:
+            return None, includes
+
+        trung = [inc for inc in includes if inc.entity is nest.entity]
+        if not trung:
+            return nest, includes
+
+        inc = trung[-1]
+        if nest.explicit:
+            raise BadRequestError(
+                f"Cột của {nest.entity.__name__} đang khai ở HAI chỗ: "
+                f"`include({nest.entity.__name__}, fields=…)` và "
+                f"`nest_under({nest.entity.__name__}, fields=…)`. Bỏ một trong hai."
+            )
+        if inc.conditions or inc.orders:
+            raise BadRequestError(
+                f"`include({nest.entity.__name__}, where=…/order_by_…=…)` không có "
+                f"tác dụng khi {nest.entity.__name__} nằm ở lớp NGOÀI (`nest_under`): "
+                f"lớp ngoài lấy đúng bản ghi cha của từng nhóm, không lọc hay sắp "
+                f"được. Bỏ `where=`/`order_by_*=` đi."
+            )
+        return dataclasses.replace(nest, fields=inc.fields), [
+            other for other in includes if other is not inc
+        ]
+
     async def all(self) -> list[Any]:
         """Chạy và trả về mọi dòng khớp."""
         self._need_select()
         self._check_grouped()
-        if not self._spec.includes and self._spec.nest is None:
+        nest, includes = self._resolve_nest()
+        if not includes and nest is None:
             return await self._backend().run_query(self._spec)
 
         # Cột dùng để ghép phải có trong kết quả mới ghép được. Người dùng
         # không xin thì tự thêm rồi bỏ đi lúc trả về.
-        can = [inc.root_field for inc in self._spec.includes]
-        if self._spec.nest is not None:
-            can.append(self._spec.nest.child_field)
+        can = [inc.root_field for inc in includes]
+        if nest is not None:
+            can.append(nest.child_field)
         them = {f for f in can if self._spec.selects and f not in self._spec.selects}
         for name in them:
             self._spec.selects[name] = Column(self._spec.entity, name)
         try:
             rows = await self._backend().run_query(self._spec)
             rows = [_as_dict(self._spec.entity, row) for row in rows]
-            for inc in self._spec.includes:
+            for inc in includes:
                 await self._attach(inc, rows)
         finally:
             for name in them:
                 del self._spec.selects[name]
         # Gom theo cha TRƯỚC rồi mới bỏ cột ghép: chính nó là cột dùng để gom.
-        if self._spec.nest is not None:
-            grouped = await self._nest(self._spec.nest, rows)
+        if nest is not None:
+            grouped = await self._nest(nest, rows)
             for group in grouped:
-                for row in group[self._spec.nest.name]:
+                for row in group[nest.name]:
                     for name in them:
                         row.pop(name, None)
             return grouped
@@ -1397,16 +1428,6 @@ class Query(Generic[E]):
             f"<Query[{spec.entity.__name__}] joins={len(spec.joins)} "
             f"where={len(spec.conditions)} limit={spec.limit}>"
         )
-
-
-def _trung_bang(ten: str) -> str:
-    """Cùng một bảng vừa đưa ra ngoài vừa gắn vào trong — gần như luôn là nhầm."""
-    return (
-        f"`nest_under({ten})` đã đưa {ten} ra NGOÀI rồi, mà `include({ten})` lại gắn "
-        f"đúng {ten} đó vào TỪNG dòng bên trong — cùng một dữ liệu nằm hai chỗ. "
-        f"Bỏ `include({ten})` đi; chọn cột cho lớp ngoài bằng chính "
-        f'`nest_under({ten}, fields=["id", "name"])`.'
-    )
 
 
 def _as_dict(entity: type, row: Any) -> dict[str, Any]:

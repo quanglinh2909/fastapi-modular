@@ -928,17 +928,55 @@ async def test_cot_lop_ngoai_do_nest_under_quyet_dinh(kho):
     assert rows == [{"id": "c2", "name": "Kho hàng", "qevents": [{"id": "e4"}]}]
 
 
-async def test_include_va_nest_under_cung_mot_bang_bi_chan(kho):
-    """`nest_under(X)` + `include(X)` = cùng dữ liệu ở hai chỗ, gần như luôn là nhầm."""
+async def test_include_khai_cot_nest_under_khai_cho(kho):
+    """Hai câu nói hai việc: `include` = X trả những cột nào, `nest_under` = X nằm đâu.
+
+    Đi cùng nhau thì cột lấy từ `include`, và X chỉ hiện MỘT lần — ở lớp ngoài,
+    không lồng thêm vào từng dòng bên trong.
+    """
     events, _ = kho
-    for dung_truoc in (True, False):
-        q = events.query()
-        with pytest.raises(BadRequestError) as loi:
-            if dung_truoc:
-                q.include(QCamera).nest_under(QCamera)
-            else:
-                q.nest_under(QCamera).include(QCamera)
-        assert "nest_under(QCamera, fields=" in str(loi.value), "phải chỉ luôn cách sửa"
+    rows = await (
+        events.query()
+        .where(id="e4")
+        .select(exclude=["updated_at"], rename={"dd": "created_at"})
+        .include(QCamera, fields=["id", "name"])
+        .nest_under(QCamera)
+        .all()
+    )
+    assert rows == [{
+        "id": "c2", "name": "Kho hàng",
+        "qevents": [{"id": "e4", "camera_id": "c2", "label": "car", "score": 0.85,
+                     "reviewed_at": None, "dd": rows[0]["qevents"][0]["dd"]}],
+    }]
+    assert "qcamera" not in rows[0]["qevents"][0], "không được lồng camera vào trong nữa"
+
+
+async def test_thu_tu_goi_include_nest_under_khong_quan_trong(kho):
+    events, _ = kho
+    xuoi = await (events.query().where(id="e4").select("id")
+                  .include(QCamera, fields=["name"]).nest_under(QCamera).all())
+    nguoc = await (events.query().where(id="e4").select("id")
+                   .nest_under(QCamera).include(QCamera, fields=["name"]).all())
+    assert xuoi == nguoc == [{"name": "Kho hàng", "qevents": [{"id": "e4"}]}]
+
+
+async def test_khai_cot_o_ca_hai_cho_thi_bao_ro(kho):
+    events, _ = kho
+    with pytest.raises(BadRequestError) as loi:
+        await (events.query().select("id")
+               .include(QCamera, fields=["name"])
+               .nest_under(QCamera, fields=["id"]).all())
+    assert "HAI chỗ" in str(loi.value)
+
+
+async def test_include_where_khong_dung_duoc_khi_bang_do_ra_lop_ngoai(kho):
+    """Lớp ngoài lấy đúng bản ghi cha của từng nhóm — không có gì để lọc."""
+    events, _ = kho
+    with pytest.raises(BadRequestError) as loi:
+        await (events.query().select("id")
+               .include(QCamera, fields=["name"], where=F(QCamera).zone == "Tầng 1")
+               .nest_under(QCamera).all())
+    assert "lớp NGOÀI" in str(loi.value)
 
 
 async def test_nest_under_van_include_duoc_bang_KHAC(kho):

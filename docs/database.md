@@ -1531,37 +1531,51 @@ So với `cameras.query().include(Event, where=...)`:
 | `cameras.query().include(Event, where=…)` | **mọi** camera; camera không có sự kiện khớp thì `events: []` |
 | `events.query().where(…).nest_under(Camera)` | **chỉ** camera có sự kiện khớp |
 
-**Ai quyết định cột nào** — chỗ nhầm nhiều nhất khi mới dùng:
+**Ai quyết định cột nào** — mỗi câu một việc, không chồng nhau:
 
-| Lớp | Cột do ai quyết định |
+| Câu | Nói về |
 |---|---|
-| **ngoài** (Camera) | `nest_under(Camera, fields=…, exclude=…, rename=…)` |
-| **trong** (list Event) | `.select(...)` của chính câu truy vấn |
-| tên trường chứa danh sách | `nest_under(Camera, name="su_kien")`; mặc định là tên bảng gốc + `s` |
+| `.select(...)` | cột của **bảng gốc** — chính là các dòng nằm bên trong |
+| `.include(Camera, fields=…)` | cột của **Camera** — trả về những cột nào |
+| `.nest_under(Camera)` | **chỗ đứng** của Camera: ra lớp ngoài |
+| `.nest_under(Camera, name="…")` | tên trường chứa danh sách; mặc định tên bảng gốc + `s` |
+
+Hai câu cuối đi cùng nhau được, và đó là cách viết gọn nhất:
 
 ```python
 await (events.query()
-       .select(exclude=["reviewed_at"], rename={"dd": "created_at"})  # lớp TRONG
-       .nest_under(Camera, fields=["id", "name"])                     # lớp NGOÀI
+       .select(exclude=["reviewed_at"], rename={"dd": "created_at"})  # cột của Event
+       .include(Camera, fields=["id", "name"])                        # cột của Camera
+       .nest_under(Camera)                                            # Camera ra ngoài
        .all())
 # [{"id": "c1", "name": "demo",
 #   "events": [{"id": "e1", "label": "…", "camera_id": "c1", "dd": "…"}]}]
 ```
 
-**Đừng thêm `include(Camera)` khi đã có `nest_under(Camera)`.** Camera đã nằm
-lớp ngoài rồi; `include` sẽ gắn đúng camera đó vào TỪNG dòng bên trong nữa —
-cùng một dữ liệu ở hai chỗ. Khung chặn và nói luôn cách sửa:
+**Camera chỉ hiện MỘT lần — ở lớp ngoài.** Có `nest_under(Camera)` rồi thì
+`include(Camera)` không lồng camera vào từng dòng bên trong nữa; nó chỉ còn làm
+đúng một việc là khai cột. Gọi hai câu theo thứ tự nào cũng vậy.
+
+Không dùng `include` thì khai thẳng ở `nest_under` cũng được:
+
+```python
+.nest_under(Camera, fields=["id", "name"])
+```
+
+Khai ở **cả hai** chỗ thì báo lỗi, vì không có luật nào để đoán bên nào thắng:
 
 ```
-`nest_under(Camera)` đã đưa Camera ra NGOÀI rồi, mà `include(Camera)` lại gắn
-đúng Camera đó vào TỪNG dòng bên trong — cùng một dữ liệu nằm hai chỗ. Bỏ
-`include(Camera)` đi; chọn cột cho lớp ngoài bằng chính
-`nest_under(Camera, fields=["id", "name"])`.
+Cột của Camera đang khai ở HAI chỗ: `include(Camera, fields=…)` và
+`nest_under(Camera, fields=…)`. Bỏ một trong hai.
 ```
 
-`include` một bảng **khác** thì vẫn dùng chung được bình thường.
+`include(Camera, where=…, order_by_*=…)` cũng không dùng được khi Camera ra lớp
+ngoài: lớp ngoài lấy đúng bản ghi cha của từng nhóm, không có gì để lọc hay sắp.
 
-**`join(Camera)` cũng không cần** nếu bạn không lọc theo cột nào của Camera:
+`include` một bảng **khác** thì vẫn dùng chung bình thường — nó gắn vào từng
+dòng bên trong như mọi khi.
+
+**`join(Camera)` không cần** nếu bạn không lọc theo cột nào của Camera:
 `nest_under` tự lấy camera bằng một câu lệnh riêng.
 
 Ba điều dễ vấp:
