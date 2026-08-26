@@ -2,7 +2,8 @@
 
 | Tài liệu | Nội dung |
 |---|---|
-| [database.md](database.md) | Cài và dùng 4 backend: memory, SQLite, PostgreSQL, MongoDB |
+| [database.md](database.md) | SQL: memory, SQLite, PostgreSQL — entity, khoá ngoại, query builder, transaction |
+| [mongodb.md](mongodb.md) | MongoDB: truy vấn, dữ liệu lồng nhau, và những thứ bên đó không có |
 | [config.md](config.md) | Settings: thứ tự ưu tiên, **thêm biến của riêng bạn**, .env |
 | [architecture.md](architecture.md) | Cấu trúc module, DI container, đối chiếu với NestJS |
 | [migrations.md](migrations.md) | Alembic: sinh, chạy, lùi migration |

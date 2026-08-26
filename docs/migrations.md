@@ -1,7 +1,7 @@
 # Migration với Alembic
 
 Chỉ dùng cho **SQLite và PostgreSQL**. MongoDB không có schema cố định nên không
-cần migration — xem [database.md](database.md#mongodb-thì-sao).
+cần migration — xem [mongodb.md](mongodb.md#khai-báo-entity).
 
 ## Vì sao cần, khi đã có `schema_mode=sync`
 

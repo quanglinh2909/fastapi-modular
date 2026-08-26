@@ -153,7 +153,7 @@ thì dùng `fam env sqlite`.
 `fam env` ghi mỗi biến kèm giải thích, cho biết nó **bắt buộc hay tuỳ chọn** và
 **mặc định là gì** nếu xoá dòng đi. `fam info` cho biết hiện đang nối vào đâu.
 
-Chi tiết: [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md).
+Chi tiết: [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) (SQL) · [docs/mongodb.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mongodb.md) (MongoDB).
 
 ## Cấu hình của riêng bạn
 
@@ -420,7 +420,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              1017 test chạy không cần hạ tầng, 190 test nữa cần driver/server thật
+tests/              1017 test chạy không cần hạ tầng, 222 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 
@@ -455,7 +455,8 @@ MIT — xem [LICENSE](https://github.com/quanglinh2909/fastapi-modular/blob/main
 
 - [docs/architecture.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/architecture.md) — cấu trúc module, DI, đối chiếu NestJS
 - [docs/config.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/config.md) — Settings, thứ tự ưu tiên, thêm biến của riêng bạn
-- [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) — memory / SQLite / PostgreSQL / MongoDB
+- [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) — SQL: memory / SQLite / PostgreSQL — entity, khoá ngoại, query builder, transaction
+- [docs/mongodb.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mongodb.md) — MongoDB: truy vấn, dữ liệu lồng nhau, và những thứ bên đó không có (không JOIN, không transaction)
 - [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: sinh, chạy, lùi migration
 - [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — gateway WebSocket, phòng, Postman, Next.js
 - [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — đủ 5 kiểu exchange, hạn dùng (TTL), consumer nền, `.retry` / `.dlq`

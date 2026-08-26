@@ -160,8 +160,7 @@ fam env sqlite          # write .env only, install nothing
 fam info                # what it is connected to right now
 ```
 
-Details:
-[docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md).
+Details: [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) (SQL) · [docs/mongodb.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mongodb.md) (MongoDB).
 
 ## Your own configuration
 
@@ -422,7 +421,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              1017 tests that need no infrastructure, 190 more with real drivers/servers
+tests/              1017 tests that need no infrastructure, 222 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 
@@ -461,7 +460,8 @@ Written in Vietnamese, organised for reference rather than reading front to back
 
 - [docs/architecture.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/architecture.md) — module layout, DI, the NestJS comparison
 - [docs/config.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/config.md) — Settings, precedence, adding your own variables
-- [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) — memory / SQLite / PostgreSQL / MongoDB
+- [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) — SQL: memory / SQLite / PostgreSQL — entities, foreign keys, query builder, transactions
+- [docs/mongodb.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mongodb.md) — MongoDB: queries, nested data, and what is not there (no JOIN, no transactions)
 - [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: generate, run, roll back
 - [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — WebSocket gateway, rooms, Postman, Next.js
 - [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — all 5 exchange types, TTL, background consumers, `.retry` / `.dlq`

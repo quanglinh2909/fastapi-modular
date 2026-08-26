@@ -11,22 +11,21 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from enum import Enum
 from typing import Any, TypeVar
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 
 from fastapi_modular.core.container import _ENTITIES
-from fastapi_modular.core.exceptions import (
-    BadRequestError,
-    CapabilityNotSupportedError,
-    ConflictError,
-)
+from fastapi_modular.core.exceptions import BadRequestError, ConflictError
 from fastapi_modular.core.logging import get_logger
+from fastapi_modular.core.providers import CapabilityNotSupportedError
 from fastapi_modular.infrastructure.database.base import (
     DatabaseBackend,
     Filters,
     Match,
     active_filters,
+    coerce_value,
     default_of,
     from_document,
     mapping_for,
@@ -172,16 +171,84 @@ class MongoBackend(DatabaseBackend):
         return await self._collection(entity).count_documents(self._query(filters))
 
     # -------------------------------------------------------------- builder
+    def _check_supported(self, spec: Any) -> None:
+        """Chặn phần builder KHÔNG dịch được sang Mongo, nói luôn cách thay.
+
+        Mongo có `$lookup`, nhưng nó trả về MẢNG LỒNG chứ không phải dòng phẳng
+        như JOIN. Giả lập cho giống sẽ đúng ở demo và sai ở production, nên thà
+        nói không — và ở Mongo thì `include`/`nest_under` mới là cách đúng: cả
+        hai chạy bằng câu lệnh riêng rồi ghép trong Python, không cần `$lookup`.
+        """
+        from fastapi_modular.infrastructure.database.query import Aggregate
+
+        if spec.joins:
+            ten = spec.joins[0].entity.__name__
+            raise BadRequestError(
+                f"MongoDB không có JOIN. Cần dữ liệu của {ten} thì dùng "
+                f"`.include({ten})` (gắn vào kết quả) hoặc `.nest_under({ten})` "
+                f"(đảo chiều) — cả hai chạy được trên Mongo. Cần LỌC theo cột của "
+                f"{ten} thì phải đổi APP_DB__DRIVER sang postgres/sqlite."
+            )
+        if spec.groups or spec.havings or any(
+            isinstance(x, Aggregate) for x in spec.selects.values()
+        ):
+            raise BadRequestError(
+                "MongoDB chưa hỗ trợ `group_by`/`having`/hàm gộp trong builder. "
+                "Dùng aggregation pipeline của Mongo qua motor, hoặc đổi "
+                "APP_DB__DRIVER sang postgres/sqlite."
+            )
+        if spec.distinct:
+            raise BadRequestError(
+                "MongoDB chưa hỗ trợ `.distinct()` trong builder. Không có JOIN "
+                "thì dòng trùng cũng hiếm khi sinh ra."
+            )
+
+    def _find_args(self, spec: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """(điều kiện, projection) cho `find()`."""
+        loc = _and([_condition_to_filter(spec.entity, c) for c in spec.conditions])
+        if not spec.selects:
+            return loc, None
+
+        # Projection: xin đúng cột cần. `_id` thì Mongo luôn trả về nên tắt tay
+        # nếu không ai xin — không đổi kết quả, chỉ bớt dữ liệu truyền về.
+        chieu: dict[str, Any] = {}
+        for column in spec.selects.values():
+            chieu[_field(column.field)] = 1
+        if "_id" not in chieu:
+            chieu["_id"] = 0
+        return loc, chieu
+
     async def run_query(self, spec: Any) -> list[Any]:
-        raise BadRequestError(
-            "Query builder chưa hỗ trợ MongoDB. MongoDB có `$lookup` nhưng ngữ "
-            "nghĩa join lệch đủ nhiều để một bản giả lập sẽ đúng ở demo và sai ở "
-            "production, nên thà nói không. Dùng `repo.find(...)` cho truy vấn một "
-            "collection, hoặc đổi APP_DB__DRIVER sang postgres/sqlite."
-        )
+        self._check_supported(spec)
+        loc, chieu = self._find_args(spec)
+
+        cursor = self._collection(spec.entity).find(loc, chieu)
+        if spec.orders:
+            cursor = cursor.sort([
+                (_field(o.column.field), -1 if o.descending else 1) for o in spec.orders
+            ])
+        if spec.offset:
+            cursor = cursor.skip(spec.offset)
+        if spec.limit is not None:
+            cursor = cursor.limit(spec.limit)
+
+        docs = [doc async for doc in cursor]
+        if not spec.selects:
+            return [from_document(spec.entity, _from_mongo(d)) for d in docs]
+
+        fields = mapping_for(spec.entity).fields
+        return [
+            {
+                ten: coerce_value(fields[c.field], d.get(_field(c.field)))
+                for ten, c in spec.selects.items()
+            }
+            for d in docs
+        ]
 
     async def count_query(self, spec: Any) -> int:
-        return await self.run_query(spec)
+        self._check_supported(spec)
+        loc, _ = self._find_args(spec)
+        return int(await self._collection(spec.entity).count_documents(loc))
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
@@ -267,6 +334,101 @@ class MongoBackend(DatabaseBackend):
             await self._cascade(entity, ids)
         result = await self._collection(entity).delete_many(query)
         return int(result.deleted_count)
+
+
+# ------------------------------------------------------- dịch điều kiện
+def _field(name: str) -> str:
+    """Tên trường trong document. `id` của entity nằm ở `_id`."""
+    return "_id" if name == "id" else name
+
+
+def _value(value: Any) -> Any:
+    """Giá trị đem đi so sánh — Enum lưu bằng `.value` nên phải so bằng `.value`."""
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, (list, tuple)):
+        return [_value(v) for v in value]
+    return value
+
+
+def _like_to_regex(pattern: str) -> str:
+    """`LIKE` của SQL -> regex của Mongo.
+
+    Phải escape từng ký tự thường: `like(name, "a.b")` mà để nguyên thì `.`
+    thành ký tự đại diện của regex và khớp luôn "axb".
+    """
+    import re
+
+    out = ["^"]
+    for ch in pattern:
+        out.append(".*" if ch == "%" else "." if ch == "_" else re.escape(ch))
+    out.append("$")
+    return "".join(out)
+
+
+def _and(parts: list[dict[str, Any]]) -> dict[str, Any]:
+    if not parts:
+        return {}
+    return parts[0] if len(parts) == 1 else {"$and": parts}
+
+
+def _condition_to_filter(entity: type, condition: Any) -> dict[str, Any]:
+    """Cây điều kiện của builder -> filter document của Mongo.
+
+    Chỗ dễ sai nhất là NULL. Mongo coi "thiếu trường" và "null" là một giá trị
+    bình thường, nên `{n: {"$ne": 1}}` TRẢ VỀ cả document không có `n` — đo
+    được. SQL thì `NULL != 1` là không-đúng nên loại. Ở đây phải chèn thêm
+    `$ne: None` cho `ne`/`nin`/`NOT`, nếu không cùng một câu lệnh cho hai kết
+    quả khác nhau giữa postgres và mongo.
+    """
+    from fastapi_modular.infrastructure.database.query import Column, Compare, Group, Not
+
+    if isinstance(condition, Group):
+        parts = [_condition_to_filter(entity, p) for p in condition.parts]
+        return _and(parts) if condition.op == "and" else {"$or": parts}
+    if isinstance(condition, Not):
+        return {"$nor": [_condition_to_filter(entity, condition.part)]}
+    if not isinstance(condition, Compare):
+        raise BadRequestError(f"Điều kiện lạ: {condition!r}")
+
+    column = condition.column
+    if not isinstance(column, Column):
+        raise BadRequestError(f"MongoDB chưa hỗ trợ điều kiện trên {column!r}")
+    if column.entity is not entity:
+        raise BadRequestError(
+            f"MongoDB không có JOIN nên không lọc được theo {column!r}."
+        )
+
+    name, op, value = _field(column.field), condition.op, condition.value
+    if isinstance(value, Column):
+        # So cột với cột trong CÙNG một document: phải dùng $expr.
+        toan_tu = {"eq": "$eq", "ne": "$ne", "gt": "$gt", "gte": "$gte",
+                   "lt": "$lt", "lte": "$lte"}.get(op)
+        if toan_tu is None:
+            raise BadRequestError(f"MongoDB chưa hỗ trợ `{op}` giữa hai cột.")
+        return {"$expr": {toan_tu: [f"${name}", f"${_field(value.field)}"]}}
+
+    value = _value(value)
+    if op == "isnull":
+        return {name: None} if value else {name: {"$ne": None}}
+    if op == "eq":
+        return {name: value}
+    if op == "ne":
+        return {"$and": [{name: {"$ne": value}}, {name: {"$ne": None}}]}
+    if op in ("gt", "gte", "lt", "lte"):
+        return {name: {f"${op}": value}}
+    if op == "in":
+        return {name: {"$in": value}}
+    if op == "nin":
+        return {"$and": [{name: {"$nin": value}}, {name: {"$ne": None}}]}
+    if op == "between":
+        return {name: {"$gte": value[0], "$lte": value[1]}}
+    if op in ("like", "ilike"):
+        loc = {"$regex": _like_to_regex(value)}
+        if op == "ilike":
+            loc["$options"] = "i"
+        return {name: loc}
+    raise BadRequestError(f"Toán tử {op!r} chưa cài cho MongoDB")
 
 
 def _co_con(parent: type) -> bool:

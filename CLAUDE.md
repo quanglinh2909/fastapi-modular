@@ -69,13 +69,15 @@ Mỗi thay đổi code phải cập nhật tài liệu tương ứng **trong cù
 
 | Sửa ở đâu | Bắt buộc soi lại |
 |---|---|
-| trường trong `core/config.py` (`Settings` và các lớp con) | `docs/config.md` (bảng biến), và doc của nhóm đó: `database.md` / `websocket.md` / `rabbitmq.md` / `redis.md` / `mqtt.md` / `kafka.md` |
+| trường trong `core/config.py` (`Settings` và các lớp con) | `docs/config.md` (bảng biến), và doc của nhóm đó: `database.md` / `mongodb.md` / `websocket.md` / `rabbitmq.md` / `redis.md` / `mqtt.md` / `kafka.md` |
 | lệnh hoặc cờ trong `cli/` | bảng lệnh ở **`README.md` VÀ `README.vi.md`**, cây `cli/` ở cả hai README **và** `docs/architecture.md` |
 | tên file / lớp mà `cli/new_module.py` sinh ra | mục "Thêm module mới" ở `docs/architecture.md` |
 | `core/providers.py` hoặc `cli/new_provider.py` | `docs/providers.md` |
 | `core/rpc.py`, `*/responders.py`, `emit`/`send` | `docs/rpc.md`, và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
-| `infrastructure/database/base.py` (`@entity`, `reference`, khoá ngoại) | `docs/database.md` mục khai báo entity + khoá ngoại, và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
+| `infrastructure/database/base.py` (`@entity`, `reference`, khoá ngoại) | `docs/database.md` mục khai báo entity + khoá ngoại, **và `docs/mongodb.md`** (bên đó khung tự áp ràng buộc, khác hẳn), và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
 | `infrastructure/database/query.py` (builder) | `docs/database.md` mục truy vấn phức tạp, và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
+| `infrastructure/database/mongo.py` | `docs/mongodb.md` — **mọi** mục, nhất là bảng "cái KHÔNG dùng được" |
+| transaction (`repository.py`, `sql.py`, `memory.py`) | `docs/database.md` mục Transaction **và** `docs/mongodb.md` mục "Không có transaction" |
 | `core/scheduler.py`, `core/cron.py`, `core/jobs.py`, `core/workers.py`, `core/events.py`, `core/locks.py` | `docs/background.md`, bảng nhóm biến ở `docs/config.md`, bảng `groups` trong `tests/test_configure_env.py`, và bảng đối chiếu NestJS ở **cả hai README** |
 | API công khai (`fastapi_modular/__init__.py`, decorator, method) | doc của phần đó, và `docs/README.md` nếu đổi bảng đối chiếu |
 | thêm/bớt test | con số test ở **cả hai README** (cây thư mục) và `docs/architecture.md` (mục Chất lượng mã) |
@@ -120,8 +122,16 @@ link trong `docs/*.md` thì cứ để tương đối.
 ## Kiểm chứng trước khi nói là xong
 
 ```bash
-pytest -q                       # 1017 passed, 190 skipped (190 skip cần hạ tầng hoặc driver thật)
+pytest -q                       # 1017 passed, 222 skipped (222 skip cần hạ tầng hoặc driver thật)
 fam lint fastapi_modular src tests    # `fam lint` trần chỉ soi `src`, thiếu thư viện và test
+```
+
+Bộ test MongoDB (`tests/test_mongo_query.py`) cần một Mongo thật, và nó đối
+chiếu TỪNG CA với backend `memory` — đó là cách duy nhất bắt được chỗ Mongo hiểu
+khác SQL:
+
+```bash
+TEST_MONGO_DSN='mongodb://root:root@127.0.0.1:27017/?authSource=admin' pytest -q
 ```
 
 `tests/test_configure_env.py::test_bien_nhac_trong_docs_deu_con_that` đối chiếu

@@ -172,7 +172,7 @@ còn tệ hơn. Muốn chặn thì đọc `settings.check_production_safety()` r
 | ứng dụng | `APP_NAME`, `APP_VERSION`, `APP_ENV`, `APP_DEBUG`, `APP_HOST`, `APP_PORT`, `APP_API_PREFIX` | [bên dưới](#ứng-dụng) |
 | log | `APP_LOG__*` | [bên dưới](#log) |
 | CORS | `APP_CORS__*` | [bên dưới](#cors) |
-| database | `APP_DB__*` | [database.md](database.md) |
+| database | `APP_DB__*` | [database.md](database.md) · [mongodb.md](mongodb.md) |
 | WebSocket | `APP_WS__*` | [websocket.md](websocket.md) |
 | RabbitMQ | `APP_RABBITMQ__*` | [rabbitmq.md](rabbitmq.md) |
 | Redis | `APP_REDIS__*` | [redis.md](redis.md) |

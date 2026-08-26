@@ -1,4 +1,9 @@
-# Hướng dẫn database
+# Hướng dẫn database SQL
+
+SQLite, PostgreSQL, và backend `memory` (bản mô phỏng để `fam test` chạy
+không cần server). **Dùng MongoDB thì đọc [mongodb.md](mongodb.md)** — bên đó
+khác đủ nhiều để trộn chung một trang là hại người đọc: không có query
+builder, không có transaction, không có migration.
 
 ## Bạn đang cần làm gì?
 
@@ -25,13 +30,15 @@
 | "Chỉ lấy dòng có cột này để trống" | [`is_null`](#like-in-is-null-between--bảy-toán-tử-không-có-ký-hiệu) |
 | "Tìm theo tên gần đúng" | [`like` / `ilike`](#like-in-is-null-between--bảy-toán-tử-không-có-ký-hiệu) |
 | "Chọn database nào" | [Cách chọn driver](#cách-chọn-driver) |
+| "Tôi đang dùng MongoDB" | [mongodb.md](mongodb.md) |
 | "Thêm/xoá trường mà không mất dữ liệu" | [Tự chỉnh schema](#tự-chỉnh-schema-thêm--xoá-trường) |
 
 ---
 
-Template hỗ trợ **4 backend**: `memory` (mặc định), `sqlite`, `postgres`, `mongodb`.
-Tại một thời điểm chỉ **một** backend được dùng, và **chỉ thư viện của backend đó
-cần được cài** — chọn Postgres thì máy không cần `aiosqlite` hay `motor`.
+Template hỗ trợ **4 backend**: `memory` (mặc định), `sqlite`, `postgres`, và
+`mongodb` ([trang riêng](mongodb.md)). Tại một thời điểm chỉ **một** backend được
+dùng, và **chỉ thư viện của backend đó cần được cài** — chọn Postgres thì máy
+không cần `aiosqlite` hay `motor`.
 
 Điều này làm được vì mọi `import sqlalchemy` / `import motor` nằm bên trong hàm
 `create_backend()` ở [`fastapi_modular/infrastructure/database/factory.py`](../fastapi_modular/infrastructure/database/factory.py),
@@ -46,19 +53,22 @@ Chạy: fam install postgres
 
 ## Bảng tra nhanh
 
-| | memory | sqlite | postgres | mongodb |
+| | memory | sqlite | postgres | [mongodb](mongodb.md) |
 |---|---|---|---|---|
 | Lệnh cài | (không cần) | `fam install sqlite` | `fam install postgres` | `fam install mongodb` |
-| Thư viện | (không cần) | `fastapi-modular[sqlite]` | `fastapi-modular[postgres]` | `fastapi-modular[mongodb]` |
+| Gói | (không cần) | `fastapi-modular[sqlite]` | `fastapi-modular[postgres]` | `fastapi-modular[mongodb]` |
 | Thư viện | – | `sqlalchemy`, `aiosqlite` | `sqlalchemy`, `asyncpg` | `motor` |
 | Cần server riêng | không | không | có | có |
 | Dữ liệu sống qua restart | **không** | có | có | có |
 | Chạy nhiều worker | **không** | có | có | có |
-| Transaction mỗi request | không | có | có | không¹ |
+| Transaction | có (chụp ảnh) | có | có | **không**¹ |
+| Query builder (`repo.query()`) | có | có | có | trừ `join`, `group_by` |
+| Khoá ngoại do database áp | mô phỏng | có | có | **không**, khung tự dọn |
 | Dùng cho | test, demo | dev, app một máy | production | production |
 
-¹ MongoDB chỉ có transaction đa-document khi chạy replica set; template không bật.
-Mỗi thao tác ghi một document vẫn nguyên tử.
+¹ Mongo chỉ có transaction đa-document khi chạy replica set; template không bật.
+Mỗi thao tác ghi một document vẫn nguyên tử. Những ô khác biệt ở trên là lý do
+MongoDB có [trang hướng dẫn riêng](mongodb.md) — đọc trước khi chọn nó.
 
 ---
 
@@ -360,56 +370,8 @@ docker exec ss-pg psql -U postgres -d app -c '\dt'
 
 ## 4. MongoDB
 
-```bash
-fam install mongodb
-```
-
-Biến sinh ra trong `.env`:
-
-```dotenv
-APP_DB__DRIVER=mongodb
-APP_DB__DSN=mongodb://localhost:27017
-APP_DB__NAME=app
-```
-
-| Biến | Bắt buộc | Mặc định | Ý nghĩa |
-|---|---|---|---|
-| `APP_DB__DRIVER` | **có** | `memory` | phải là `mongodb` |
-| `APP_DB__DSN` | **có** | `(trống)` → `mongodb://localhost:27017` | `mongodb://HOST:CỔNG`, hoặc `mongodb+srv://USER:PASS@CỤM` cho Atlas |
-| `APP_DB__NAME` | không | `app` | tên database bên trong Mongo. Collection lấy theo entity: `users`, `devices` |
-
-### Dựng server nhanh bằng Docker
-
-```bash
-docker run -d --name ss-mongo -p 27017:27017 mongo:7
-```
-
-### Chạy
-
-```bash
-fam dev
-curl localhost:8000/api/health/ready
-# {"status":"ready","driver":"mongodb","database":true}
-```
-
-Xem collection:
-
-```bash
-docker exec ss-mongo mongosh --quiet app --eval 'db.getCollectionNames()'
-```
-
-### Khác biệt cần biết
-
-- Trường `id` của entity được lưu vào `_id` của document, nên không tốn thêm index.
-- `APP_DB__SCHEMA_MODE` không có tác dụng: Mongo không có schema cố định.
-- Không có transaction đa-document (cần replica set). Cụ thể: xoá user kèm
-  `?cascade=true` sẽ xoá thiết bị trước rồi mới xoá user — nếu tiến trình chết
-  giữa chừng, thiết bị đã mất mà user vẫn còn. Với SQL thì cả hai cùng rollback.
-- Chưa có index nào ngoài `_id`. Khi dữ liệu lớn, tự tạo index cho trường hay lọc:
-  ```bash
-  docker exec ss-mongo mongosh app --eval \
-    'db.users.createIndex({email: 1}); db.devices.createIndex({owner_id: 1})'
-  ```
+Có [trang riêng: mongodb.md](mongodb.md) — cài đặt, bộ lệnh dùng được,
+và những thứ bên đó KHÔNG có (query builder, transaction, migration).
 
 ---
 
@@ -492,13 +454,8 @@ Giống hệt lý do TypeORM khuyến cáo không bật `synchronize` ở prod:
 Ở prod: `APP_DB__SCHEMA_MODE=off` và dùng Alembic. Khởi động với `env=prod` mà
 schema_mode khác `off` sẽ bị log cảnh báo `config.unsafe_for_production`.
 
-### MongoDB thì sao
-
-Mongo không có schema cố định nên **không cần migrate gì cả**:
-
-- **Thêm trường**: document cũ thiếu khoá đó, đọc ra sẽ dùng default của entity.
-- **Xoá trường**: document cũ vẫn còn khoá thừa dưới database, đọc ra thì bị bỏ qua.
-  Muốn dọn thật thì tự chạy `db.cameras.updateMany({}, {$unset: {port: ""}})`.
+MongoDB không có schema cố định nên không cần migrate gì cả — xem
+[mongodb.md](mongodb.md#khai-báo-entity).
 
 ---
 
@@ -858,15 +815,11 @@ nhưng nó **chỉ nằm đó làm cảnh**. Đo được: xoá cha xong con v�
 không lỗi, không cảnh báo, chỉ là dữ liệu mồ côi. Khung bật sẵn cho **mọi
 connection** trong pool — kiểm bằng `PRAGMA foreign_keys` phải trả về `1`.
 
-**MongoDB không có khoá ngoại.** Khung tự dọn bằng nhiều lệnh nối nhau, nên nó
-**không nguyên tử**: tiến trình chết giữa chừng thì còn lại cha đã xoá mà con
-chưa dọn. Cần bảo đảm thật thì dùng postgres.
-
 | Backend | Ai áp ràng buộc |
 |---|---|
 | `postgres`, `sqlite` | **chính database**, trong cùng transaction |
 | `memory` | khung, để `fam test` cho cùng kết quả |
-| `mongodb` | khung, **không nguyên tử** — xem trên |
+| [`mongodb`](mongodb.md#khoá-ngoại-khung-tự-làm-không-phải-database) | khung, **không nguyên tử** |
 
 **Xoá nhiều cha một lúc cũng áp ràng buộc.** `delete_where(...)` chạy đúng luật
 như `delete(id)`, không phải đường tắt bỏ qua khoá ngoại.
@@ -1556,16 +1509,11 @@ await cameras.query().join(Event).distinct().all()
 bỏ qua mọi dòng có `reviewed_at` NULL. Backend `memory` giữ y hệt luật này, nên
 `fam test` và production cho cùng kết quả.
 
-**MongoDB chưa dùng được.** Nó ném lỗi nói rõ vì sao: Mongo có `$lookup` nhưng
-ngữ nghĩa join lệch đủ nhiều để một bản giả lập sẽ đúng ở demo và sai ở
-production. Dùng `find()` cho truy vấn một collection, hoặc đổi sang
-postgres/sqlite.
-
 | Backend | Query builder |
 |---|---|
 | `postgres`, `sqlite` | đầy đủ, sinh SQL thật |
 | `memory` | đầy đủ, tính bằng Python — để `fam test` chạy được, cỡ O(n×m) nên chỉ hợp với dữ liệu test |
-| `mongodb` | **không** |
+| [`mongodb`](mongodb.md#truy-vấn-lớnbé-like-in-null) | được, **trừ** `join`, `group_by`/`having`, `distinct` |
 
 ### Tra cứu
 
@@ -1919,9 +1867,9 @@ lỗi — nó chụp ảnh dữ liệu rồi trả lại. Không có phần này
 giữa chừng thì không được ghi gì" sẽ đỏ ở `fam test` trong khi production chạy
 đúng.
 
-**MongoDB một node thì `transaction()` ném lỗi**, không giả vờ. Mongo chỉ có
-transaction đa-document khi chạy replica set. Cách khác: gộp thứ cần ghi cùng
-lúc vào **một** document — Mongo bảo đảm nguyên tử ở mức một document.
+**MongoDB một node thì `transaction()` ném lỗi**, không giả vờ — xem
+[mongodb.md](mongodb.md#không-có-transaction-và-làm-gì-thay-thế) để biết dùng gì
+thay.
 
 **Kiểu lỗi khác nhau giữa hai backend.** Vi phạm khoá ngoại: `memory` ném
 `ConflictError`, `sqlite`/`postgres` ném `IntegrityError` của SQLAlchemy. Ở
@@ -1938,7 +1886,7 @@ là các request khác nhận `database is locked`.
 | worker / job / cron / script | **không** | `async with db.transaction():` |
 | trong `transaction()` khác | có | khối lồng thành `SAVEPOINT` |
 | `memory` | có (chụp ảnh) | như trên |
-| `mongodb` | **không có** | gộp vào một document |
+| [`mongodb`](mongodb.md#không-có-transaction-và-làm-gì-thay-thế) | **không có** | gộp vào một document |
 
 ---
 
@@ -1950,7 +1898,7 @@ chạy đúng bộ test đó trên database thật:
 ```bash
 TEST_SQLITE=1 fam test
 TEST_POSTGRES_DSN='postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/app' fam test
-TEST_MONGO_DSN='mongodb://127.0.0.1:27017' fam test
+TEST_MONGO_DSN='mongodb://127.0.0.1:27017' fam test      # xem mongodb.md
 ```
 
 Driver nào chưa cài thư viện hoặc chưa có server sẽ **SKIP** chứ không FAIL, nên
