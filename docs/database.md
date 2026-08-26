@@ -19,6 +19,7 @@
 | "Giữ cả camera chưa có sự kiện nào" | [Bốn kiểu nối](#bốn-kiểu-nối-bốn-method) |
 | "**Trả về camera kèm danh sách sự kiện của nó**" | [Dữ liệu lồng nhau](#dữ-liệu-lồng-nhau-include) |
 | "**Trả về sự kiện kèm object camera**" | [Dữ liệu lồng nhau](#dữ-liệu-lồng-nhau-include) |
+| "**Lọc theo sự kiện nhưng trả về camera ở ngoài**" | [`nest_under`](#đảo-chiều-nest_under) |
 | "**Bảng nhiều cột quá, tôi muốn bỏ bớt một cột**" | [`exclude`](#chọn-cột-trả-về) |
 | "Chọn database nào" | [Cách chọn driver](#cách-chọn-driver) |
 | "Thêm/xoá trường mà không mất dữ liệu" | [Tự chỉnh schema](#tự-chỉnh-schema-thêm--xoá-trường) |
@@ -1318,6 +1319,19 @@ await (cameras.query()
        .all())
 ```
 
+Chỗ nào nhận tên cột thì nhận cả **cột thật**, y như `join` và `where`:
+
+```python
+await (cameras.query()
+       .fields(Camera.id, Camera.name)
+       .include(Event, fields=[Event.id, Event.label])
+       .all())
+```
+
+Đưa nhầm cột của bảng khác (`include(Event, fields=[Camera.name])`) thì báo lỗi
+ngay — gần như luôn là gõ nhầm, mà để lọt thì kết quả chỉ thiếu trường một cách
+khó hiểu.
+
 Nhiều cột quá mà chỉ muốn bỏ vài cái thì đi từ chiều ngược lại:
 
 ```python
@@ -1330,6 +1344,40 @@ await cameras.query().include(Event, exclude=["created_at"]).all()  # bảng l�
 
 Cột dùng để ghép (`camera_id`) được tự thêm vào câu lệnh nếu bạn không xin, rồi
 **bỏ khỏi kết quả** — bạn không phải nhớ nó.
+
+### Đảo chiều (`nest_under`)
+
+`include` đi từ bảng ngoài vào. Khi **điều kiện nằm bên bảng con** mà bạn vẫn
+muốn cha ở ngoài thì đi ngược lại:
+
+```python
+rows = await (events.query()
+              .where(Event.score >= 0.9)          # lọc theo SỰ KIỆN
+              .nest_under(Camera)                 # nhưng trả về CAMERA
+              .all())
+# [{"id": "c1", "name": "Cổng chính", ..., "events": [{...}, {...}]}]
+```
+
+So với `cameras.query().include(Event, where=...)`:
+
+| | Trả về |
+|---|---|
+| `cameras.query().include(Event, where=…)` | **mọi** camera; camera không có sự kiện khớp thì `events: []` |
+| `events.query().where(…).nest_under(Camera)` | **chỉ** camera có sự kiện khớp |
+
+`.fields(...)` chọn cột của bảng gốc (nằm trong), `fields=`/`exclude=` chọn cột
+của bảng cha (nằm ngoài). Tên trường mặc định là tên bảng gốc viết thường +
+`s`, đổi bằng `name=`.
+
+Ba điều dễ vấp:
+
+- **`limit` vẫn đếm theo bảng GỐC.** `.limit(20).nest_under(Camera)` là 20 sự
+  kiện gom lại thành vài camera, không phải 20 camera.
+- **Dòng có khoá ngoại NULL bị bỏ** — nó không thuộc cha nào để gom vào.
+- Thứ tự camera theo sự kiện đầu tiên của nó, nên `.order_by(...)` của bảng gốc
+  vẫn có tác dụng.
+
+Cũng đúng một câu lệnh nữa, y như `include`.
 
 ### Lọc và sắp bảng được lấy kèm
 
@@ -1416,6 +1464,7 @@ postgres/sqlite.
 | `.select("id", ten_khac=X.cot)` | đổi kiểu trả về sang `list[dict]` |
 | `.fields("id", "name")` · `.exclude("cot")` | chọn cột bảng gốc; cũng thành `list[dict]` |
 | `.include(Entity, name=…, fields=…, exclude=…, where=…, order_by=…)` | gắn dữ liệu lồng nhau |
+| `.nest_under(Entity, name=…, fields=…, exclude=…)` | đảo chiều: cha ra ngoài, bảng gốc vào trong |
 | `.select(so=count(), tb=avg(X.cot))` | hàm gộp, phải đặt tên |
 
 | Cột | |

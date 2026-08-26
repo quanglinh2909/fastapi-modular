@@ -456,21 +456,51 @@ class Include:
     orders: tuple[Order, ...] = ()
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class Nest:
+    """Đảo chiều kết quả: bảng CHA ra ngoài, các dòng của bảng gốc vào trong."""
+
+    entity: type                     # bảng cha
+    name: str                        # tên trường chứa danh sách con
+    child_field: str                 # cột khoá ngoại bên bảng gốc
+    parent_field: str                # cột bên bảng cha
+    fields: tuple[str, ...] = ()
+
+
 # Số id nhét vào một câu `WHERE ... IN (...)`. SQLite mặc định chỉ cho 999 tham
 # số một câu lệnh, nên phải chia mẻ chứ không thể ném cả nghìn id vào một lần.
 IN_CHUNK = 500
 
 
-def _fields_of(entity: type, fields: Sequence[str], exclude: Sequence[str]) -> tuple[str, ...]:
+def _field_name(entity: type, item: Any) -> str:
+    """`"name"` hoặc `Camera.name` hoặc `F(Camera).name` -> `"name"`, có kiểm tên.
+
+    Cột của bảng KHÁC bị chặn ngay: `include(Event, fields=[Camera.name])` gần
+    như luôn là gõ nhầm, và nếu để lọt thì kết quả chỉ thiếu trường một cách
+    khó hiểu.
+    """
+    known = mapping_for(entity).fields
+    if not isinstance(item, str):
+        column = column_of(item)
+        if column.entity is not entity:
+            raise BadRequestError(
+                f"{column!r} là cột của {column.entity.__name__}, không phải "
+                f"{entity.__name__}."
+            )
+        return column.field
+    if item not in known:
+        raise BadRequestError(
+            f"{entity.__name__} không có trường {item!r}. Có: {', '.join(sorted(known))}"
+        )
+    return item
+
+
+def _fields_of(entity: type, fields: Sequence[Any], exclude: Sequence[Any]) -> tuple[str, ...]:
     """Chốt danh sách cột sẽ trả về, và bắt tên sai NGAY chứ không im lặng bỏ qua."""
     known = mapping_for(entity).fields
-    for name in (*fields, *exclude):
-        if name not in known:
-            raise BadRequestError(
-                f"{entity.__name__} không có trường {name!r}. Có: {', '.join(sorted(known))}"
-            )
-    chosen = tuple(fields) if fields else tuple(known)
-    return tuple(f for f in chosen if f not in set(exclude))
+    chosen = tuple(_field_name(entity, f) for f in fields) or tuple(known)
+    bo = {_field_name(entity, f) for f in exclude}
+    return tuple(f for f in chosen if f not in bo)
 
 
 # ------------------------------------------------------------------- spec
@@ -494,6 +524,7 @@ class QuerySpec:
     groups: list[Column] = dataclasses.field(default_factory=list)
     havings: list[Condition] = dataclasses.field(default_factory=list)
     includes: list[Include] = dataclasses.field(default_factory=list)
+    nest: Nest | None = None
 
     def entity_of(self, alias: str) -> type:
         if alias == _alias_of(self.entity):
@@ -769,8 +800,8 @@ class Query(Generic[E]):
         *,
         name: str = "",
         on: Any = _INFER,
-        fields: Sequence[str] = (),
-        exclude: Sequence[str] = (),
+        fields: Sequence[Any] = (),
+        exclude: Sequence[Any] = (),
         where: Any = None,
         order_by: Any = None,
     ) -> Query[E]:
@@ -791,8 +822,9 @@ class Query(Generic[E]):
         Tên trường mặc định là tên class viết thường, thêm `s` nếu là list
         (`events`, `camera`). Đổi bằng `name="su_kien"`.
 
-        `fields=` / `exclude=` chọn cột của bảng ĐƯỢC LẤY KÈM. `where=` và
-        `order_by=` lọc và sắp bảng đó.
+        `fields=` / `exclude=` chọn cột của bảng ĐƯỢC LẤY KÈM — nhận cả chuỗi
+        lẫn cột thật (`fields=[Event.id, Event.label]`). `where=` và `order_by=`
+        lọc và sắp bảng đó.
 
         **Có `include` thì kết quả là `list[dict]`, không phải `list[Entity]`** —
         entity là dataclass `slots=True`, không gắn thêm trường vào được.
@@ -819,10 +851,12 @@ class Query(Generic[E]):
         """(cột bảng gốc, cột bảng kia, có phải một-nhiều không)."""
         if on is not _INFER:
             column = column_of(on)
-            if column.entity is entity:
-                return "id", column.field, True
+            # Bảng gốc xét trước: khi một bảng trỏ về CHÍNH NÓ (`parent_id`),
+            # cả hai nhánh đều đúng kiểu, và cột đó là cột của bảng gốc.
             if column.entity is self._spec.entity:
                 return column.field, "id", False
+            if column.entity is entity:
+                return "id", column.field, True
             raise BadRequestError(
                 f"`on={column!r}` không thuộc {entity.__name__} lẫn "
                 f"{self._spec.entity.__name__}."
@@ -848,16 +882,70 @@ class Query(Generic[E]):
             f"Chọn một bằng `on=...`."
         )
 
-    def fields(self, *names: str) -> Query[E]:
+    def nest_under(
+        self,
+        entity: type,
+        *,
+        name: str = "",
+        on: Any = _INFER,
+        fields: Sequence[Any] = (),
+        exclude: Sequence[Any] = (),
+    ) -> Query[E]:
+        """Đảo chiều kết quả: bảng CHA ra ngoài, dòng của bảng gốc gom vào trong.
+
+        Lọc theo cột của sự kiện, nhưng nhận về camera:
+
+            rows = await (events.query()
+                          .where(Event.score >= 0.9)
+                          .nest_under(Camera)
+                          .all())
+            # [{"id": "c1", "name": "Cổng chính", ..., "events": [{...}, {...}]}]
+
+        Khác `cameras.query().include(Event)` ở chỗ **điều kiện nằm bên sự
+        kiện**: đây là "những camera CÓ sự kiện điểm cao, kèm đúng các sự kiện
+        đó", còn kia là "mọi camera, kèm sự kiện của nó".
+
+        `.fields(...)` chọn cột của bảng gốc (nằm trong), `fields=`/`exclude=`
+        chọn cột của bảng cha (nằm ngoài).
+
+        Ba điều dễ vấp, ghi luôn ở đây:
+
+        - **`limit` vẫn đếm theo bảng GỐC.** `.limit(20).nest_under(Camera)` là
+          20 sự kiện gom lại thành vài camera, không phải 20 camera.
+        - **Dòng có khoá ngoại NULL bị bỏ** — nó không thuộc cha nào để gom vào.
+        - Thứ tự camera theo thứ tự sự kiện đầu tiên của nó trong kết quả, nên
+          `.order_by(...)` của bảng gốc vẫn có tác dụng.
+        """
+        if self._spec.groups:
+            raise BadRequestError("`nest_under` và `group_by` không dùng chung được.")
+
+        child_field, parent_field, to_list = self._relation(entity, on)
+        if to_list:
+            raise BadRequestError(
+                f"`nest_under` đi từ bảng CON lên bảng CHA, mà khoá ngoại lại nằm bên "
+                f"{entity.__name__} chứ không phải {self._spec.entity.__name__}. "
+                f"Có lẽ bạn muốn `.include({entity.__name__})`."
+            )
+        self._spec.nest = Nest(
+            entity=entity,
+            name=name or f"{self._spec.entity.__name__.lower()}s",
+            child_field=child_field,
+            parent_field=parent_field,
+            fields=_fields_of(entity, fields, exclude),
+        )
+        return self
+
+    def fields(self, *names: Any) -> Query[E]:
         """Chỉ trả về những cột này của bảng gốc. Kết quả thành `list[dict]`.
 
             await repo.query().fields("id", "name").all()
+            await repo.query().fields(Camera.id, Camera.name).all()   # y hệt
         """
         for name in _fields_of(self._spec.entity, names, ()):
             self._spec.selects[name] = Column(self._spec.entity, name)
         return self
 
-    def exclude(self, *names: str) -> Query[E]:
+    def exclude(self, *names: Any) -> Query[E]:
         """Trả về mọi cột TRỪ những cột này — cho bảng nhiều cột mà chỉ thừa vài cái.
 
             await repo.query().exclude("raw_payload").all()
@@ -961,15 +1049,15 @@ class Query(Generic[E]):
     async def all(self) -> list[Any]:
         """Chạy và trả về mọi dòng khớp."""
         self._need_select()
-        if not self._spec.includes:
+        if not self._spec.includes and self._spec.nest is None:
             return await self._backend().run_query(self._spec)
 
         # Cột dùng để ghép phải có trong kết quả mới ghép được. Người dùng
         # không xin thì tự thêm rồi bỏ đi lúc trả về.
-        them = {
-            inc.root_field for inc in self._spec.includes
-            if self._spec.selects and inc.root_field not in self._spec.selects
-        }
+        can = [inc.root_field for inc in self._spec.includes]
+        if self._spec.nest is not None:
+            can.append(self._spec.nest.child_field)
+        them = {f for f in can if self._spec.selects and f not in self._spec.selects}
         for name in them:
             self._spec.selects[name] = Column(self._spec.entity, name)
         try:
@@ -980,10 +1068,57 @@ class Query(Generic[E]):
         finally:
             for name in them:
                 del self._spec.selects[name]
+        # Gom theo cha TRƯỚC rồi mới bỏ cột ghép: chính nó là cột dùng để gom.
+        if self._spec.nest is not None:
+            grouped = await self._nest(self._spec.nest, rows)
+            for group in grouped:
+                for row in group[self._spec.nest.name]:
+                    for name in them:
+                        row.pop(name, None)
+            return grouped
+
         for row in rows:
             for name in them:
                 row.pop(name, None)
         return rows
+
+    async def _nest(self, nest: Nest, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Gom các dòng theo cha, rồi lấy cha về bằng đúng MỘT câu lệnh nữa."""
+        gom: dict[Any, list[dict[str, Any]]] = {}
+        for row in rows:
+            key = row.get(nest.child_field)
+            if key is None:
+                # Không thuộc cha nào. Vòng dưới cũng loại nó (không tra ra cha),
+                # nhưng chặn ở đây thì không nhét NULL vào câu `IN (...)`.
+                continue
+            gom.setdefault(key, []).append(row)
+
+        cha = {
+            getattr(obj, nest.parent_field, None): obj
+            for obj in await self._fetch_in(nest.entity, nest.parent_field, list(gom))
+        }
+        out: list[dict[str, Any]] = []
+        for key, con in gom.items():
+            obj = cha.get(key)
+            if obj is None:
+                continue
+            out.append({
+                **{name: getattr(obj, name, None) for name in nest.fields},
+                nest.name: con,
+            })
+        return out
+
+    async def _fetch_in(self, entity: type, field: str, keys: list[Any]) -> list[Any]:
+        """`SELECT ... WHERE field IN (keys)`, chia mẻ để không vượt giới hạn tham số."""
+        found: list[Any] = []
+        keys = sorted(keys, key=str)
+        for i in range(0, len(keys), IN_CHUNK):
+            child: Query[Any] = Query(entity, self._db)
+            child._spec.conditions = [
+                Compare(Column(entity, field), "in", keys[i:i + IN_CHUNK])
+            ]
+            found.extend(await child._backend().run_query(child._spec))
+        return found
 
     async def _attach(self, inc: Include, rows: list[dict[str, Any]]) -> None:
         """Một câu lệnh cho cả mẻ: `WHERE khoá IN (...)`, rồi ghép bằng dict."""
@@ -1229,6 +1364,7 @@ __all__ = [
     "F",
     "Include",
     "Join",
+    "Nest",
     "Order",
     "Query",
     "QuerySpec",

@@ -31,6 +31,7 @@ fam init && fam dev
 | `.groupBy().having()` (TypeORM) | `.group_by(Event.camera_id).select(n=count()).having(count() > 5)` |
 | `.leftJoin()` / `.orWhere()` (TypeORM) | `.left_join(X)` / `.or_where(…)` — mỗi kiểu nối một method |
 | `find({relations: {events: true}})` (TypeORM) | `.include(Event)` — dữ liệu lồng nhau, thêm ĐÚNG một câu lệnh |
+| *(TypeORM không có)* | `.nest_under(Camera)` — lọc theo sự kiện, nhận về camera kèm sự kiện bên trong |
 | `@ManyToOne(…, {onDelete: 'CASCADE'})` (TypeORM) | `field(metadata=reference(Camera, on_delete="CASCADE"))` — khoá ngoại THẬT dưới database |
 | `@UseGuards()` | `guards=[...]` ở controller hoặc từng route |
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
@@ -415,7 +416,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              981 test chạy không cần hạ tầng, 153 test nữa cần driver/server thật
+tests/              994 test chạy không cần hạ tầng, 166 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 
