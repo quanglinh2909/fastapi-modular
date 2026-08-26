@@ -117,9 +117,15 @@ class DatabaseSettings(BaseModel):
     """SQLite fsync tới mức nào. Đi liền với `sqlite_journal_mode`.
 
     - "FULL"   : bền vững tuyệt đối, và chậm 19 lần (xem bảng trên).
-    - "NORMAL" : **cùng WAL thì mất điện KHÔNG hỏng file**, chỉ có thể mất vài
-                 giao dịch cuối. Đây là đánh đổi mà mọi khung web đều chọn.
-    - "OFF"    : mất điện có thể hỏng file. Chỉ dùng cho dữ liệu vứt được.
+    - "NORMAL" : **mất điện KHÔNG hỏng file** — đo 100 lần cắt/đè WAL, 0 lần
+                 hỏng. Cái mất là giao dịch cuối, và có thể mất nhiều hơn ta
+                 tưởng: NORMAL chỉ fsync WAL lúc checkpoint, mà checkpoint chỉ
+                 chạy khi WAL đầy ~4 MB.
+    - "OFF"    : **đừng dùng.** Nó không nhanh hơn NORMAL (1.394 so với 1.376
+                 ghi/s) mà lại hỏng file 1 lần trong 80 phép thử mất điện.
+
+    `kill -9` thì cả ba mức đều an toàn tuyệt đối (0/75): giết tiến trình không
+    đụng tới page cache của nhân. Xem docs/database.md.
     """
 
     sqlite_busy_timeout_seconds: float = 5.0

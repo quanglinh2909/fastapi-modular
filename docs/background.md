@@ -295,6 +295,10 @@ SQLite chịu được worker ghi liên tục, nhưng có hai điều phải bi�
 - **Tổng thông lượng ghi không tăng theo số worker.** SQLite chỉ có một người
   ghi tại một thời điểm; 12 tiến trình cùng ghi cũng chỉ bằng 1. Đo được 0 lỗi
   ở mọi mức thử — người thứ hai chờ chứ không lỗi — nhưng cũng không nhanh hơn.
+- **App bị `kill -9` không làm hỏng file, cũng không mất dòng nào đã ghi** (đo
+  75 lần giết giữa lúc worker đang ghi). Mất điện thì file vẫn không hỏng nhưng
+  có thể mất các sự kiện gần nhất — nếu camera không được phép mất sự kiện nào
+  thì đặt `APP_DB__SQLITE_SYNCHRONOUS=FULL` và chấp nhận 95 ghi/s.
 
 Chi tiết, bảng số và ngưỡng nên chuyển sang PostgreSQL: [database.md](database.md#tốc-độ-ghi-và-vì-sao-mặc-định-ở-đây-khác-sqlite-gốc).
 

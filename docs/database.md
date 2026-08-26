@@ -158,6 +158,96 @@ Hai điều rút ra:
    `busy_timeout`**. Nó không phải chuyện tranh chấp bình thường — nó là dấu
    hiệu có ai đó mở transaction rồi làm việc khác trong lúc còn giữ.
 
+### Tắt đột ngột: `kill -9` và rút điện
+
+Hai chuyện khác hẳn nhau, và trộn chúng lại là nguồn của gần hết những lời đồn
+về "SQLite hỏng file".
+
+**`kill -9` không nguy hiểm.** Giết tiến trình không đụng tới page cache của
+nhân: dữ liệu đã ghi vẫn được nhân đẩy xuống đĩa như thường. Đo 75 lần giết
+giữa lúc đang ghi liên tục, ba cấu hình khác nhau:
+
+| Cấu hình | File hỏng | Mất giao dịch đã commit |
+|---|---|---|
+| WAL + NORMAL *(mặc định)* | **0/25** | **0/25** |
+| DELETE + FULL | 0/25 | 0/25 |
+| WAL + OFF | 0/25 | 0/25 |
+
+**Rút điện thì khác**: mất luôn page cache, và lần ghi đang dở bị đứt giữa
+chừng. Mô phỏng bằng cách làm đúng hai thứ đó với file trên đĩa — **cắt cụt**
+WAL ở một chỗ ngẫu nhiên (phần chưa kịp xuống đĩa), và **đè byte rỗng** lên
+đuôi WAL (lần ghi đứt nửa chừng):
+
+| Cấu hình | Cắt cụt WAL | Đè rác đuôi WAL | Mất dữ liệu |
+|---|---|---|---|
+| **WAL + NORMAL** *(mặc định)* | **0/80 hỏng** | **0/20 hỏng** | 47/80 |
+| DELETE + FULL | 0/20 hỏng | 1/20 hỏng | 0/20 |
+| WAL + OFF | 1/80 hỏng | 0/20 hỏng | 53/80 |
+
+Ba điều rút ra:
+
+1. **Mặc định của khung không làm hỏng file** — 0 lần trong 100 phép thử.
+   SQLite có checksum cho từng khung WAL, nên khung dở dang bị bỏ qua thay vì
+   được đọc như thật.
+2. **Nó CÓ mất giao dịch cuối**, và đây là chỗ dễ đánh giá thấp: không phải
+   "mất một hai giao dịch". `synchronous=NORMAL` chỉ fsync WAL lúc
+   *checkpoint*, mà SQLite chỉ checkpoint khi WAL đầy ~4 MB. Khoảng đang treo
+   có thể là **hàng nghìn dòng** — trong phép đo có lần chỉ còn 93 trên 200
+   dòng đã commit.
+3. `synchronous=OFF` hỏng file **1 lần trong 80**, còn NORMAL thì 0. Một lần
+   là mẫu nhỏ, không đủ để nói "OFF hỏng gấp bao nhiêu" — nhưng đủ để thấy nó
+   ở phía sai của ranh giới, trong khi **không nhanh hơn NORMAL** (1.394 so với
+   1.376 ghi/s). Không có lý do gì để chọn nó.
+
+> Phép mô phỏng này **khắc nghiệt hơn thực tế**: nó cắt WAL ở một điểm bất kỳ
+> từ 0% tới 100%, còn mất điện thật thì nhân đã kịp đẩy phần lớn WAL xuống đĩa
+> (mặc định Linux gột page cache mỗi ~30 giây). Con số "hỏng" đáng tin; con số
+> "mất dữ liệu" là chặn trên, thực tế nhẹ hơn.
+
+Có một phép thử thứ ba — đè 512 byte rác vào **giữa** file `.db` — nhưng nó mô
+phỏng **ghi lạc chỗ / lỗi đĩa** chứ không phải mất điện, vì mất điện chỉ làm
+hỏng đúng trang đang được ghi. Kết quả vẫn đáng biết: DELETE hỏng 10/20 còn
+WAL hỏng 0/20. Không phải WAL "chống lỗi đĩa" — mà ở chế độ WAL, file `.db`
+chỉ bị ghi vào lúc checkpoint, nên nó nhỏ hơn và ít bị đụng tới hơn nhiều.
+
+Chọn theo việc bạn đang làm:
+
+| Bạn cần | Đặt | Giá phải trả |
+|---|---|---|
+| sự kiện camera, log, số đo — sinh lại được, hoặc mất vài giây cũng chịu được | *(mặc định)* | có thể mất tới một khoảng checkpoint khi mất điện |
+| giao dịch tiền, đơn hàng — mất một dòng là mất thật | `APP_DB__SQLITE_SYNCHRONOUS=FULL` | 95 ghi/s thay vì 1.376 |
+| dữ liệu vứt được | ~~`OFF`~~ | **đừng** — không nhanh hơn NORMAL, mà đo được hỏng file |
+
+Trừ `OFF`, không lựa chọn nào ở đây làm hỏng file. Khác nhau chỉ là mất bao
+nhiêu giao dịch cuối.
+
+### Sao lưu: đừng chép mỗi file `.db`
+
+Ở chế độ WAL, dữ liệu mới nhất nằm trong `app.db-wal` chứ chưa vào `app.db`.
+File `-wal` phình tới ~4 MB rồi mới được gộp vào. Nên:
+
+```bash
+cp data/app.db backup.db          # SAI — mất phần còn trong -wal
+```
+
+Đo với 500 dòng vừa ghi: bản sao chỉ có **489**. Ba cách đúng:
+
+```bash
+sqlite3 data/app.db ".backup backup.db"      # an toàn cả khi app đang chạy
+sqlite3 data/app.db "VACUUM INTO 'backup.db'"
+cp data/app.db data/app.db-wal data/app.db-shm  ...   # chép CẢ BA
+```
+
+Sau khi app **tắt sạch** thì `-wal` về 0 byte và chép mỗi `.db` là đủ — khung
+tự gộp WAL lúc đóng kết nối. Nhưng đừng dựa vào điều đó: app bị `kill -9` thì
+`-wal` còn nguyên đó.
+
+Cùng lý do, xoá database là xoá cả ba file:
+
+```bash
+rm -f data/app.db*        # không phải `rm -f data/app.db`
+```
+
 Cần hơn 1.000 ghi/s bền vững, hoặc nhiều máy cùng ghi, thì đó là lúc chuyển
 sang [PostgreSQL](#3-postgresql) — không phải lúc đi chỉnh PRAGMA tiếp.
 
@@ -169,7 +259,7 @@ vậy). Template gắn lại UTC lúc đọc nên API của cả ba driver đề
 Xoá và làm lại từ đầu:
 
 ```bash
-rm -f data/app.db && fam dev
+rm -f data/app.db* && fam dev
 ```
 
 ---
