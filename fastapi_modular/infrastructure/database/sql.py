@@ -44,6 +44,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
 from fastapi_modular.core.container import Scope, injectable
+from fastapi_modular.core.exceptions import BadRequestError
 from fastapi_modular.core.logging import get_logger
 from fastapi_modular.infrastructure.database.base import (
     DatabaseBackend,
@@ -515,6 +516,121 @@ class SqlBackend(DatabaseBackend):
         stmt = select(func.count()).select_from(table).where(*self._where(table, filters))
         async with self._conn() as conn:
             return int((await conn.execute(stmt)).scalar_one())
+
+    # -------------------------------------------------------------- builder
+    def _compile(self, spec: Any) -> Any:
+        """QuerySpec -> câu SELECT của SQLAlchemy Core.
+
+        Mọi thứ đi xuống database: JOIN, WHERE, ORDER BY, LIMIT. Khác hẳn
+        `find(match=...)` vốn phải kéo cả bảng về rồi lọc bằng Python.
+        """
+        from sqlalchemy import and_ as sql_and
+        from sqlalchemy import not_ as sql_not
+        from sqlalchemy import or_ as sql_or
+
+        from fastapi_modular.infrastructure.database.query import (
+            Column as QColumn,
+        )
+        from fastapi_modular.infrastructure.database.query import (
+            Compare,
+            Group,
+            Not,
+        )
+
+        root = self._table(spec.entity)
+
+        def col(column: QColumn) -> Any:
+            return self._table(column.entity).c[column.field]
+
+        def build(condition: Any) -> Any:
+            if isinstance(condition, Group):
+                parts = [build(p) for p in condition.parts]
+                return sql_and(*parts) if condition.op == "and" else sql_or(*parts)
+            if isinstance(condition, Not):
+                return sql_not(build(condition.part))
+            if not isinstance(condition, Compare):
+                raise BadRequestError(f"Điều kiện lạ: {condition!r}")
+
+            left = col(condition.column)
+            value = condition.value
+            if isinstance(value, QColumn):
+                value = col(value)
+            op = condition.op
+            if op == "isnull":
+                return left.is_(None) if value else left.isnot(None)
+            if op == "eq":
+                return left == value
+            if op == "ne":
+                return left != value
+            if op == "gt":
+                return left > value
+            if op == "gte":
+                return left >= value
+            if op == "lt":
+                return left < value
+            if op == "lte":
+                return left <= value
+            if op == "in":
+                return left.in_(value)
+            if op == "nin":
+                return left.notin_(value)
+            if op == "like":
+                return left.like(value)
+            if op == "ilike":
+                return left.ilike(value)
+            if op == "between":
+                return left.between(value[0], value[1])
+            raise BadRequestError(f"Toán tử {op!r} chưa cài cho SQL")
+
+        if spec.selects:
+            stmt = select(*(col(c).label(name) for name, c in spec.selects.items()))
+        else:
+            stmt = select(root)
+
+        target: Any = root
+        for join in spec.joins:
+            other = self._table(join.entity)
+            target = target.join(other, build(join.on), isouter=join.outer)
+        if spec.joins:
+            stmt = stmt.select_from(target)
+
+        for condition in spec.conditions:
+            stmt = stmt.where(build(condition))
+        if spec.distinct:
+            stmt = stmt.distinct()
+        for order in spec.orders:
+            column = col(order.column)
+            stmt = stmt.order_by(column.desc() if order.descending else column.asc())
+        if spec.offset:
+            stmt = stmt.offset(spec.offset)
+        if spec.limit is not None:
+            stmt = stmt.limit(spec.limit)
+        return stmt
+
+    async def run_query(self, spec: Any) -> list[Any]:
+        stmt = self._compile(spec)
+        async with self._conn() as conn:
+            rows = (await conn.execute(stmt)).fetchall()
+        if spec.selects:
+            return [dict(row._mapping) for row in rows]
+        return [self._row_to_entity(spec.entity, row) for row in rows]
+
+    async def count_query(self, spec: Any) -> int:
+        # Đếm ở database, không kéo dòng nào về. Bỏ order/limit vì chúng vô
+        # nghĩa với count và Postgres còn từ chối ORDER BY trong subquery đếm.
+        import dataclasses as _dc
+
+        from sqlalchemy import func
+
+        plain = _dc.replace(spec, orders=[], limit=None, offset=0, selects={})
+        inner = self._compile(plain).subquery()
+        async with self._conn() as conn:
+            return int((await conn.execute(select(func.count()).select_from(inner))).scalar() or 0)
+
+    def query_sql(self, spec: Any) -> str:
+        """Câu SQL sẽ chạy, giá trị nhúng thẳng — để đọc, không phải để chạy."""
+        stmt = self._compile(spec)
+        return str(stmt.compile(self._engine, compile_kwargs={"literal_binds": True}))
 
     # ------------------------------------------------------------------ ghi
     async def save(self, entity: type[E], obj: E) -> E:

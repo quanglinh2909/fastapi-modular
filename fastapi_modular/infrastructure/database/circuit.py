@@ -195,6 +195,16 @@ class CircuitBreakerBackend(DatabaseBackend):
     ) -> int:
         return await self._call("count", entity, filters=filters, match=match)
 
+    async def run_query(self, spec: Any) -> list[Any]:
+        return await self._call("run_query", spec)
+
+    async def count_query(self, spec: Any) -> int:
+        return await self._call("count_query", spec)
+
+    def query_sql(self, spec: Any) -> str:
+        # Không chạm database nên không qua breaker.
+        return self._inner.query_sql(spec)                        # type: ignore[attr-defined]
+
     async def save(self, entity: type[E], obj: E) -> E:
         return await self._call("save", entity, obj)
 

@@ -22,6 +22,7 @@ from fastapi_modular.core.container import injectable
 from fastapi_modular.core.logging import get_logger
 from fastapi_modular.infrastructure.database.base import DatabaseBackend, is_transient_error
 from fastapi_modular.infrastructure.database.factory import create_backend
+from fastapi_modular.infrastructure.database.query import Query
 
 log = get_logger(__name__)
 
@@ -159,6 +160,19 @@ class Repository(Generic[E]):
         self, *, match: Callable[[E], bool] | None = None, **equals: Any
     ) -> bool:
         return await self.find_one(match=match, **equals) is not None
+
+    def query(self) -> Query[E]:
+        """Builder cho truy vấn có JOIN, so sánh lớn/bé, và lọc NULL.
+
+        `find()` chỉ so bằng. Khi cần hơn thế — và khi cần điều kiện chạy DƯỚI
+        database chứ không lọc bằng Python như `match=` — thì dùng cái này:
+
+            await (repo.query()
+                   .join(Camera, on="camera_id")
+                   .where(score__gte=0.8, deleted_at__isnull=True)
+                   .order_by("-created_at").limit(20).all())
+        """
+        return Query(self._entity, self._db)
 
     # ------------------------------------------------------------------ ghi
     async def save(self, obj: E) -> E:

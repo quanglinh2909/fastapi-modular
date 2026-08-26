@@ -73,6 +73,75 @@ class MemoryBackend(DatabaseBackend):
     ) -> int:
         return len(self._select(entity, filters, match))
 
+    # -------------------------------------------------------------- builder
+    def _rows_for(self, spec: Any) -> list[dict[str, Any]]:
+        """Ghép bảng bằng Python, ra danh sách {tên bảng: entity}.
+
+        Vì sao backend memory cũng phải làm được: `fam test` mặc định chạy trên
+        đây. Không có nó thì mọi code dùng query builder chỉ test được khi có
+        database thật, và đó là cách nhanh nhất để người ta thôi viết test.
+
+        Đây là vòng lặp lồng nhau, cỡ O(n×m) — đúng cho vài nghìn dòng trong
+        test, không phải cho production. Production dùng SQL thật.
+        """
+        from fastapi_modular.infrastructure.database.query import evaluate, sort_key
+
+        root_alias = spec.entity.__name__.lower()
+        rows: list[dict[str, Any]] = [
+            {root_alias: obj} for obj in self._table(spec.entity).values()
+        ]
+
+        for join in spec.joins:
+            others = list(self._table(join.entity).values())
+            ghep: list[dict[str, Any]] = []
+            for row in rows:
+                khop = [o for o in others if evaluate(join.on, {**row, join.alias: o})]
+                if khop:
+                    ghep.extend({**row, join.alias: o} for o in khop)
+                elif join.outer:
+                    ghep.append({**row, join.alias: None})
+            rows = ghep
+
+        for condition in spec.conditions:
+            rows = [row for row in rows if evaluate(condition, row)]
+
+        if spec.orders:
+            rows.sort(key=sort_key(spec.orders))
+            # Sắp nhiều cột với chiều khác nhau: sắp từ cột PHỤ tới cột CHÍNH,
+            # dựa vào tính ổn định của sorted() trong Python.
+            for order in reversed(spec.orders):
+                rows.sort(key=sort_key([order]), reverse=order.descending)
+        return rows
+
+    async def run_query(self, spec: Any) -> list[Any]:
+        rows = self._rows_for(spec)
+        root_alias = spec.entity.__name__.lower()
+
+        if spec.distinct:
+            seen, unique = set(), []
+            for row in rows:
+                key = id(row[root_alias]) if not spec.selects else tuple(
+                    _read(row, column) for column in spec.selects.values()
+                )
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(row)
+            rows = unique
+
+        rows = rows[spec.offset:]
+        if spec.limit is not None:
+            rows = rows[: spec.limit]
+
+        if spec.selects:
+            return [
+                {name: _read(row, column) for name, column in spec.selects.items()}
+                for row in rows
+            ]
+        return [row[root_alias] for row in rows]
+
+    async def count_query(self, spec: Any) -> int:
+        return len(self._rows_for(spec))
+
     async def save(self, entity: type[E], obj: E) -> E:
         self._check_unique(entity, obj)
         if not getattr(obj, "id", None):
@@ -110,3 +179,8 @@ class MemoryBackend(DatabaseBackend):
         for id_ in ids:
             del table[id_]
         return len(ids)
+
+
+def _read(row: dict[str, Any], column: Any) -> Any:
+    obj = row.get(column.entity.__name__.lower())
+    return None if obj is None else getattr(obj, column.field, None)

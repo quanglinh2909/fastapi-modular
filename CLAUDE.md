@@ -74,6 +74,7 @@ Mỗi thay đổi code phải cập nhật tài liệu tương ứng **trong cù
 | tên file / lớp mà `cli/new_module.py` sinh ra | mục "Thêm module mới" ở `docs/architecture.md` |
 | `core/providers.py` hoặc `cli/new_provider.py` | `docs/providers.md` |
 | `core/rpc.py`, `*/responders.py`, `emit`/`send` | `docs/rpc.md`, và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
+| `infrastructure/database/query.py` (builder) | `docs/database.md` mục truy vấn phức tạp, và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
 | `core/scheduler.py`, `core/cron.py`, `core/jobs.py`, `core/workers.py`, `core/events.py`, `core/locks.py` | `docs/background.md`, bảng nhóm biến ở `docs/config.md`, bảng `groups` trong `tests/test_configure_env.py`, và bảng đối chiếu NestJS ở **cả hai README** |
 | API công khai (`fastapi_modular/__init__.py`, decorator, method) | doc của phần đó, và `docs/README.md` nếu đổi bảng đối chiếu |
 | thêm/bớt test | con số test ở **cả hai README** (cây thư mục) và `docs/architecture.md` (mục Chất lượng mã) |
@@ -118,7 +119,7 @@ link trong `docs/*.md` thì cứ để tương đối.
 ## Kiểm chứng trước khi nói là xong
 
 ```bash
-pytest -q                       # 901 passed, 71 skipped (71 skip cần hạ tầng hoặc driver thật)
+pytest -q                       # 919 passed, 91 skipped (91 skip cần hạ tầng hoặc driver thật)
 fam lint fastapi_modular src tests    # `fam lint` trần chỉ soi `src`, thiếu thư viện và test
 ```
 

@@ -28,7 +28,7 @@ fastapi_modular/                     THƯ VIỆN — thứ được đóng gói,
 │   ├── locks.py               khoá "chỉ một tiến trình chạy" (flock hoặc Redis)
 │   └── websocket/             @gateway / @subscribe, phòng, adapter nhiều worker
 ├── infrastructure/            mỗi hạ tầng MỘT package, không biết nhau
-│   ├── database/              base.py · memory.py · sql.py · mongo.py · factory.py · repository.py
+│   ├── database/              base · memory · sql · mongo · factory · repository · query (builder)
 │   ├── rabbitmq/              (tuỳ chọn) broker · consumers · responders · patterns
 │   ├── redis/                 (tuỳ chọn) client (cache, đếm) · pubsub
 │   ├── mqtt/                  (tuỳ chọn) client · consumers · patterns (+ và #)
@@ -73,6 +73,7 @@ quét nó đi". Xếp khác thì nói ra một lần trong `src/main.py`:
 | `@Injectable({scope: Scope.REQUEST})` | `@injectable(scope=Scope.REQUEST)` |
 | `forwardRef(() => X)` | `Lazy[X]` |
 | `@InjectRepository(X) repo: Repository<X>` | `repo: Repository[X]` |
+| `repo.createQueryBuilder()` (TypeORM) | `repo.query()` — JOIN, so sánh, NULL; xem [database.md](database.md#truy-vấn-phức-tạp--join-lớnbé-null) |
 | `@Entity()` | `@entity` |
 | `overrideProvider()` | `container.override()` |
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
@@ -257,7 +258,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 901 test trên backend memory (71 test nữa cần hạ tầng hoặc driver thật)
+fam test       # 919 test trên backend memory (91 test nữa cần hạ tầng hoặc driver thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

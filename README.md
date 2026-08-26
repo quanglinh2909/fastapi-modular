@@ -31,6 +31,7 @@ public API, and this README, are in English. Start with
 | `@Injectable({scope: Scope.REQUEST})` | `@injectable(scope=Scope.REQUEST)` |
 | `forwardRef(() => X)` | `Lazy[X]` |
 | `@InjectRepository(X) repo: Repository<X>` | `repo: Repository[X]` |
+| `repo.createQueryBuilder()` (TypeORM) | `repo.query().join(X, on=…).where(score__gte=…)` — real SQL, `.sql()` to see it |
 | `@UseGuards()` | `guards=[...]` on the controller or a single route |
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
 | `@SubscribeMessage('x')` | `@subscribe("x")` |
@@ -411,7 +412,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              901 tests that need no infrastructure, 71 more with real drivers/servers
+tests/              919 tests that need no infrastructure, 91 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 

@@ -641,6 +641,7 @@ Tên bảng/collection mặc định là tên class viết thường cộng `s`:
 | `save(obj)` | Upsert, tự sinh id nếu chưa có |
 | `delete(id)` | Xoá một, trả `True/False` |
 | `delete_where(**equals, match=)` | Xoá nhiều, trả số bản ghi |
+| `query()` | Builder cho JOIN, lớn/bé, NULL — xem [mục dưới](#truy-vấn-phức-tạp--join-lớnbé-null) |
 
 ### Hai quy ước dễ vấp
 
@@ -648,14 +649,190 @@ Tên bảng/collection mặc định là tên class viết thường cộng `s`:
 
 ```python
 await repo.find(owner_id=None)     # trả về TẤT CẢ, không phải bản ghi có owner_id NULL
-await repo.find(match=lambda o: o.owner_id is None)   # đây mới là lọc NULL
+await repo.query().where(owner_id__isnull=True).all()    # đây mới là lọc NULL
 ```
 
-**`match=` chạy trong Python, không đẩy được xuống database.** Backend sẽ lấy dữ
-liệu về rồi mới lọc, nên với bảng lớn thì chậm và tốn RAM. Chỉ dùng cho điều kiện
-không diễn đạt được bằng so sánh bằng nhau (ví dụ so email không phân biệt hoa
-thường). Khi dữ liệu lớn, thay bằng cách chuẩn hoá dữ liệu lúc ghi (lưu sẵn
-`email_lower`) rồi lọc bằng `email_lower=...`.
+**`match=` chạy trong Python, KHÔNG đẩy được xuống database.** Backend lấy **cả
+bảng** về rồi mới lọc, và `limit` cũng chỉ cắt sau khi đã lấy về — nên với bảng
+lớn thì vừa chậm vừa tốn RAM.
+
+Gần như mọi thứ trước đây phải dùng `match=` thì nay viết được bằng
+[query builder](#truy-vấn-phức-tạp--join-lớnbé-null), và nó chạy dưới database:
+
+| Cần gì | Đừng | Hãy |
+|---|---|---|
+| lớn hơn / nhỏ hơn | `match=lambda o: o.score >= 0.8` | `.query().where(score__gte=0.8)` |
+| bằng NULL | `match=lambda o: o.owner_id is None` | `.query().where(owner_id__isnull=True)` |
+| nằm trong danh sách | `match=lambda o: o.label in [...]` | `.query().where(label__in=[...])` |
+| nối bảng khác | *(không làm được)* | `.query().join(Camera, on="camera_id")` |
+
+`match=` chỉ còn đúng cho điều kiện không có trong SQL — ví dụ gọi một hàm Python
+để tính. Khi dữ liệu lớn, cách tốt hơn là chuẩn hoá lúc ghi (lưu sẵn
+`email_lower`) rồi lọc bằng cột đó.
+
+---
+
+## Truy vấn phức tạp — JOIN, lớn/bé, NULL
+
+`find()` chỉ so bằng (`=`). Cần hơn thế thì dùng `repo.query()`.
+
+### Làm thế nào
+
+```python
+from fastapi_modular.infrastructure.database import F, or_
+
+events = await (
+    repo.query()
+    .join(Camera, on="camera_id")              # Event.camera_id = Camera.id
+    .where(score__gte=0.8, label="person")     # >= và =
+    .where(reviewed_at__isnull=True)           # IS NULL
+    .where(camera__name__like="Cổng%")         # lọc theo cột bảng đã join
+    .order_by("-created_at")                   # dấu trừ = giảm dần
+    .limit(20)
+    .all()
+)
+```
+
+Kết quả là `list[Event]` như `find()`. **JOIN ở đây để LỌC**, không đổi kiểu trả
+về — nên `.score`, `.label` vẫn gõ được như thường.
+
+Không có gì chạy cho tới khi bạn gọi `.all()`, `.first()`, `.count()` hoặc
+`.exists()`.
+
+### Xem câu SQL sinh ra
+
+Đây là cách nhanh nhất khi truy vấn cho kết quả lạ — nhanh hơn đọc lại builder:
+
+```python
+print(repo.query().join(Camera, on="camera_id").where(score__gte=0.8).limit(5).sql())
+```
+
+```sql
+SELECT events.id, events.camera_id, events.label, events.score, ...
+FROM events JOIN cameras ON events.camera_id = cameras.id
+WHERE events.score >= 0.8 ORDER BY events.created_at DESC
+LIMIT 5 OFFSET 0
+```
+
+Mọi thứ — `JOIN`, `WHERE`, `ORDER BY`, `LIMIT` — đều **chạy dưới database**.
+Không có bước nào lọc bằng Python.
+
+### Toán tử
+
+Viết ở đuôi tên cột, sau hai dấu gạch dưới:
+
+| Viết | SQL |
+|---|---|
+| `score=0.8` | `= 0.8` |
+| `score__ne=0.8` | `!= 0.8` |
+| `score__gt` `__gte` `__lt` `__lte` | `>` `>=` `<` `<=` |
+| `label__in=["a","b"]` / `__nin=` | `IN` / `NOT IN` |
+| `reviewed_at__isnull=True` / `=False` | `IS NULL` / `IS NOT NULL` |
+| `score__between=[0.5, 0.9]` | `BETWEEN 0.5 AND 0.9` |
+| `name__like="Cổng%"` / `__ilike=` | `LIKE` / `ILIKE` |
+| `name__startswith` `__endswith` `__contains` | `LIKE` với `%` đặt sẵn |
+
+Tiền tố là tên bảng đã `join`, mặc định là tên class viết thường:
+`camera__name__like="Cổng%"`. Đặt tên khác bằng `.join(Camera, ..., alias="cam")`.
+
+### Khi kwargs không đủ
+
+Hai ca kwargs không viết nổi — dùng đối tượng cột `F(Entity)`:
+
+```python
+E, C = F(Event), F(Camera)
+
+# OR
+await repo.query().where(or_(E.score >= 0.8, E.label == "fire")).all()
+
+# so CỘT với CỘT
+await (repo.query()
+       .join(Camera, on=E.camera_id == C.id)
+       .where(E.score > C.threshold)        # events.score > cameras.threshold
+       .all())
+```
+
+`F(Event).score` kiểm tên cột **ngay lúc dựng** và lỗi liệt kê đủ tên hợp lệ, nên
+gõ sai không phải đợi tới lúc chạy mới biết.
+
+Nối điều kiện bằng `&`, `|`, `~` cũng được: `.where((E.score >= 0.9) & ~(E.label == "car"))`.
+
+### Ba kiểu JOIN
+
+```python
+.join(Camera, on="camera_id")               # Event.camera_id = Camera.id
+.join(Camera, on=("camera_id", "id"))       # nói rõ cả hai vế
+.join(Camera, on=F(Event).camera_id == F(Camera).id)
+```
+
+`outer=True` cho `LEFT JOIN` — giữ cả dòng không có bên phải. Đây là cách tìm
+"cái nào còn trống":
+
+```python
+# camera CHƯA có sự kiện nào
+await (cameras.query()
+       .join(Event, on=F(Camera).id == F(Event).camera_id, outer=True)
+       .where(F(Event).id.is_null())
+       .all())
+```
+
+### Lấy cột của bảng đã join
+
+Mặc định chỉ trả entity gốc. Cần cột bảng kia thì nói rõ — khi đó trả `list[dict]`:
+
+```python
+rows = await (repo.query()
+              .join(Camera, on="camera_id")
+              .select("id", "score", camera_name=F(Camera).name)
+              .all())
+# [{"id": "e1", "score": 0.95, "camera_name": "Cổng chính"}]
+```
+
+### Lưu ý
+
+**Join một-nhiều thì nhớ `.distinct()`.** Một camera có 10 sự kiện thì camera đó
+hiện 10 lần — đúng theo SQL, nhưng thường không phải ý bạn:
+
+```python
+await cameras.query().join(Event, on=...).distinct().all()
+```
+
+**`count()` là `SELECT count(*)` thật**, không kéo dòng nào về. Đừng viết
+`len(await q.all())`.
+
+**So sánh với NULL luôn cho sai, giống hệt SQL.** `where(reviewed_at__gt=...)`
+bỏ qua mọi dòng có `reviewed_at` NULL. Backend `memory` giữ y hệt luật này, nên
+`fam test` và production cho cùng kết quả.
+
+**MongoDB chưa dùng được.** Nó ném lỗi nói rõ vì sao: Mongo có `$lookup` nhưng
+ngữ nghĩa join lệch đủ nhiều để một bản giả lập sẽ đúng ở demo và sai ở
+production. Dùng `find()` cho truy vấn một collection, hoặc đổi sang
+postgres/sqlite.
+
+| Backend | Query builder |
+|---|---|
+| `postgres`, `sqlite` | đầy đủ, sinh SQL thật |
+| `memory` | đầy đủ, tính bằng Python — để `fam test` chạy được, cỡ O(n×m) nên chỉ hợp với dữ liệu test |
+| `mongodb` | **không** |
+
+### Tra cứu
+
+| Dựng | |
+|---|---|
+| `.join(Entity, on=…, outer=False, alias="")` | nối bảng |
+| `.where(*điều_kiện, **kwargs)` | nhiều lần `where` nối bằng AND |
+| `.order_by("-created_at")` | dấu trừ = giảm dần; nhận cả `F(X).cot.desc()` |
+| `.limit(n)` · `.offset(n)` · `.distinct()` | |
+| `.select("id", ten_khac=F(X).cot)` | đổi kiểu trả về sang `list[dict]` |
+
+| Chạy | Trả về |
+|---|---|
+| `await .all()` | `list[Entity]`, hoặc `list[dict]` nếu có `.select()` |
+| `await .first()` | một cái hoặc `None`; tự đặt `LIMIT 1` |
+| `await .one()` | một cái, không có thì ném 404 |
+| `await .count()` | `int` |
+| `await .exists()` | `bool` |
+| `.sql()` | chuỗi SQL sẽ chạy (chỉ có ở sqlite/postgres) |
 
 ---
 

@@ -26,6 +26,7 @@ fam init && fam dev
 | `@Injectable({scope: Scope.REQUEST})` | `@injectable(scope=Scope.REQUEST)` |
 | `forwardRef(() => X)` | `Lazy[X]` |
 | `@InjectRepository(X) repo: Repository<X>` | `repo: Repository[X]` |
+| `repo.createQueryBuilder()` (TypeORM) | `repo.query().join(X, on=…).where(score__gte=…)` — SQL thật, xem bằng `.sql()` |
 | `@UseGuards()` | `guards=[...]` ở controller hoặc từng route |
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
 | `@SubscribeMessage('x')` | `@subscribe("x")` |
@@ -409,7 +410,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              901 test chạy không cần hạ tầng, 71 test nữa cần driver/server thật
+tests/              919 test chạy không cần hạ tầng, 91 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 

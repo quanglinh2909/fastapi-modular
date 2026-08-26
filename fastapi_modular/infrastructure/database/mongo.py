@@ -13,6 +13,7 @@ from typing import Any, TypeVar
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 
+from fastapi_modular.core.exceptions import BadRequestError
 from fastapi_modular.core.logging import get_logger
 from fastapi_modular.infrastructure.database.base import (
     DatabaseBackend,
@@ -161,6 +162,18 @@ class MongoBackend(DatabaseBackend):
         if match is not None:
             return len(await self.find(entity, filters=filters, match=match))
         return await self._collection(entity).count_documents(self._query(filters))
+
+    # -------------------------------------------------------------- builder
+    async def run_query(self, spec: Any) -> list[Any]:
+        raise BadRequestError(
+            "Query builder chưa hỗ trợ MongoDB. MongoDB có `$lookup` nhưng ngữ "
+            "nghĩa join lệch đủ nhiều để một bản giả lập sẽ đúng ở demo và sai ở "
+            "production, nên thà nói không. Dùng `repo.find(...)` cho truy vấn một "
+            "collection, hoặc đổi APP_DB__DRIVER sang postgres/sqlite."
+        )
+
+    async def count_query(self, spec: Any) -> int:
+        return await self.run_query(spec)
 
     async def save(self, entity: type[E], obj: E) -> E:
         if not getattr(obj, "id", None):
