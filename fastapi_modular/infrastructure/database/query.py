@@ -370,6 +370,24 @@ def as_condition(value: Any) -> Condition:
     )
 
 
+def is_null(column: Any) -> Condition:
+    """`WHERE cot IS NULL`, viết được cả khi entity chưa kế thừa `Entity`.
+
+        .where(is_null(Camera.rtsp))          # entity nào cũng dùng được
+        .where(Camera.rtsp.is_null())         # gọn hơn, cần `class Camera(Entity)`
+
+    Có hàm này vì `Camera.rtsp == None` tuy chạy đúng nhưng bị IDE gạch chân
+    ("Comparison with None performed with equality operators"), còn `is None`
+    thì Python không cho nạp chồng.
+    """
+    return Compare(column_of(column), "isnull", True)
+
+
+def is_not_null(column: Any) -> Condition:
+    """`WHERE cot IS NOT NULL`. Xem `is_null`."""
+    return Compare(column_of(column), "isnull", False)
+
+
 def and_(*parts: Any) -> Condition:        # `Any`: xem ghi chú ở `Query.where`
     return Group("and", tuple(as_condition(p) for p in parts))
 
@@ -773,25 +791,21 @@ class Query(Generic[E]):
             return Compare(Column(entity, field, alias), "like", pattern)
         return Compare(Column(entity, field, alias), op, value)
 
-    def order_by(self, *fields: Any) -> Query[E]:
-        """`order_by("-created_at")` — dấu trừ là giảm dần.
+    def order_by_asc(self, *fields: Any) -> Query[E]:
+        """Sắp tăng dần: `order_by_asc("name")`, `order_by_asc(Event.score)`.
 
-        Nhận cả `Event.created_at`, `F(Event).created_at.desc()` khi cần sắp
-        theo cột của bảng đã join.
+        Nhiều cột thì gọi nối tiếp, thứ tự gọi là thứ tự ưu tiên:
+
+            .order_by_desc("score").order_by_asc("created_at")
         """
-        for item in fields:
-            if isinstance(item, Order):
-                self._spec.orders.append(item)
-            elif isinstance(item, str):
-                descending = item.startswith("-")
-                name = item.lstrip("-+")
-                self._spec.orders.append(
-                    Order(Column(self._spec.entity, name), descending=descending)
-                )
-            elif isinstance(item, Aggregate):
-                self._spec.orders.append(Order(item))
-            else:
-                self._spec.orders.append(Order(column_of(item)))
+        return self._add_orders(fields, descending=False)
+
+    def order_by_desc(self, *fields: Any) -> Query[E]:
+        """Sắp giảm dần. Nhận cả hàm gộp: `order_by_desc(count())`."""
+        return self._add_orders(fields, descending=True)
+
+    def _add_orders(self, fields: tuple, descending: bool) -> Query[E]:
+        self._spec.orders.extend(_orders_of(self._spec.entity, fields, descending))
         return self
 
     def include(
@@ -803,7 +817,8 @@ class Query(Generic[E]):
         fields: Sequence[Any] = (),
         exclude: Sequence[Any] = (),
         where: Any = None,
-        order_by: Any = None,
+        order_by_asc: Any = None,
+        order_by_desc: Any = None,
     ) -> Query[E]:
         """Lấy kèm bảng khác và gắn vào kết quả thành trường lồng nhau.
 
@@ -823,8 +838,8 @@ class Query(Generic[E]):
         (`events`, `camera`). Đổi bằng `name="su_kien"`.
 
         `fields=` / `exclude=` chọn cột của bảng ĐƯỢC LẤY KÈM — nhận cả chuỗi
-        lẫn cột thật (`fields=[Event.id, Event.label]`). `where=` và `order_by=`
-        lọc và sắp bảng đó.
+        lẫn cột thật (`fields=[Event.id, Event.label]`). `where=`,
+        `order_by_asc=`, `order_by_desc=` lọc và sắp bảng đó.
 
         **Có `include` thì kết quả là `list[dict]`, không phải `list[Entity]`** —
         entity là dataclass `slots=True`, không gắn thêm trường vào được.
@@ -843,7 +858,10 @@ class Query(Generic[E]):
             conditions=tuple(as_condition(c) for c in (
                 where if isinstance(where, (list, tuple)) else [where] if where is not None else []
             )),
-            orders=tuple(_orders_of(entity, order_by)),
+            orders=tuple((
+                *_orders_of(entity, order_by_desc, descending=True),
+                *_orders_of(entity, order_by_asc, descending=False),
+            )),
         ))
         return self
 
@@ -1212,19 +1230,23 @@ def _as_dict(entity: type, row: Any) -> dict[str, Any]:
     return {name: getattr(row, name, None) for name in mapping_for(entity).fields}
 
 
-def _orders_of(entity: type, order_by: Any) -> list[Order]:
-    """`order_by=` của `include`: nhận chuỗi có dấu trừ, Column, hoặc list của chúng."""
-    if order_by is None:
+def _orders_of(entity: type, fields: Any, descending: bool) -> list[Order]:
+    """Tên cột / cột thật / hàm gộp -> `Order`. Chiều do người gọi quyết định.
+
+    Không có quy ước dấu trừ nào ở đây: chiều nằm trong TÊN HÀM
+    (`order_by_desc`), không nằm trong dữ liệu.
+    """
+    if fields is None:
         return []
-    items = order_by if isinstance(order_by, (list, tuple)) else [order_by]
+    items = fields if isinstance(fields, (list, tuple)) else [fields]
     out: list[Order] = []
     for item in items:
-        if isinstance(item, Order):
-            out.append(item)
-        elif isinstance(item, str):
-            out.append(Order(Column(entity, item.lstrip("-+")), descending=item.startswith("-")))
+        if isinstance(item, str):
+            out.append(Order(Column(entity, item), descending=descending))
+        elif isinstance(item, Aggregate):
+            out.append(Order(item, descending=descending))
         else:
-            out.append(Order(column_of(item)))
+            out.append(Order(column_of(item), descending=descending))
     return out
 
 
@@ -1372,6 +1394,8 @@ __all__ = [
     "avg",
     "count",
     "evaluate",
+    "is_not_null",
+    "is_null",
     "max_",
     "min_",
     "not_",

@@ -29,6 +29,8 @@ from fastapi_modular.infrastructure.database import (
     and_,
     avg,
     count,
+    is_not_null,
+    is_null,
     max_,
     min_,
     or_,
@@ -163,6 +165,39 @@ async def test_where_null_va_not_null(kho):
     ]
 
 
+async def test_ba_cach_loc_NULL_cho_cung_ket_qua(kho):
+    """`is_null(...)` dùng được cả khi entity chưa kế thừa `Entity` — QEvent thì chưa."""
+    events, _ = kho
+    chua_duyet = ["e0", "e1", "e2", "e3", "e4"]
+
+    assert ids(await events.query().where(is_null(QEvent.reviewed_at)).all()) == chua_duyet
+    assert ids(await events.query().where(F(QEvent).reviewed_at.is_null()).all()) == chua_duyet
+    assert ids(await events.query().where(reviewed_at__isnull=True).all()) == chua_duyet
+
+    assert ids(await events.query().where(is_not_null(QEvent.reviewed_at)).all()) == ["e5"]
+
+
+async def test_is_null_tren_entity_ke_thua_Entity(kho):
+    _, cameras = kho
+    assert ids(await cameras.query().where(is_null(QCamera.parent_id)).all()) == ["c1"]
+    assert ids(await cameras.query().where(QCamera.parent_id.is_null()).all()) == ["c1"]
+
+
+async def test_order_by_chieu_nam_trong_ten_ham(kho):
+    events, _ = kho
+    assert [r.id for r in await events.query().order_by_desc("score").limit(2).all()] == \
+        ["e5", "e0"]
+    assert [r.id for r in await events.query().order_by_asc("score").limit(2).all()] == \
+        ["e2", "e1"]
+
+
+async def test_order_by_nhieu_cot_thu_tu_goi_la_thu_tu_uu_tien(kho):
+    """`label` tăng dần, trong mỗi label thì `score` giảm dần."""
+    events, _ = kho
+    rows = await events.query().order_by_asc("label").order_by_desc("score").all()
+    assert [r.id for r in rows] == ["e4", "e2", "e5", "e0", "e3", "e1"]
+
+
 async def test_so_sanh_voi_null_luon_sai_giong_SQL(kho):
     """Trong SQL, `NULL > x` không đúng mà cũng không sai — dòng đó bị loại.
 
@@ -223,7 +258,7 @@ async def test_order_by_va_select_nhan_cot_that(kho):
         events.query()
         .join(QCamera)
         .select(QEvent.id, ten=QCamera.name)
-        .order_by(QEvent.score)
+        .order_by_asc(QEvent.score)
         .limit(1)
         .all()
     )
@@ -298,7 +333,7 @@ async def test_toan_tu_thuong_dung_duoc_ca_o_join_va_order_by(kho):
         events.query()
         .join(QCamera)
         .where(QCamera.zone == "Tầng 2", F(QEvent).score >= 0.9)   # QEvent không kế thừa Entity
-        .order_by(QCamera.name)
+        .order_by_asc(QCamera.name)
         .all()
     )
     assert ids(rows) == ["e3"]
@@ -373,7 +408,7 @@ async def test_self_join_bang_alias(kho):
         cameras.query()
         .join(QCamera, on=QCamera.parent_id, alias="cha")
         .select("id", cha=Cha.name)
-        .order_by("id")
+        .order_by_asc("id")
         .all()
     )
     assert rows == [{"id": "c2", "cha": "Cổng chính"}, {"id": "c3", "cha": "Cổng chính"}]
@@ -428,7 +463,7 @@ async def test_select_ep_kieu_y_het_luc_tra_ve_entity(kho):
 async def test_include_gan_list_con_vao_cha(kho):
     """Camera kèm danh sách sự kiện, tên trường mặc định là `qevents`."""
     _, cameras = kho
-    rows = await cameras.query().fields("id").include(QEvent, fields=["id"]).order_by("id").all()
+    rows = await cameras.query().fields("id").include(QEvent, fields=["id"]).order_by_asc("id").all()
 
     assert rows[0]["id"] == "c1"
     assert [e["id"] for e in rows[0]["qevents"]] == ["e0", "e1", "e2", "e5"]
@@ -462,7 +497,7 @@ async def test_include_loc_va_sap_bang_con(kho):
     _, cameras = kho
     rows = await (cameras.query().where(id="c1").fields("id")
                   .include(QEvent, fields=["id", "score"],
-                           where=F(QEvent).score >= 0.9, order_by="-score").all())
+                           where=F(QEvent).score >= 0.9, order_by_desc="score").all())
     assert [e["id"] for e in rows[0]["qevents"]] == ["e5", "e0"]
 
 
@@ -514,7 +549,7 @@ async def test_include_chia_me_khi_qua_nhieu_id(kho, monkeypatch):
     backend.run_query = dem_lai
     try:
         rows = await (cameras.query().fields("id")
-                      .include(QEvent, fields=["id"]).order_by("id").all())
+                      .include(QEvent, fields=["id"]).order_by_asc("id").all())
     finally:
         backend.run_query = that
 
@@ -619,7 +654,7 @@ async def test_nest_under_doi_ten_va_chon_cot_hai_tang(kho):
 
 async def test_nest_under_giu_thu_tu_theo_bang_goc(kho):
     events, _ = kho
-    rows = await (events.query().order_by("-created_at").fields("id")
+    rows = await (events.query().order_by_desc("created_at").fields("id")
                   .nest_under(QCamera, fields=["id"]).all())
     assert [r["id"] for r in rows] == ["c1", "c2"], "e5 của c1 mới nhất nên c1 đứng trước"
 
@@ -785,7 +820,7 @@ async def test_group_by_va_cac_ham_gop(kho):
         .group_by(QEvent.camera_id)
         .select("camera_id", so=count(), tb=avg(QEvent.score),
                 cao=max_(QEvent.score), thap=min_(QEvent.score), tong=sum_(QEvent.score))
-        .order_by("camera_id")
+        .order_by_asc("camera_id")
         .all()
     )
     assert [r["camera_id"] for r in rows] == ["c1", "c2"]
@@ -806,11 +841,11 @@ async def test_where_truoc_having_sau_cho_ket_qua_khac_nhau(kho):
     events, _ = kho
     chi_diem_cao = await (events.query().where(F(QEvent).score >= 0.9)
                           .group_by(QEvent.camera_id)
-                          .select("camera_id", so=count()).order_by("camera_id").all())
+                          .select("camera_id", so=count()).order_by_asc("camera_id").all())
     assert chi_diem_cao == [{"camera_id": "c1", "so": 2}, {"camera_id": "c2", "so": 1}]
 
     moi_dong = await (events.query().group_by(QEvent.camera_id)
-                      .select("camera_id", so=count()).order_by("camera_id").all())
+                      .select("camera_id", so=count()).order_by_asc("camera_id").all())
     assert moi_dong == [{"camera_id": "c1", "so": 4}, {"camera_id": "c2", "so": 2}]
 
 
@@ -840,7 +875,7 @@ async def test_count_bo_qua_NULL_con_count_sao_thi_khong(kho):
 async def test_gop_sau_join_va_sap_theo_ham_gop(kho):
     events, _ = kho
     rows = await (events.query().join(QCamera).group_by(QCamera.zone)
-                  .select(zone=QCamera.zone, so=count()).order_by(count().desc()).all())
+                  .select(zone=QCamera.zone, so=count()).order_by_desc(count()).all())
     assert rows == [{"zone": "Tầng 1", "so": 4}, {"zone": "Tầng 2", "so": 2}]
 
 
@@ -907,7 +942,7 @@ async def test_or_having_cung_luat_voi_or_where(kho):
     events, _ = kho
     rows = await (events.query().group_by(QEvent.camera_id).select("camera_id", so=count())
                   .having(count() > 3).or_having(count() == 2)
-                  .order_by("camera_id").all())
+                  .order_by_asc("camera_id").all())
     assert rows == [{"camera_id": "c1", "so": 4}, {"camera_id": "c2", "so": 2}]
 
 
@@ -970,10 +1005,10 @@ async def test_or_va_not(kho):
 # ------------------------------------------------- sắp xếp, phân trang, đếm
 async def test_order_limit_offset(kho):
     events, _ = kho
-    theo_diem = [r.id for r in await events.query().order_by("-score").limit(3).all()]
+    theo_diem = [r.id for r in await events.query().order_by_desc("score").limit(3).all()]
     assert theo_diem == ["e5", "e0", "e3"] or theo_diem == ["e5", "e3", "e0"]
 
-    trang2 = [r.id for r in await events.query().order_by("created_at").offset(2).limit(2).all()]
+    trang2 = [r.id for r in await events.query().order_by_asc("created_at").offset(2).limit(2).all()]
     assert trang2 == ["e2", "e3"]
 
 
@@ -982,7 +1017,7 @@ async def test_count_first_exists_one(kho):
     assert await events.query().where(score__gte=0.9).count() == 3
     assert await events.query().where(label="khong-co").exists() is False
     assert await events.query().where(label="fire").exists() is True
-    assert (await events.query().order_by("-score").first()).id == "e5"
+    assert (await events.query().order_by_desc("score").first()).id == "e5"
     assert await events.query().where(label="khong-co").first() is None
 
     with pytest.raises(NotFoundError):
@@ -1093,7 +1128,7 @@ async def test_sinh_ra_dung_la_cau_SQL(tmp_path):
         .join(QCamera, on="camera_id")
         .where(score__gte=0.8, reviewed_at__isnull=True)
         .where(qcamera__name__like="Cổng%")
-        .order_by("-created_at")
+        .order_by_desc("created_at")
         .limit(20)
         .sql()
     )

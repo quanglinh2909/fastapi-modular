@@ -21,6 +21,7 @@
 | "**Trả về sự kiện kèm object camera**" | [Dữ liệu lồng nhau](#dữ-liệu-lồng-nhau-include) |
 | "**Lọc theo sự kiện nhưng trả về camera ở ngoài**" | [`nest_under`](#đảo-chiều-nest_under) |
 | "**Bảng nhiều cột quá, tôi muốn bỏ bớt một cột**" | [`exclude`](#chọn-cột-trả-về) |
+| "Chỉ lấy dòng có cột này để trống" | [Lọc NULL](#lọc-null) |
 | "Chọn database nào" | [Cách chọn driver](#cách-chọn-driver) |
 | "Thêm/xoá trường mà không mất dữ liệu" | [Tự chỉnh schema](#tự-chỉnh-schema-thêm--xoá-trường) |
 
@@ -938,7 +939,7 @@ events = await (
     .where(score__gte=0.8, label="person")     # >= và =
     .where(reviewed_at__isnull=True)           # IS NULL
     .where(camera__name__like="Cổng%")         # lọc theo cột bảng đã join
-    .order_by("-created_at")                   # dấu trừ = giảm dần
+    .order_by_desc("created_at")                   # dấu trừ = giảm dần
     .limit(20)
     .all()
 )
@@ -964,7 +965,7 @@ dễ hơn, và tách được điều kiện theo nhánh `if`:
 query = self._repo.query().join(Camera).where(label="person")
 if zone:
     query = query.where(camera__zone=zone)
-return await query.order_by("-created_at").limit(20).all()
+return await query.order_by_desc("created_at").limit(20).all()
 ```
 
 ### Xem câu SQL sinh ra
@@ -1100,6 +1101,46 @@ Thiếu ngoặc thì `Event.score >= 0.9 & Event.label` chạy trước và bạ
 
 `~` là NOT: `.where(~or_(Event.label == "fire", Event.label == "car"))`.
 
+### Lọc NULL
+
+Ba cách viết, chạy y hệt nhau — chọn theo việc IDE của bạn có gợi ý được không:
+
+```python
+from fastapi_modular.infrastructure.database import is_null, is_not_null
+
+.where(is_null(Camera.rtsp))        # IDE gợi ý được `is_null`, không cảnh báo gì
+.where(Camera.rtsp.is_null())       # gọn nhất, cần `class Camera(Entity)`
+.where(rtsp__isnull=True)           # kiểu ngắn
+```
+
+**Đừng viết `Camera.rtsp == None`.** Nó chạy đúng, nhưng IDE gạch chân
+*"Comparison with None performed with equality operators"* — mà `is None` thì
+Python không cho nạp chồng, nên không có cách nào làm nó vừa lòng.
+
+**`Camera.rtsp.is_null()` sẽ không bao giờ được IDE gợi ý.** Type checker đọc
+khai báo `rtsp: str | None` nên với nó `Camera.rtsp` là một `str`, và `str`
+không có `is_null` — nó báo *"Unresolved attribute reference 'is_null' for class
+'str'"*. Câu lệnh vẫn chạy đúng (metaclass chỉ có lúc chạy), nhưng nếu bạn muốn
+IDE giúp thì dùng `is_null(Camera.rtsp)`: đó là một hàm thật, gợi ý được, và
+tham số khai `Any` nên không cảnh báo.
+
+### Sắp xếp
+
+Chiều nằm trong **tên hàm**, không nằm trong dấu trừ của chuỗi:
+
+```python
+.order_by_desc("created_at")            # mới nhất trước
+.order_by_asc(Camera.name)              # cột thật cũng được
+.order_by_desc(count())                 # hàm gộp cũng được
+```
+
+Nhiều cột thì gọi nối tiếp, **thứ tự gọi là thứ tự ưu tiên**:
+
+```python
+.order_by_desc("score").order_by_asc("created_at")
+# ORDER BY score DESC, created_at ASC
+```
+
 ### So CỘT với CỘT
 
 ```python
@@ -1219,7 +1260,7 @@ from fastapi_modular.infrastructure.database import avg, count, max_, min_, sum_
 rows = await (events.query()
               .group_by(Event.camera_id)
               .select("camera_id", so_luong=count(), diem_tb=avg(Event.score))
-              .order_by(count().desc())
+              .order_by_desc(count())
               .all())
 # [{"camera_id": "c1", "so_luong": 12, "diem_tb": 0.83}, ...]
 ```
@@ -1374,7 +1415,7 @@ Ba điều dễ vấp:
 - **`limit` vẫn đếm theo bảng GỐC.** `.limit(20).nest_under(Camera)` là 20 sự
   kiện gom lại thành vài camera, không phải 20 camera.
 - **Dòng có khoá ngoại NULL bị bỏ** — nó không thuộc cha nào để gom vào.
-- Thứ tự camera theo sự kiện đầu tiên của nó, nên `.order_by(...)` của bảng gốc
+- Thứ tự camera theo sự kiện đầu tiên của nó, nên `.order_by_desc(...)` của bảng gốc
   vẫn có tác dụng.
 
 Cũng đúng một câu lệnh nữa, y như `include`.
@@ -1386,7 +1427,7 @@ await (cameras.query()
        .include(Event,
                 fields=["id", "score"],
                 where=F(Event).score >= 0.9,      # chỉ lấy sự kiện điểm cao
-                order_by="-score")                # mới nhất/cao nhất lên đầu
+                order_by_desc="score")                # mới nhất/cao nhất lên đầu
        .all())
 ```
 
@@ -1416,8 +1457,8 @@ rows = await (repo.query()
 # [{"id": "e1", "score": 0.95, "camera_name": "Cổng chính"}]
 ```
 
-`select` và `order_by` nhận cột thật y như `join`: `select(Event.id)`,
-`order_by(Event.score)`.
+`select` và `order_by_asc`/`order_by_desc` nhận cột thật y như `join`:
+`select(Event.id)`, `order_by_desc(Event.score)`.
 
 ### Lưu ý
 
@@ -1458,12 +1499,13 @@ postgres/sqlite.
 | `.having(count() > 5)` · `.or_having(...)` | lọc theo kết quả gộp |
 | `.join(Entity, on=…, outer=False, alias="")` | `on=` nhận `Entity.cot`, `"cot"`, `("cot","cot_kia")`, hoặc cả một điều kiện |
 | `.where(*điều_kiện, **kwargs)` | nhiều lần `where` nối bằng AND |
+| `is_null(X.cot)` · `is_not_null(X.cot)` | `IS NULL` / `IS NOT NULL`, không cần `Entity` |
 | `.or_where(*điều_kiện, **kwargs)` | mở nhánh OR mới |
-| `.order_by("-created_at")` | dấu trừ = giảm dần; nhận cả `X.cot` và `F(X).cot.desc()` |
+| `.order_by_asc("name")` · `.order_by_desc("created_at")` | chiều nằm trong TÊN HÀM; nhận `X.cot` và `count()` |
 | `.limit(n)` · `.offset(n)` · `.distinct()` | |
 | `.select("id", ten_khac=X.cot)` | đổi kiểu trả về sang `list[dict]` |
 | `.fields("id", "name")` · `.exclude("cot")` | chọn cột bảng gốc; cũng thành `list[dict]` |
-| `.include(Entity, name=…, fields=…, exclude=…, where=…, order_by=…)` | gắn dữ liệu lồng nhau |
+| `.include(Entity, name=…, fields=…, exclude=…, where=…, order_by_asc=…, order_by_desc=…)` | gắn dữ liệu lồng nhau |
 | `.nest_under(Entity, name=…, fields=…, exclude=…)` | đảo chiều: cha ra ngoài, bảng gốc vào trong |
 | `.select(so=count(), tb=avg(X.cot))` | hàm gộp, phải đặt tên |
 
@@ -1472,7 +1514,7 @@ postgres/sqlite.
 | `Event.score` | cần `class Event(Entity)` |
 | `F(Event).score` | không cần gì |
 | `F(Event, "cha").score` | cột của bảng đã đặt `alias="cha"` |
-| `"score"` | chỉ ở `on=`, `group_by`, `order_by`, `select` — chỗ đã biết bảng |
+| `"score"` | chỉ ở `on=`, `group_by`, `order_by_*`, `select`, `fields` — chỗ đã biết bảng |
 
 | Hàm gộp | |
 |---|---|
