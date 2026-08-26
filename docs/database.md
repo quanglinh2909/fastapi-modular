@@ -99,6 +99,9 @@ APP_DB__ECHO=false
 | `APP_DB__SCHEMA_MODE` | không | `create` | `off` / `create` / `sync` — xem [mục schema](#tự-chỉnh-schema-thêm--xoá-trường) |
 | `APP_DB__DROP_COLUMNS` | không | `false` | `true` = cho `sync` xoá cột không còn trong entity. Mất dữ liệu |
 | `APP_DB__ECHO` | không | `false` | `true` = in mọi câu SQL ra log |
+| `APP_DB__SQLITE_JOURNAL_MODE` | không | `WAL` | `DELETE` là mặc định gốc của SQLite và **chậm 20 lần** — xem bên dưới |
+| `APP_DB__SQLITE_SYNCHRONOUS` | không | `NORMAL` | `FULL` / `NORMAL` / `OFF`; đi liền với journal mode |
+| `APP_DB__SQLITE_BUSY_TIMEOUT_SECONDS` | không | `5.0` | chờ bao lâu khi người khác đang giữ khoá ghi |
 
 ```bash
 fam dev
@@ -107,15 +110,61 @@ fam dev
 Khởi động sẽ thấy:
 
 ```
+db.sqlite_pragmas journal_mode=WAL synchronous=NORMAL busy_timeout=5000
 db.connected      backend=sqlite
 db.schema_ready   tables=['devices', 'users']
 ```
 
+### Tốc độ ghi, và vì sao mặc định ở đây khác SQLite gốc
+
+Mặc định gốc của SQLite ghi **68 dòng mỗi giây**. Không phải vì SQLite chậm —
+vì mỗi lần commit nó fsync trọn vẹn xuống đĩa. Đo trên máy dev, một
+`repo.save()` một dòng:
+
+| journal_mode | synchronous | Tốc độ | Mỗi dòng |
+|---|---|---|---|
+| DELETE *(gốc SQLite)* | FULL | 68 ghi/s | 14,8 ms |
+| WAL | FULL | 111 ghi/s | 9,0 ms |
+| **WAL** | **NORMAL** *(mặc định ở đây)* | **1.376 ghi/s** | **0,73 ms** |
+| gộp 3.000 dòng trong một transaction | | 7.644 ghi/s | 0,13 ms |
+
+Đánh đổi của `NORMAL`: **cùng WAL thì mất điện KHÔNG hỏng file**, chỉ có thể
+mất vài giao dịch cuối chưa kịp checkpoint. Cần bền vững tuyệt đối (dữ liệu tài
+chính, không có nguồn phát lại) thì đặt `FULL` và chấp nhận 68 ghi/s.
+
+WAL còn cho **đọc trong lúc đang ghi** — chế độ `DELETE` không có.
+
+Đổi về `DELETE` khi file `.db` nằm trên **ổ mạng** (NFS/SMB): WAL cần shared
+memory nên không chạy được ở đó.
+
+### Nhiều nơi cùng ghi có an toàn không
+
+An toàn, nhưng **không nhanh hơn**. SQLite chỉ cho MỘT người ghi tại một thời
+điểm — người thứ hai **chờ** tới `busy_timeout` chứ không lỗi ngay. Đo được:
+
+| Tình huống | Kết quả |
+|---|---|
+| 8 worker async cùng ghi | 1.190 ghi/s, **0 lỗi** |
+| 8 worker `thread=True` qua `ctx.run` | 811 ghi/s, **0 lỗi** |
+| 4 tiến trình (`fam run --workers 4`) | 897 ghi/s, **0 lỗi** |
+| 12 tiến trình | 869 ghi/s, **0 lỗi** |
+| một transaction giữ khoá ghi **quá 5 giây** | `database is locked` |
+
+Hai điều rút ra:
+
+1. **Tổng thông lượng không tăng theo số worker.** 12 tiến trình ghi cũng chỉ
+   bằng 1. Thêm worker để phục vụ HTTP thì được, để ghi nhanh hơn thì không.
+2. Lỗi `database is locked` chỉ xuất hiện khi một giao dịch **giữ khoá lâu hơn
+   `busy_timeout`**. Nó không phải chuyện tranh chấp bình thường — nó là dấu
+   hiệu có ai đó mở transaction rồi làm việc khác trong lúc còn giữ.
+
+Cần hơn 1.000 ghi/s bền vững, hoặc nhiều máy cùng ghi, thì đó là lúc chuyển
+sang [PostgreSQL](#3-postgresql) — không phải lúc đi chỉnh PRAGMA tiếp.
+
 **Lưu ý riêng của SQLite:** kiểu `DATETIME` không lưu múi giờ (MongoDB cũng
 vậy). Template gắn lại UTC lúc đọc nên API của cả ba driver đều trả dạng
 `2026-08-21T02:52:02.049410Z` như nhau — nhưng nếu bạn truy vấn thẳng vào file
-`.db` bằng công cụ khác thì sẽ thấy giá trị trần không có múi giờ. Ngoài ra
-SQLite khoá toàn bộ file khi ghi, nên không hợp với tải ghi cao nhiều tiến trình.
+`.db` bằng công cụ khác thì sẽ thấy giá trị trần không có múi giờ.
 
 Xoá và làm lại từ đầu:
 

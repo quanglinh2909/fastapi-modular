@@ -70,6 +70,9 @@ def create_backend(settings: DatabaseSettings) -> DatabaseBackend:
             pool_recycle_seconds=settings.pool_recycle_seconds,
             connect_timeout_seconds=settings.connect_timeout_seconds,
             query_timeout_seconds=settings.query_timeout_seconds,
+            sqlite_journal_mode=settings.sqlite_journal_mode,
+            sqlite_synchronous=settings.sqlite_synchronous,
+            sqlite_busy_timeout_seconds=settings.sqlite_busy_timeout_seconds,
         ))
 
     if driver == "mongodb":

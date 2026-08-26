@@ -125,10 +125,30 @@ async def test_xoa_truong_chi_khi_bat_drop_columns():
 
 @pytest.mark.asyncio
 async def test_schema_mode_off_khong_dung_gi():
-    settings = _settings()
-    settings = settings.model_copy(update={"schema_mode": "off"})
+    """"off" nghĩa là không đụng DDL — kiểm trong DATABASE, không kiểm bộ nhớ.
+
+    Bản đồ cột `backend._tables` vẫn phải được dựng dù ở mức "off": nó là thứ
+    dịch entity ra câu SQL, nên không có nó thì cả `find` lẫn `save` đều hỏng.
+    Thứ "off" hứa là không chạy CREATE/ALTER, và đó mới là thứ đáng kiểm.
+    """
+    from sqlalchemy import text
+
+    rieng = _settings().model_copy(update={"schema_mode": "off"})
+    if rieng.driver == "sqlite":
+        rieng = rieng.model_copy(
+            update={"dsn": f"sqlite+aiosqlite:///./data/{TABLE}_off.db"}
+        )
+    settings = rieng
     backend = create_backend(settings)
     await backend.startup()
-    await backend.create_schema(Before)             # không tạo bảng nào
-    assert backend._tables == {}
+    await backend.create_schema(Before)
+
+    async with backend._engine.connect() as conn:
+        if backend.name == "postgres":
+            sql = "SELECT to_regclass(:t) IS NOT NULL"
+        else:
+            sql = "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=:t"
+        co_bang = bool((await conn.execute(text(sql), {"t": TABLE})).scalar())
+
+    assert co_bang is False, "schema_mode=off mà vẫn tạo bảng"
     await backend.shutdown()

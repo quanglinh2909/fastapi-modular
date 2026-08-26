@@ -231,6 +231,67 @@ def watch(self, data: dict, ctx: WorkerContext) -> None:
 gì"**. Không dùng `asyncio.run()` ở đó: nó tạo một event loop MỚI, mà connection
 pool của database thuộc về loop cũ — hỏng theo những cách rất khó hiểu.
 
+### Hiệu năng: `ctx` tốn bao nhiêu
+
+Câu hỏi thật là "worker ghi database / bắn message queue / đẩy WebSocket thì có
+chậm hơn viết thẳng trong HTTP handler không". Đo trên máy dev, cùng một lời
+gọi, một lần `await` thẳng và một lần qua `ctx.run(...)` từ thread:
+
+| Lời gọi | `await` thẳng | qua `ctx.run` | Chênh |
+|---|---|---|---|
+| coroutine rỗng *(chi phí trần)* | 15.800.000/s | 53.000/s | **+0,019 ms** |
+| WebSocket broadcast | 1.557.000/s | 47.000/s | **+0,020 ms** |
+| MQTT emit qos=1 | 4.180 tin/s | 4.619 tin/s | ~0 |
+| Kafka emit acks=all | 1.714 tin/s | 2.786 tin/s | ~0 |
+| RabbitMQ emit | 117 tin/s | 112 tin/s | ~0 |
+| SQLite INSERT *(WAL+NORMAL)* | 1.269 ghi/s | 811 ghi/s | +0,4 ms |
+
+Đọc bảng này theo đúng một cách: **`ctx.run` tốn cố định khoảng 0,02 ms.**
+
+Nó là chi phí chuyển một lời gọi từ thread sang vòng lặp sự kiện rồi chờ kết
+quả — `asyncio.run_coroutine_threadsafe`, không phải mở thread mới. Trần của nó
+là khoảng **50.000 lời gọi/giây**, và mọi thứ đụng tới ổ đĩa hay mạng đều chậm
+hơn thế hàng chục lần. Với MQTT/Kafka nó còn không đo được, vì sai số giữa hai
+lần chạy lớn hơn chính nó.
+
+Chỉ MỘT chỗ nó lộ ra: khi công việc bên dưới nhanh cỡ 0,1–0,5 ms, như một
+INSERT SQLite ở chế độ WAL. Ở đó 0,4 ms chuyển giao chiếm được một phần đáng
+kể — nhưng cách sửa không phải là bỏ `ctx.run`, mà là **gộp nhiều lời gọi thành
+một**:
+
+```python
+@worker("camera", thread=True)
+def watch(self, data: dict, ctx: WorkerContext) -> None:
+    lo = []
+    while ctx.running:
+        lo.append(model.predict(capture.read()))
+        if len(lo) >= 50:                      # một lần đi loop cho 50 sự kiện
+            ctx.run(self._repo.save_many(lo))  # thay vì 50 lần
+            lo.clear()
+```
+
+Còn với worker `async def` thì không có chi phí nào cả: `await self._repo.save()`
+đúng bằng viết trong HTTP handler, vì nó chạy trên cùng vòng lặp đó.
+
+**`ctx.blocking(...)` thì khác hẳn** — nó đắt hơn nhiều so với `ctx.run`, vì
+mỗi lần gọi là một lượt bàn giao qua pool thread. Đừng bọc những thứ vốn đã
+nhanh (`json.dumps`, số học); bọc đúng cái chặn thật: đọc frame, chạy model,
+gọi HTTP đồng bộ.
+
+### SQLite: đọc kỹ nếu worker ghi liên tục
+
+SQLite chịu được worker ghi liên tục, nhưng có hai điều phải biết trước:
+
+- **Mặc định của khung là WAL + synchronous=NORMAL** (1.376 ghi/s), không phải
+  mặc định gốc của SQLite (68 ghi/s). Nếu bạn đặt ba biến `APP_DB__SQLITE_JOURNAL_MODE`,
+  `APP_DB__SQLITE_SYNCHRONOUS`, `APP_DB__SQLITE_BUSY_TIMEOUT_SECONDS` về giá trị
+  gốc thì worker sẽ chậm đúng 20 lần.
+- **Tổng thông lượng ghi không tăng theo số worker.** SQLite chỉ có một người
+  ghi tại một thời điểm; 12 tiến trình cùng ghi cũng chỉ bằng 1. Đo được 0 lỗi
+  ở mọi mức thử — người thứ hai chờ chứ không lỗi — nhưng cũng không nhanh hơn.
+
+Chi tiết, bảng số và ngưỡng nên chuyển sang PostgreSQL: [database.md](database.md#tốc-độ-ghi-và-vì-sao-mặc-định-ở-đây-khác-sqlite-gốc).
+
 ### Hỏng thì dựng lại
 
 Vòng lặp ném lỗi thì khung ghi log rồi dựng lại sau một khoảng chờ tăng dần

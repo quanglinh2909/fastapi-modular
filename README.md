@@ -393,7 +393,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              864 tests that need no infrastructure, 62 more when servers exist
+tests/              864 tests that need no infrastructure, 67 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 

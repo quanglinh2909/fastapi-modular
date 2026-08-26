@@ -33,6 +33,8 @@ class CorsSettings(BaseModel):
 
 
 Driver = Literal["memory", "sqlite", "postgres", "mongodb"]
+SqliteJournal = Literal["WAL", "DELETE", "TRUNCATE", "PERSIST", "MEMORY"]
+SqliteSynchronous = Literal["FULL", "NORMAL", "OFF"]
 SchemaMode = Literal["off", "create", "sync"]
 
 
@@ -93,6 +95,41 @@ class DatabaseSettings(BaseModel):
     Khác connect_timeout: nếu database treo giữa lúc đang chạy câu lệnh (mất
     điện, đóng băng, khoá bảng), connection vẫn "mở" nên connect_timeout không
     cứu được — request sẽ treo cho tới khi client bỏ cuộc."""
+
+    # ---- riêng SQLite ------------------------------------------------------
+    sqlite_journal_mode: SqliteJournal = "WAL"
+    """Chế độ nhật ký của SQLite. Đây là mặc định ĐÁNG GIÁ NHẤT của cả nhóm.
+
+    SQLite gốc dùng "DELETE" và ghi rất chậm vì mỗi lần commit là một lần fsync
+    trọn vẹn. Đo trên máy dev, một `repo.save()` một dòng:
+
+        DELETE + synchronous=FULL      68 ghi/s   (14,8 ms mỗi dòng)
+        WAL    + synchronous=FULL     111 ghi/s   ( 9,0 ms)
+        WAL    + synchronous=NORMAL 1.269 ghi/s   ( 0,8 ms)   <- mặc định ở đây
+
+    WAL còn cho **đọc trong lúc đang ghi**, thứ mà chế độ DELETE không có.
+
+    Đổi về "DELETE" khi file .db nằm trên ổ mạng (NFS/SMB): WAL cần shared
+    memory nên không chạy được ở đó.
+    """
+
+    sqlite_synchronous: SqliteSynchronous = "NORMAL"
+    """SQLite fsync tới mức nào. Đi liền với `sqlite_journal_mode`.
+
+    - "FULL"   : bền vững tuyệt đối, và chậm 19 lần (xem bảng trên).
+    - "NORMAL" : **cùng WAL thì mất điện KHÔNG hỏng file**, chỉ có thể mất vài
+                 giao dịch cuối. Đây là đánh đổi mà mọi khung web đều chọn.
+    - "OFF"    : mất điện có thể hỏng file. Chỉ dùng cho dữ liệu vứt được.
+    """
+
+    sqlite_busy_timeout_seconds: float = 5.0
+    """Chờ bao lâu khi có tiến trình khác đang giữ khoá ghi, trước khi ném
+    `database is locked`.
+
+    SQLite chỉ cho MỘT người ghi tại một thời điểm. Người thứ hai không lỗi
+    ngay — nó chờ tới ngưỡng này. Đo được: 12 tiến trình cùng ghi liên tục vẫn
+    0 lỗi; chỉ khi một giao dịch giữ khoá LÂU HƠN ngưỡng này thì mới lỗi.
+    """
 
     startup_retries: int = 10
     startup_retry_delay_seconds: float = 1.0
