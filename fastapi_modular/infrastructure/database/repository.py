@@ -22,7 +22,11 @@ from fastapi_modular.core.config import Settings
 from fastapi_modular.core.container import injectable
 from fastapi_modular.core.logging import get_logger
 from fastapi_modular.core.providers import CapabilityNotSupportedError
-from fastapi_modular.infrastructure.database.base import DatabaseBackend, is_transient_error
+from fastapi_modular.infrastructure.database.base import (
+    DatabaseBackend,
+    Transaction,
+    is_transient_error,
+)
 from fastapi_modular.infrastructure.database.factory import create_backend
 from fastapi_modular.infrastructure.database.query import Query
 
@@ -114,7 +118,7 @@ class Database:
         return await self._backend.ping()
 
     @asynccontextmanager
-    async def transaction(self) -> AsyncIterator[None]:
+    async def transaction(self) -> AsyncIterator[Transaction]:
         """Gộp nhiều thao tác ghi thành một: cùng thành công, hoặc cùng không.
 
             async with self._db.transaction():
@@ -137,6 +141,13 @@ class Database:
         Ngoài request — worker, job, cron, script — thì KHÔNG có sẵn gì cả: mỗi
         `save()` tự commit ngay. Ở đó bắt buộc phải bọc nếu cần nguyên tử.
 
+        Muốn huỷ giữa chừng mà KHÔNG ném lỗi ra ngoài thì lấy tay cầm:
+
+            async with self._db.transaction() as tx:
+                await repo.save(...)
+                if không_hợp_lệ:
+                    await tx.rollback()      # thoát khối, không ném lỗi
+
         MongoDB một node không có transaction đa-document nên khối này ném lỗi
         nói rõ, thay vì chạy tiếp rồi để lại dữ liệu nửa vời.
         """
@@ -145,8 +156,8 @@ class Database:
             raise CapabilityNotSupportedError(
                 f"Backend {self._backend.name!r} chưa có transaction."
             )
-        async with tx():
-            yield
+        async with tx() as handle:
+            yield handle
 
 
 @injectable

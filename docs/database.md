@@ -1590,6 +1590,7 @@ postgres/sqlite.
 | `.select("id", ten_khac=X.cot)` | đổi kiểu trả về sang `list[dict]` |
 | `.fields("id", "name")` · `.exclude("cot")` | chọn cột bảng gốc; cũng thành `list[dict]` |
 | `.include(Entity, name=…, fields=…, exclude=…, where=…, order_by_asc=…, order_by_desc=…)` | gắn dữ liệu lồng nhau |
+| `async with db.transaction() as tx:` · `await tx.rollback()` | xem [Transaction](#transaction--ghi-nhiều-bảng-thì-cùng-thành-công-hoặc-cùng-không) |
 | `.nest_under(Entity, name=…, fields=…, exclude=…)` | đảo chiều: cha ra ngoài, bảng gốc vào trong |
 | `.select(so=count(), tb=avg(X.cot))` | hàm gộp, phải đặt tên |
 
@@ -1835,6 +1836,67 @@ for cam in danh_sach:
 
 Dùng được cả trong HTTP handler — ở đó nó là SAVEPOINT trên transaction của
 request.
+
+### Huỷ mà không ném lỗi
+
+`async with` tự rollback khi có exception. Muốn huỷ vì một lý do bình thường —
+dữ liệu không hợp lệ, không có gì để làm — mà không muốn ném lỗi ra ngoài thì
+lấy tay cầm:
+
+```python
+async with self._db.transaction() as tx:
+    await self._cameras.save(camera)
+    if not await self._kiem_tra(camera):
+        await tx.rollback()          # thoát khối tại đây, KHÔNG ném lỗi
+    await self._logs.save(log)       # dòng này không chạy
+```
+
+Phần còn lại của khối dừng ngay tại `tx.rollback()`, code sau khối chạy tiếp
+như thường. Trong khối lồng nhau thì nó chỉ huỷ khối trong.
+
+### So với `queryRunner` của TypeORM
+
+Cả đoạn dưới đây của NestJS/TypeORM:
+
+```ts
+await queryRunner.connect();
+await queryRunner.startTransaction();
+try {
+  await queryRunner.manager.save(users[0]);
+  await queryRunner.manager.save(users[1]);
+  await queryRunner.commitTransaction();
+} catch (err) {
+  await queryRunner.rollbackTransaction();
+} finally {
+  await queryRunner.release();
+}
+```
+
+viết ở đây là:
+
+```python
+async with self._db.transaction():
+    await self._users.save(users[0])
+    await self._users.save(users[1])
+```
+
+| TypeORM | Ở đây |
+|---|---|
+| `connect()` + `release()` | khối tự mở và tự trả connection, kể cả khi có lỗi |
+| `startTransaction()` | vào khối |
+| `commitTransaction()` | thoát khối êm |
+| `rollbackTransaction()` trong `catch` | có exception → tự rollback rồi ném tiếp |
+| `queryRunner.manager.save(...)` | repository bạn đang có sẵn — không cần đổi sang object khác |
+
+Chỗ khác nhau đáng kể nhất là dòng cuối: TypeORM bắt bạn dùng
+`queryRunner.manager` thì thao tác mới nằm trong transaction, gọi nhầm
+`this.usersRepository` là nó chạy ngoài transaction mà không báo gì. Ở đây
+connection đang mở nằm trong `ContextVar`, nên **mọi** repository trong khối tự
+đi vào đúng transaction đó.
+
+Còn `finally: release()` là dòng người ta quên — quên thì rò connection cho tới
+khi hết pool. `async with` không quên được. Chính TypeORM cũng khuyên dùng
+`dataSource.transaction(...)` thay cho `queryRunner` vì lý do đó.
 
 ### Kiểm xem nó chạy chưa
 

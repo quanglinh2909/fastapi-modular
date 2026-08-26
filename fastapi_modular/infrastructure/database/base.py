@@ -16,7 +16,7 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from enum import Enum
 from functools import cache
-from typing import Any, Literal, Protocol, TypeVar, get_args, get_type_hints
+from typing import Any, Literal, NoReturn, Protocol, TypeVar, get_args, get_type_hints
 
 from fastapi_modular.core.compat import UTC, TimeoutErrors
 from fastapi_modular.core.exceptions import BadRequestError
@@ -287,6 +287,36 @@ def matches(obj: Any, filters: Filters, match: Match) -> bool:
 def active_filters(filters: Filters) -> Filters:
     """Bỏ mọi điều kiện có giá trị None (quy ước: None = không lọc)."""
     return {k: v for k, v in filters.items() if v is not None}
+
+
+class RollbackRequested(Exception):
+    """Tín hiệu nội bộ của `tx.rollback()`. Không lọt ra ngoài khối transaction."""
+
+
+class Transaction:
+    """Cái `async with db.transaction() as tx:` trả về.
+
+    Khối tự commit khi thoát êm và tự rollback khi có exception, nên phần lớn
+    trường hợp không cần đụng tới `tx`. Nó có đúng một việc: huỷ giữa chừng mà
+    KHÔNG phải ném lỗi ra ngoài — thứ mà `async with` trần không làm được.
+    """
+
+    __slots__ = ("rolled_back",)
+
+    def __init__(self) -> None:
+        self.rolled_back = False
+
+    async def rollback(self) -> NoReturn:
+        """Huỷ mọi thay đổi trong khối và thoát khối ngay tại đây.
+
+            async with db.transaction() as tx:
+                await repo.save(...)
+                if không_hợp_lệ:
+                    await tx.rollback()      # thoát khối, KHÔNG ném lỗi ra ngoài
+                await repo2.save(...)        # dòng này không chạy
+        """
+        self.rolled_back = True
+        raise RollbackRequested
 
 
 class DuplicateKeyViolation(Exception):

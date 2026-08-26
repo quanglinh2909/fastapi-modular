@@ -52,6 +52,8 @@ from fastapi_modular.infrastructure.database.base import (
     DatabaseBackend,
     Filters,
     Match,
+    RollbackRequested,
+    Transaction,
     active_filters,
     coerce_value,
     from_document,
@@ -495,7 +497,7 @@ class SqlBackend(DatabaseBackend):
         yield await uow.connection(self._engine)
 
     @asynccontextmanager
-    async def transaction(self) -> AsyncIterator[None]:
+    async def transaction(self) -> AsyncIterator[Transaction]:
         """Gộp nhiều thao tác thành một: cùng thành công, hoặc cùng không.
 
         Ba ca, ba cách nối vào:
@@ -523,8 +525,11 @@ class SqlBackend(DatabaseBackend):
             # này huỷ được phần của mình mà không đụng phần bên ngoài.
             token = _open_transaction.set(dang_mo)
             nested = await dang_mo.begin_nested()
+            tx = Transaction()
             try:
-                yield
+                yield tx
+            except RollbackRequested:
+                await nested.rollback()      # tx.rollback(): huỷ, không ném tiếp
             except BaseException:
                 await nested.rollback()
                 raise
@@ -536,10 +541,13 @@ class SqlBackend(DatabaseBackend):
 
         conn = await self._engine.connect()
         token = _open_transaction.set(conn)
+        tx = Transaction()
         try:
             await conn.begin()
             try:
-                yield
+                yield tx
+            except RollbackRequested:
+                await conn.rollback()
             except BaseException:
                 await conn.rollback()
                 raise

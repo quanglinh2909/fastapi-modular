@@ -18,6 +18,8 @@ from fastapi_modular.infrastructure.database.base import (
     DuplicateKeyViolation,
     Filters,
     Match,
+    RollbackRequested,
+    Transaction,
     active_filters,
     default_of,
     mapping_for,
@@ -97,7 +99,7 @@ class MemoryBackend(DatabaseBackend):
         uow.join(self)
 
     @asynccontextmanager
-    async def transaction(self) -> AsyncIterator[None]:
+    async def transaction(self) -> AsyncIterator[Transaction]:
         """Chụp ảnh dữ liệu lúc vào, có lỗi thì trả lại y như cũ.
 
         Backend memory không có transaction thật, nhưng nếu để nó KHÔNG rollback
@@ -112,8 +114,11 @@ class MemoryBackend(DatabaseBackend):
         mình mà không đụng phần ngoài — giống SAVEPOINT của SQL.
         """
         anh = self._copy_tables()
+        tx = Transaction()
         try:
-            yield
+            yield tx
+        except RollbackRequested:
+            self._restore_tables(anh)        # tx.rollback(): huỷ, không ném tiếp
         except BaseException:
             self._restore_tables(anh)
             raise

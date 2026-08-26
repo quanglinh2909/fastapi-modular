@@ -145,6 +145,33 @@ async def test_sua_thang_vao_object_roi_hong_cung_phai_tra_lai(kho):
     assert (await cameras.get("c8")).name == "Tên cũ"
 
 
+async def test_tx_rollback_huy_ma_khong_nem_loi(kho):
+    """`await tx.rollback()` — thoát khối tại chỗ, không ném gì ra ngoài."""
+    db, cameras, _ = kho
+    da_chay_tiep = False
+
+    async with db.transaction() as tx:
+        await cameras.save(TxCamera(id="c9", name="Sẽ bị huỷ"))
+        await tx.rollback()
+        da_chay_tiep = True                      # không được chạy
+
+    assert await ids(cameras) == []
+    assert da_chay_tiep is False, "sau `tx.rollback()` thì phần còn lại của khối phải dừng"
+    assert tx.rolled_back is True
+
+
+async def test_tx_rollback_o_khoi_trong_khong_giet_khoi_ngoai(kho):
+    db, cameras, _ = kho
+    async with db.transaction():
+        await cameras.save(TxCamera(id="c10", name="Ngoài"))
+        async with db.transaction() as tx:
+            await cameras.save(TxCamera(id="c11", name="Trong"))
+            await tx.rollback()
+        await cameras.save(TxCamera(id="c12", name="Sau đó"))
+
+    assert await ids(cameras) == ["c10", "c12"]
+
+
 async def test_loi_khong_bi_nuot(kho):
     """Rollback xong phải ném tiếp, không được biến lỗi thành im lặng."""
     db, cameras, _ = kho
