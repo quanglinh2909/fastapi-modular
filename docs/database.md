@@ -892,15 +892,13 @@ Gần như mọi thứ trước đây phải dùng `match=` thì nay viết đư
 ### Làm thế nào
 
 ```python
-from fastapi_modular.infrastructure.database import F, or_
-
 events = await (
     repo.query()
     .join(Camera)                              # cột nối đọc từ `reference(Camera)`
-    .where(score__gte=0.8, label="person")     # >= và =
-    .where(reviewed_at__isnull=True)           # IS NULL
-    .where(camera__name__like="Cổng%")         # lọc theo cột bảng đã join
-    .order_by_desc("created_at")                   # dấu trừ = giảm dần
+    .where(Event.score >= 0.8, Event.label == "person")
+    .is_null(Event.reviewed_at)                # IS NULL
+    .like(Camera.name, "Cổng%")                # lọc theo cột bảng đã join
+    .order_by_desc("created_at")               # chiều nằm trong tên hàm
     .limit(20)
     .all()
 )
@@ -911,6 +909,36 @@ về — nên `.score`, `.label` vẫn gõ được như thường.
 
 Không có gì chạy cho tới khi bạn gọi `.all()`, `.first()`, `.count()` hoặc
 `.exists()`.
+
+Cùng câu đó viết bằng **kiểu ngắn** — đuôi `__gte`, `__isnull` — cũng chạy y
+hệt, chọn kiểu nào là tuỳ bạn:
+
+```python
+events = await (
+    repo.query()
+    .join(Camera)
+    .where(score__gte=0.8, label="person", reviewed_at__isnull=True)
+    .where(camera__name__like="Cổng%")
+    .order_by_desc("created_at")
+    .limit(20)
+    .all()
+)
+```
+
+### Cả bộ builder trong một bảng
+
+| Việc | Viết |
+|---|---|
+| lọc | `.where(...)` · `.or_where(...)` |
+| lớn/bé/bằng | `Event.score >= 0.8` · `score__gte=0.8` |
+| LIKE, IN, NULL, BETWEEN | `.like()` `.ilike()` `.in_()` `.not_in()` `.is_null()` `.is_not_null()` `.between()` |
+| nối bảng | `.join()` · `.left_join()` · `.right_join()` · `.outer_join()` |
+| sắp xếp | `.order_by_asc(...)` · `.order_by_desc(...)` |
+| phân trang | `.limit(n)` · `.offset(n)` |
+| chọn cột | `.select(...)` với `fields=` `exclude=` `rename=` `add=` |
+| gộp nhóm | `.group_by(...)` · `.having(...)` · `.or_having(...)` |
+| dữ liệu lồng nhau | `.include(X, ...)` · `.nest_under(X, ...)` |
+| chạy | `await .all()` `.first()` `.one()` `.count()` `.exists()` · `.sql()` |
 
 **Cặp `()` bọc ngoài chỉ để xuống dòng**, không phải cú pháp của builder. Viết
 một dòng thì bỏ luôn:

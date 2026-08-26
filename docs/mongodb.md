@@ -92,7 +92,10 @@ class Camera(Entity):
     name: str
     serial: str
     owner_id: str
+    zone: str = ""
     status: str = "offline"
+    fps: int = 25
+    rtsp: str | None = None
     created_at: datetime = field(default_factory=utcnow)
     updated_at: datetime = field(default_factory=utcnow)
 ```
@@ -189,8 +192,8 @@ trên Mongo**, và mọi điều kiện đều đẩy xuống database chứ kh�
 ```python
 from fastapi_modular.infrastructure.database import F, and_, or_
 
-cameras = await (
-    self._repo.query()
+ket_qua = await (
+    cameras.query()
     .where(Camera.fps >= 25)                  # >= <= > < == !=
     .like(Camera.name, "Cổng%")               # LIKE, phân biệt hoa thường
     .is_null(Camera.rtsp)                     # IS NULL
@@ -203,8 +206,34 @@ cameras = await (
 ```
 
 Nhớ `class Camera(Entity)` thì mới viết được `Camera.fps >= 25`; chưa kế thừa
-thì dùng `F(Camera).fps >= 25`. Chi tiết cách viết điều kiện — `or_where`,
-`and_`/`or_`/`~`, so cột với cột — giống hệt bên SQL, xem
+thì dùng `F(Camera).fps >= 25`.
+
+Đủ bộ, chạy y hệt bên SQL:
+
+| Việc | Viết |
+|---|---|
+| lọc, và nhánh OR | `.where(...)` · `.or_where(...)` |
+| lớn/bé/bằng | `Camera.fps >= 25` · `fps__gte=25` |
+| LIKE / bỏ qua hoa thường | `.like(X.name, "Cổng%")` · `.ilike(X.name, "cổng%")` |
+| IN, NULL, BETWEEN | `.in_()` `.not_in()` `.is_null()` `.is_not_null()` `.between()` |
+| lồng AND/OR | `where(or_(and_(a, b), c))` · `~` là NOT |
+| sắp xếp, phân trang | `.order_by_asc()` `.order_by_desc()` `.limit()` `.offset()` |
+| chọn cột | `.select(fields=…, exclude=…, rename=…, add=…)` |
+| dữ liệu lồng nhau | `.include(X, …)` · `.nest_under(X, …)` |
+| chạy | `await .all()` `.first()` `.one()` `.count()` `.exists()` |
+
+```python
+# "camera tên bắt đầu bằng 'cổng' và đang bật, HOẶC bất kỳ camera nào ở tầng 1"
+# — lấy cái mới nhất
+mot = await (cameras.query()
+             .ilike(Camera.name, "cổng%").where(Camera.status == "online")
+             .or_where(Camera.zone == "Tầng 1")
+             .order_by_desc("created_at")
+             .first())
+```
+
+Cách viết điều kiện — `and_`/`or_`/`~`, so cột với cột, bảy toán tử không có ký
+hiệu — giống hệt bên SQL, xem
 [database.md](database.md#truy-vấn-phức-tạp--join-lớnbé-null).
 
 **NULL cư xử đúng như SQL, không như Mongo.** Đây là chỗ dịch sang Mongo dễ sai
@@ -231,11 +260,12 @@ Cần ổn định thì sắp thêm một cột nữa: `.order_by_desc("score").
 ### Chọn cột trả về
 
 ```python
-await self._repo.query().select("id", "name").all()
+await cameras.query().select("id", "name").all()
 # [{"id": "c1", "name": "Cổng chính"}, ...]
 
-await self._repo.query().select(exclude=["serial"]).all()      # đủ cột, trừ serial
-await self._repo.query().select(rename={"ma": "id"}).all()     # đủ cột, đổi tên id
+await cameras.query().select(exclude=["serial"]).all()       # đủ cột, trừ serial
+await cameras.query().select(rename={"ma": "id"}).all()      # đủ cột, đổi tên id
+await cameras.query().select(add={"ma": Camera.serial}).all()  # đủ cột, thêm một cột
 ```
 
 Sinh ra projection thật của Mongo (`find(loc, {"name": 1})`), không phải lấy cả
@@ -249,11 +279,11 @@ mỗi cái là một câu lệnh `find({_id: {$in: [...]}})` nữa rồi ghép b
 
 ```python
 # mỗi camera kèm danh sách sự kiện
-await self._cameras.query().include(Event).all()
+await cameras.query().include(Event).all()
 # [{"id": "c1", ..., "events": [{...}, {...}]}]
 
 # đảo chiều: lọc theo sự kiện, trả về camera
-await self._events.query().where(Event.score >= 0.9).nest_under(Camera).all()
+await events.query().where(Event.score >= 0.9).nest_under(Camera).all()
 ```
 
 Đầy đủ tham số (`name=`, `fields=`, `exclude=`, `where=`, `order_by_*=`):
@@ -265,7 +295,7 @@ await self._events.query().where(Event.score >= 0.9).nest_under(Camera).all()
 gọi một hàm để tính:
 
 ```python
-cameras = await self._repo.find(zone="A", match=lambda c: dac_biet(c.name))
+ket_qua = await cameras.find(zone="A", match=lambda c: len(c.name) > 5)
 ```
 
 **Nó kéo dữ liệu về rồi mới lọc**, và `limit` cũng chỉ cắt sau khi đã kéo về —
@@ -297,11 +327,8 @@ hai hỏng, cái thứ nhất đã nằm lại rồi. Ba đường đi:
 gì phải "cùng đúng" thì để chung một chỗ:
 
 ```python
-@entity()
-@dataclass(slots=True)
 class Camera(Entity):
-    id: str
-    name: str
+    ...
     lan_kiem_tra_cuoi: datetime | None = None    # thay vì một collection riêng
 ```
 
@@ -328,6 +355,7 @@ from fastapi_modular import reference
 class Event(Entity):
     id: str
     label: str
+    score: float
     camera_id: str = field(metadata=reference(Camera, on_delete="CASCADE"))
 ```
 

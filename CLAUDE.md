@@ -151,6 +151,14 @@ gần hết lỗi và chạy trong vài giây — **viết script rồi chạy, 
    rồi `importlib` + `hasattr` thật.
 3. **Kwarg trong code block** — bắt mọi `ast.Call`, so tên tham số với
    `inspect.signature` thật. Đây là phép bắt được nhiều nhất khi vừa đổi API.
+4. **Chạy thật khối ví dụ** — dựng backend tạm rồi `exec` từng khối `.query()`
+   trong `database.md` (sqlite) và `mongodb.md` (Mongo thật). Phép này bắt được
+   thứ ba phép trên không thấy: ví dụ dùng cột mà entity trong CHÍNH trang đó
+   không có. Bỏ qua khối chứa `self.` (đoạn trong service), `LỖI` (khối cố ý
+   sai) và `assert` (khối "kiểm xem chạy chưa", nói về dữ liệu của người đọc).
+5. **Method công khai nào chưa được docs nhắc** — duyệt `vars(Query)` /
+   `vars(Repository)` và tìm trong docs. Bắt được ca "thêm method mới rồi quên
+   viết hướng dẫn".
 
 ## Phát hành
 
