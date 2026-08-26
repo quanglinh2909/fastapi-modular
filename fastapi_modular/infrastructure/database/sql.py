@@ -635,9 +635,16 @@ class SqlBackend(DatabaseBackend):
 
         target: Any = root
         for join in spec.joins:
-            target = target.join(
-                tables[join.alias], build(join.on), isouter=join.outer, full=join.full
-            )
+            other = tables[join.alias]
+            on = build(join.on)
+            if join.kind == "right":
+                # `A RIGHT JOIN B` == `B LEFT JOIN A`. Sinh ra vế trái cho lành:
+                # SQLite chỉ có RIGHT JOIN từ 3.39, còn LEFT JOIN thì ở đâu cũng có.
+                target = other.join(target, on, isouter=True)
+            else:
+                target = target.join(
+                    other, on, isouter=join.kind != "inner", full=join.kind == "outer"
+                )
         if spec.joins:
             stmt = stmt.select_from(target)
 

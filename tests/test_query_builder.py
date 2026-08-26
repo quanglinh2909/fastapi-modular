@@ -252,12 +252,12 @@ async def test_so_COT_voi_COT(kho):
 
 
 async def test_left_join_giu_dong_khong_khop(kho):
-    """`outer=True` giữ camera chưa có sự kiện nào — cách tìm "cái nào trống"."""
+    """`left_join` giữ camera chưa có sự kiện nào — cách tìm "cái nào trống"."""
     _, cameras = kho
     E = F(QEvent)
     rows = await (
         cameras.query()
-        .join(QEvent, on=F(QCamera).id == E.camera_id, outer=True)
+        .left_join(QEvent, on=F(QCamera).id == E.camera_id)
         .where(E.id.is_null())
         .all()
     )
@@ -399,14 +399,62 @@ async def test_self_join_sinh_ra_alias_that_trong_SQL(tmp_path):
     await backend.shutdown()
 
 
+# -------------------------------------------------------------- RIGHT JOIN
+async def test_right_join_giu_ben_phai(kho):
+    """Nối hẹp lại để có sự kiện không khớp camera nào — chúng phải còn."""
+    _, cameras = kho
+    rows = await (
+        cameras.query()
+        .right_join(QEvent, on=and_(F(QEvent).camera_id == QCamera.id,
+                                    F(QEvent).label == "person"))
+        .select(cam=QCamera.id, ev=F(QEvent).id)
+        .all()
+    )
+    cap = sorted((r["cam"] or "-", r["ev"] or "-") for r in rows)
+    assert ("-", "e2") in cap, "sự kiện label=fire không khớp camera nào vẫn phải còn"
+    assert not any(c == "c3" for c, _ in cap), "camera không có sự kiện thì RIGHT bỏ"
+
+
+async def test_right_join_khong_co_select_thi_chi_cach_dao_lai(kho):
+    events, _ = kho
+    with pytest.raises(BadRequestError) as loi:
+        await events.query().right_join(QCamera).all()
+    assert "select" in str(loi.value).lower()
+    assert "left_join" in str(loi.value), "phải chỉ luôn cách làm đúng"
+
+
+@pytest.mark.skipif(not CO_SQLITE, reason="đặt TEST_SQLITE=1 và cài aiosqlite")
+async def test_bon_kieu_join_sinh_ra_bon_cau_SQL(tmp_path):
+    backend = create_backend(DatabaseSettings(
+        driver="sqlite", dsn=f"sqlite+aiosqlite:///{tmp_path}/kieu.db"))
+    await backend.startup()
+    await backend.create_schema(QCamera, QEvent)
+    events = Repository(QEvent, _Db(backend))
+    cameras = Repository(QCamera, _Db(backend))
+
+    def gon(q):
+        return " ".join(q.sql().split())
+
+    assert "JOIN qcameras ON" in gon(events.query().join(QCamera))
+    assert "LEFT OUTER JOIN qcameras ON" in gon(events.query().left_join(QCamera))
+    assert "FULL OUTER JOIN qcameras ON" in gon(
+        events.query().outer_join(QCamera).select("id"))
+
+    # RIGHT JOIN sinh ra LEFT JOIN với hai vế đảo chỗ — SQLite cũ không có RIGHT
+    right = gon(cameras.query().right_join(QEvent).select("id"))
+    assert "FROM qevents LEFT OUTER JOIN qcameras ON" in right
+    assert "RIGHT" not in right
+    await backend.shutdown()
+
+
 # --------------------------------------------------------------- FULL JOIN
 async def test_full_join_giu_ca_hai_ben(kho):
     """Nối theo điều kiện hẹp: còn camera không khớp ai VÀ sự kiện không khớp ai."""
     _, cameras = kho
     rows = await (
         cameras.query()
-        .join(QEvent, on=and_(F(QEvent).camera_id == QCamera.id, F(QEvent).label == "person"),
-              full=True)
+        .outer_join(QEvent, on=and_(F(QEvent).camera_id == QCamera.id,
+                                   F(QEvent).label == "person"))
         .select(cam=QCamera.id, ev=F(QEvent).id)
         .all()
     )
@@ -418,7 +466,7 @@ async def test_full_join_giu_ca_hai_ben(kho):
 async def test_full_join_khong_co_select_thi_bao_ro(kho):
     _, cameras = kho
     with pytest.raises(BadRequestError) as loi:
-        await cameras.query().join(QEvent, full=True).all()
+        await cameras.query().outer_join(QEvent).all()
     assert "select" in str(loi.value).lower()
 
 
@@ -510,6 +558,69 @@ async def test_ham_gop_trong_select_phai_dat_ten(kho):
 
 
 # --------------------------------------------------------------- OR / NOT
+async def test_or_where_mo_nhanh_moi_where_sau_do_lai_AND(kho):
+    """`.where(a).where(b).or_where(c).where(d)` = `(a AND b) OR (c AND d)`."""
+    events, _ = kho
+    rows = await (
+        events.query()
+        .where(F(QEvent).label == "person")
+        .where(F(QEvent).score >= 0.9)
+        .or_where(F(QEvent).label == "fire")
+        .where(F(QEvent).score >= 0.3)
+        .all()
+    )
+    assert ids(rows) == ["e0", "e2", "e3", "e5"]
+
+
+async def test_or_where_cho_ket_qua_y_het_or_long_and(kho):
+    """Hai cách viết cùng một câu — nếu lệch thì một trong hai đang sai."""
+    events, _ = kho
+    noi_tiep = await (events.query()
+                      .where(F(QEvent).label == "person").where(F(QEvent).score >= 0.9)
+                      .or_where(F(QEvent).label == "fire").where(F(QEvent).score >= 0.3)
+                      .all())
+    long_nhau = await (events.query().where(
+        or_(and_(F(QEvent).label == "person", F(QEvent).score >= 0.9),
+            and_(F(QEvent).label == "fire", F(QEvent).score >= 0.3))).all())
+    assert ids(noi_tiep) == ids(long_nhau)
+
+
+async def test_or_where_khi_chua_co_where_nao_thi_chi_la_where(kho):
+    events, _ = kho
+    assert ids(await events.query().or_where(F(QEvent).label == "fire").all()) == ["e2"]
+
+
+async def test_or_where_nhan_ca_kieu_ngan(kho):
+    events, _ = kho
+    rows = await events.query().where(label="fire").or_where(label="car").all()
+    assert ids(rows) == ["e2", "e4"]
+
+
+async def test_or_having_cung_luat_voi_or_where(kho):
+    events, _ = kho
+    rows = await (events.query().group_by(QEvent.camera_id).select("camera_id", so=count())
+                  .having(count() > 3).or_having(count() == 2)
+                  .order_by("camera_id").all())
+    assert rows == [{"camera_id": "c1", "so": 4}, {"camera_id": "c2", "so": 2}]
+
+
+@pytest.mark.skipif(not CO_SQLITE, reason="đặt TEST_SQLITE=1 và cài aiosqlite")
+async def test_or_where_khong_lam_cau_SQL_thuong_moc_them_ngoac(tmp_path):
+    """Một nhánh thì câu lệnh phải y như trước khi có or_where."""
+    backend = create_backend(DatabaseSettings(
+        driver="sqlite", dsn=f"sqlite+aiosqlite:///{tmp_path}/nhanh.db"))
+    await backend.startup()
+    await backend.create_schema(QCamera, QEvent)
+    events = Repository(QEvent, _Db(backend))
+
+    mot = " ".join(events.query().where(label="fire").where(score__gte=0.3).sql().split())
+    assert "WHERE qevents.label = 'fire' AND qevents.score >= 0.3" in mot
+
+    hai = " ".join(events.query().where(label="fire").or_where(label="car").sql().split())
+    assert "WHERE qevents.label = 'fire' OR qevents.label = 'car'" in hai
+    await backend.shutdown()
+
+
 async def test_or_long_trong_and_hai_tang(kho):
     """`(a AND b) OR (c AND d)` — hỏi nhiều nhất, và là chỗ dấu ngoặc dễ sai."""
     events, _ = kho

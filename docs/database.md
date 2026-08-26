@@ -12,10 +12,11 @@
 | "Còn hoá đơn thì KHÔNG cho xoá khách hàng" | [`RESTRICT`](#restrict--chặn-không-cho-xoá) |
 | "Đọc/ghi dữ liệu trong service" | [Dùng Repository trong code](#dùng-repository-trong-code) |
 | "Lọc lớn hơn, nhỏ hơn, NULL, nối bảng" | [Truy vấn phức tạp](#truy-vấn-phức-tạp--join-lớnbé-null) |
-| "**Điều kiện này HOẶC điều kiện kia**" | [OR và AND lồng nhau](#or-và-and-lồng-nhau) |
+| "**Điều kiện này HOẶC điều kiện kia**" | [`or_where`](#or-or_where-mở-nhánh-mới) |
 | "**Mỗi camera có bao nhiêu sự kiện**" | [Gộp nhóm](#gộp-nhóm-đếm-tính-trung-bình) |
 | "**Chỉ lấy camera có hơn 5 sự kiện**" | [HAVING](#having--lọc-theo-kết-quả-gộp) |
 | "Camera cha của camera này tên gì" | [Nối bảng với chính nó](#nối-bảng-với-chính-nó-self-join) |
+| "Giữ cả camera chưa có sự kiện nào" | [Bốn kiểu nối](#bốn-kiểu-nối-bốn-method) |
 | "Chọn database nào" | [Cách chọn driver](#cách-chọn-driver) |
 | "Thêm/xoá trường mà không mất dữ liệu" | [Tự chỉnh schema](#tự-chỉnh-schema-thêm--xoá-trường) |
 
@@ -1041,9 +1042,34 @@ error: "score" in __slots__ conflicts with class variable access
 Chạy mypy trong CI thì dùng `F(Event).score > 0.8` (hàm `F` trả `Any` nên im
 lặng) hoặc kiểu ngắn `.where(score__gt=0.8)`. Cả hai chạy y hệt.
 
-### OR và AND lồng nhau
+### OR: `or_where` mở nhánh mới
 
-Nhiều `.where()` nối với nhau bằng **AND**. Muốn OR thì gọi `or_(...)`:
+**Nhiều `.where()` liền nhau nối với nhau bằng AND. `.or_where()` mở một nhánh
+OR mới, rồi các `.where()` sau đó lại nối AND vào nhánh đó.**
+
+```python
+# (label = 'person' AND score >= 0.9) OR (label = 'fire' AND score >= 0.3)
+await (repo.query()
+       .where(Event.label == "person")
+       .where(Event.score >= 0.9)
+       .or_where(Event.label == "fire")
+       .where(Event.score >= 0.3)
+       .all())
+```
+
+```sql
+WHERE events.label = 'person' AND events.score >= 0.9
+   OR events.label = 'fire' AND events.score >= 0.3
+```
+
+Không có `or_where` nào thì câu lệnh không đổi một chữ so với trước — một nhánh
+là chỉ toàn `AND`.
+
+`or_where` nhận cả kiểu ngắn: `.where(label="fire").or_where(label="car")`.
+Gọi `or_where` khi chưa có `where` nào thì nó chỉ là `where`.
+
+**Muốn OR nằm BÊN TRONG một điều kiện AND** thì dùng `or_(...)` — hai thứ khác
+nhau, đừng lẫn:
 
 ```python
 # score >= 0.8 AND (label = 'fire' OR label = 'car')
@@ -1053,23 +1079,8 @@ await (repo.query()
        .all())
 ```
 
-**Hai điều kiện rồi OR ở giữa** — ca hay gặp nhất, `and_` lồng trong `or_`:
-
-```python
-# (label = 'person' AND score >= 0.9) OR (label = 'fire' AND score >= 0.3)
-await (repo.query()
-       .where(or_(and_(Event.label == "person", Event.score >= 0.9),
-                  and_(Event.label == "fire",   Event.score >= 0.3)))
-       .all())
-```
-
-Sinh ra đúng câu này, và dấu ngoặc do database tự hiểu theo thứ tự ưu tiên
-`AND` trước `OR`:
-
-```sql
-WHERE events.label = 'person' AND events.score >= 0.9
-   OR events.label = 'fire' AND events.score >= 0.3
-```
+Đây là cả sự khác nhau: `or_where` cắt câu thành hai nhánh **ở tầng ngoài
+cùng**; `or_(...)` là một điều kiện đơn lẻ nằm gọn trong một nhánh.
 
 Viết bằng `&` `|` `~` cũng được, kết quả y hệt — nhưng **phải có ngoặc quanh
 từng phép so sánh**, vì trong Python `&` ưu tiên cao hơn `>=`:
@@ -1081,7 +1092,7 @@ từng phép so sánh**, vì trong Python `&` ưu tiên cao hơn `>=`:
 
 Thiếu ngoặc thì `Event.score >= 0.9 & Event.label` chạy trước và bạn nhận
 `TypeError: unsupported operand type(s) for &`. Không thích đếm ngoặc thì dùng
-`and_()` / `or_()` — không có bẫy nào.
+`or_where` hoặc `and_()`/`or_()` — không có bẫy nào.
 
 `~` là NOT: `.where(~or_(Event.label == "fire", Event.label == "car"))`.
 
@@ -1134,40 +1145,40 @@ bằng `reference(...)`. Nói rõ bằng `on=Camera.ten_cot` hoặc `on="ten_cot
 Hai cột cùng trỏ sang một bảng (`vao_id`, `ra_id` cùng trỏ `Camera`) cũng vậy —
 liệt kê cả hai rồi bắt bạn chọn.
 
-### Bốn kiểu nối
+### Bốn kiểu nối, bốn method
 
-| Viết | Ra SQL | Dùng khi |
+Đọc tên là biết ra SQL gì — không có cờ `outer=`/`full=` nào phải nhớ:
+
+| Viết | Ra SQL | Giữ dòng không khớp của |
 |---|---|---|
-| `.join(Camera)` | `JOIN` | chỉ cần dòng khớp cả hai bên |
-| `.join(Event, outer=True)` | `LEFT JOIN` | giữ cả dòng **không** có bên phải |
-| `.join(Event, full=True)` | `FULL OUTER JOIN` | giữ cả hai bên; bắt buộc `.select(...)` |
-| `.join(Camera, alias="cha", on=…)` | `JOIN … AS cha` | nối bảng với **chính nó** |
+| `.join(Camera)` | `JOIN` | không bên nào |
+| `.left_join(Event)` | `LEFT JOIN` | bên **trái** (bảng gốc) |
+| `.right_join(Event)` | `RIGHT JOIN` | bên **phải** |
+| `.outer_join(Event)` | `FULL OUTER JOIN` | **cả hai** bên |
 
-**`RIGHT JOIN` không có, và không thiếu.** Builder trả về entity của bảng GỐC,
-nên "RIGHT JOIN" chỉ là đổi bảng nào làm gốc rồi dùng `outer=True`:
+Cả bốn nhận cùng bộ tham số: `on=`, `alias=`.
 
-```python
-# thay vì  events.query().join(Camera, right=True)
-await cameras.query().join(Event, outer=True)...
-```
-
-Chọn bảng gốc là việc bạn phải làm dù thế nào — nó quyết định bạn nhận về cái
-gì — nên chọn xong là hết chuyện RIGHT.
-
-**`LEFT JOIN` là cách tìm "cái nào còn trống":**
+**`left_join` là cách tìm "cái nào còn trống":**
 
 ```python
 # camera CHƯA có sự kiện nào
 await (cameras.query()
-       .join(Event, outer=True)
+       .left_join(Event)
        .where(F(Event).id.is_null())
        .all())
 ```
 
-**`FULL JOIN` bắt buộc `.select(...)`**, vì nó sinh cả những dòng không có bản
-ghi nào bên bảng gốc — trả về một `Camera` toàn `None` thì chỉ là bịa. Không
-có `.select` thì báo lỗi ngay chứ không trả rác. SQLite phải từ 3.39 trở lên
-mới có `FULL OUTER JOIN`.
+**`right_join` và `outer_join` bắt buộc `.select(...)`.** Chúng sinh cả những
+dòng KHÔNG có bản ghi nào của bảng gốc, mà mặc định truy vấn trả về entity của
+bảng gốc — trả một `Camera` toàn `None` thì chỉ là bịa. Lỗi báo ngay, và chỉ
+luôn cách khác: đảo lại, lấy bảng kia làm gốc rồi `left_join`.
+
+Hai điều đáng biết về hai kiểu này:
+
+- **`right_join` sinh ra `LEFT JOIN` với hai vế đảo chỗ**, vì hai câu đó bằng
+  nhau còn `RIGHT JOIN` thì SQLite chỉ có từ 3.39. Kết quả không đổi, chỉ là
+  câu lệnh đọc khác lúc bạn xem `.sql()`.
+- **`outer_join` cần SQLite từ 3.39 trở lên.** Postgres thì lúc nào cũng có.
 
 ### Nối bảng với chính nó (self join)
 
@@ -1257,8 +1268,8 @@ chỗ nhầm nhiều nhất, và hai cách cho ra con số khác hẳn nhau:
 .having(count() > 5, avg(Event.score) >= 0.8)
 ```
 
-Nhiều điều kiện trong một `having` nối với nhau bằng AND, y như `where`.
-`or_(...)` dùng được ở đây luôn.
+Nhiều điều kiện trong một `having` nối với nhau bằng AND, và có `or_having`
+mở nhánh mới y hệt `or_where`. `or_(...)` dùng được ở đây luôn.
 
 `.count()` trên một truy vấn có `group_by` đếm **số nhóm**, đúng như
 `SELECT count(*) FROM (...)` của SQL.
@@ -1309,13 +1320,15 @@ postgres/sqlite.
 
 | Dựng | |
 |---|---|
-| `.join(Entity)` | nối bảng, cột lấy từ `reference(...)` |
-| `.join(Entity, outer=True)` · `full=True` | LEFT JOIN · FULL OUTER JOIN (cần `.select`) |
+| `.join(Entity)` | INNER JOIN, cột nối lấy từ `reference(...)` |
+| `.left_join(Entity)` | LEFT JOIN |
+| `.right_join(Entity)` · `.outer_join(Entity)` | RIGHT · FULL OUTER (cả hai cần `.select`) |
 | `.join(Entity, alias="cha")` | nối bảng với chính nó; lấy cột bằng `F(Entity, "cha")` |
 | `.group_by(X.cot)` | gộp nhóm; bắt buộc kèm `.select(...)` |
-| `.having(count() > 5)` | lọc theo kết quả gộp |
+| `.having(count() > 5)` · `.or_having(...)` | lọc theo kết quả gộp |
 | `.join(Entity, on=…, outer=False, alias="")` | `on=` nhận `Entity.cot`, `"cot"`, `("cot","cot_kia")`, hoặc cả một điều kiện |
 | `.where(*điều_kiện, **kwargs)` | nhiều lần `where` nối bằng AND |
+| `.or_where(*điều_kiện, **kwargs)` | mở nhánh OR mới |
 | `.order_by("-created_at")` | dấu trừ = giảm dần; nhận cả `X.cot` và `F(X).cot.desc()` |
 | `.limit(n)` · `.offset(n)` · `.distinct()` | |
 | `.select("id", ten_khac=X.cot)` | đổi kiểu trả về sang `list[dict]` |

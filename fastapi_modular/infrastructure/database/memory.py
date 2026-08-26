@@ -108,10 +108,10 @@ class MemoryBackend(DatabaseBackend):
                 if khop:
                     da_khop.update(i for i, _ in khop)
                     ghep.extend({**row, join.alias: o} for _, o in khop)
-                elif join.outer:
+                elif join.keeps_left:
                     ghep.append({**row, join.alias: None})
-            if join.full:
-                # FULL JOIN: thêm nốt những dòng bên PHẢI không khớp ai, với
+            if join.keeps_right:
+                # RIGHT/FULL: thêm nốt những dòng bên PHẢI không khớp ai, với
                 # toàn bộ bên trái để trống.
                 trong = dict.fromkeys(aliases)
                 ghep.extend(

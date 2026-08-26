@@ -406,13 +406,25 @@ class _Infer:
 _INFER = _Infer()
 
 
+JOIN_KINDS = ("inner", "left", "right", "outer")
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class Join:
     entity: type
     alias: str
     on: Condition
-    outer: bool = False
-    full: bool = False
+    kind: str = "inner"          # inner | left | right | outer (FULL OUTER)
+
+    @property
+    def keeps_left(self) -> bool:
+        """Giữ cả dòng bên TRÁI không khớp ai (LEFT và FULL)."""
+        return self.kind in ("left", "outer")
+
+    @property
+    def keeps_right(self) -> bool:
+        """Giữ cả dòng bên PHẢI không khớp ai (RIGHT và FULL)."""
+        return self.kind in ("right", "outer")
 
 
 def _alias_of(entity: type) -> str:
@@ -470,11 +482,15 @@ class Query(Generic[E]):
     `.first()`, `.count()` hay `.exists()`.
     """
 
-    __slots__ = ("_db", "_spec")
+    __slots__ = ("_db", "_having", "_spec", "_where")
 
     def __init__(self, entity: type[E], database: Database) -> None:
         self._db = database
         self._spec = QuerySpec(entity=entity)
+        # Mỗi phần tử là một nhóm điều kiện nối bằng AND; các nhóm nối với nhau
+        # bằng OR. `where` thêm vào nhóm đang mở, `or_where` mở nhóm mới.
+        self._where: list[list[Condition]] = [[]]
+        self._having: list[list[Condition]] = [[]]
 
     # ------------------------------------------------------------- dựng
     def join(
@@ -482,11 +498,12 @@ class Query(Generic[E]):
         entity: type,
         *,
         on: Any = _INFER,
-        outer: bool = False,
-        full: bool = False,
         alias: str = "",
     ) -> Query[E]:
-        """Nối thêm một bảng để LỌC theo cột của nó.
+        """`INNER JOIN` — chỉ giữ dòng khớp được cả hai bên.
+
+        Bốn kiểu nối là bốn method riêng, không phải cờ: `join`, `left_join`,
+        `right_join`, `outer_join`. Đọc tên là biết ra SQL gì.
 
             .join(Camera)                          # đã khai `reference(Camera)` thì đủ
             .join(Camera, on=Event.camera_id)      # chỉ đúng cột nối
@@ -502,19 +519,39 @@ class Query(Generic[E]):
         đang nối thì vế kia là khoá chính của bảng gốc, và ngược lại. Nhờ vậy
         chiều một-nhiều (`.join(Event, on=Event.camera_id)`) viết y hệt.
 
-        Bốn kiểu nối:
-
-            .join(Camera)                       # INNER: chỉ dòng khớp cả hai bên
-            .join(Camera, outer=True)           # LEFT : giữ cả dòng không có bên phải
-            .join(Camera, full=True)            # FULL : giữ cả hai bên, cần `.select(...)`
-            .join(Camera, alias="cha", on=...)  # nối bảng với CHÍNH NÓ
-
-        `RIGHT JOIN` không có, và không thiếu: builder trả về entity của bảng
-        GỐC, nên "RIGHT JOIN" chỉ là đổi bảng nào làm gốc rồi dùng `outer=True`
-        — `cameras.query().join(Event, outer=True)` thay cho
-        `events.query().join(Camera, right=True)`. Bảng gốc cũng chính là thứ
-        bạn muốn nhận về, nên chọn nó là bước bạn phải làm dù thế nào.
+        `alias=` để nối một bảng với CHÍNH NÓ — xem `F(Camera, "cha")`.
         """
+        return self._add_join(entity, on, alias, "inner")
+
+    def left_join(self, entity: type, *, on: Any = _INFER, alias: str = "") -> Query[E]:
+        """`LEFT JOIN` — giữ cả dòng bên trái không khớp ai, cột bên phải là NULL.
+
+        Đây là cách tìm "cái nào còn trống":
+
+            .left_join(Event).where(F(Event).id.is_null())    # camera CHƯA có sự kiện
+        """
+        return self._add_join(entity, on, alias, "left")
+
+    def right_join(self, entity: type, *, on: Any = _INFER, alias: str = "") -> Query[E]:
+        """`RIGHT JOIN` — giữ cả dòng bên phải không khớp ai. Bắt buộc `.select(...)`.
+
+        Cần `.select` vì có dòng KHÔNG có bản ghi nào của bảng gốc, mà mặc định
+        truy vấn trả về entity của bảng gốc — trả một entity toàn `None` là bịa.
+        Muốn nhận entity thì đảo lại: lấy bảng kia làm gốc rồi `left_join`.
+
+        SQL sinh ra là `LEFT JOIN` với hai vế đảo chỗ, vì hai câu đó bằng nhau
+        và không phải database nào cũng có `RIGHT JOIN` (SQLite chỉ có từ 3.39).
+        """
+        return self._add_join(entity, on, alias, "right")
+
+    def outer_join(self, entity: type, *, on: Any = _INFER, alias: str = "") -> Query[E]:
+        """`FULL OUTER JOIN` — giữ dòng không khớp của CẢ HAI bên. Bắt buộc `.select(...)`.
+
+        Cần SQLite từ 3.39 trở lên; Postgres thì lúc nào cũng có.
+        """
+        return self._add_join(entity, on, alias, "outer")
+
+    def _add_join(self, entity: type, on: Any, alias: str, kind: str) -> Query[E]:
         name = alias or _alias_of(entity)
         if name in {_alias_of(self._spec.entity), *(j.alias for j in self._spec.joins)}:
             raise BadRequestError(
@@ -526,13 +563,7 @@ class Query(Generic[E]):
         # một phép nối cho ra đúng một điều kiện giống hệt nhau.
         rieng = "" if name == _alias_of(entity) else name
         self._spec.joins.append(
-            Join(
-                entity=entity,
-                alias=name,
-                on=self._on_condition(entity, on, rieng),
-                outer=outer or full,
-                full=full,
-            )
+            Join(entity=entity, alias=name, on=self._on_condition(entity, on, rieng), kind=kind)
         )
         return self
 
@@ -617,10 +648,29 @@ class Query(Generic[E]):
         và khai `Condition` ở đây làm IDE gạch đỏ một câu hoàn toàn đúng. Sai
         kiểu thật thì `as_condition` bắt lúc chạy, kèm lời chỉ cách viết lại.
         """
-        self._spec.conditions.extend(as_condition(c) for c in conditions)
-        for key, value in lookups.items():
-            self._spec.conditions.append(self._parse_lookup(key, value))
+        self._where[-1].extend(self._as_conditions(conditions, lookups))
+        self._spec.conditions = _compose(self._where)
         return self
+
+    def or_where(self, *conditions: Any, **lookups: Any) -> Query[E]:
+        """Mở một nhánh OR mới. Các `where` sau đó lại nối AND vào nhánh này.
+
+            .where(Event.label == "person").where(Event.score >= 0.9)
+            .or_where(Event.label == "fire").where(Event.score >= 0.3)
+
+        cho ra `(label='person' AND score>=0.9) OR (label='fire' AND score>=0.3)`.
+
+        Gọi `or_where` khi chưa có `where` nào thì nó chỉ là `where`.
+        """
+        self._where.append(list(self._as_conditions(conditions, lookups)))
+        self._spec.conditions = _compose(self._where)
+        return self
+
+    def _as_conditions(self, conditions: tuple, lookups: dict) -> list[Condition]:
+        return [
+            *(as_condition(c) for c in conditions),
+            *(self._parse_lookup(key, value) for key, value in lookups.items()),
+        ]
 
     def _parse_lookup(self, key: str, value: Any) -> Condition:
         parts = key.split("__")
@@ -705,7 +755,14 @@ class Query(Generic[E]):
         là `.where(Event.score >= 0.8).having(count() > 5)` — đổi chỗ hai cái
         cho ra con số khác hẳn.
         """
-        self._spec.havings.extend(as_condition(c) for c in conditions)
+        self._having[-1].extend(as_condition(c) for c in conditions)
+        self._spec.havings = _compose(self._having)
+        return self
+
+    def or_having(self, *conditions: Any) -> Query[E]:
+        """Mở một nhánh OR mới cho `having`, cùng luật với `or_where`."""
+        self._having.append([as_condition(c) for c in conditions])
+        self._spec.havings = _compose(self._having)
         return self
 
     def limit(self, count: int | None) -> Query[E]:
@@ -757,11 +814,14 @@ class Query(Generic[E]):
                 f"{self._spec.entity.__name__} lúc này chỉ là bịa. Ví dụ: "
                 ".select('camera_id', so_luong=count())"
             )
-        if any(j.full for j in self._spec.joins):
+        thieu = [j for j in self._spec.joins if j.keeps_right]
+        if thieu:
+            ten = "right_join" if thieu[0].kind == "right" else "outer_join"
             raise BadRequestError(
-                "`full=True` phải đi với `.select(...)`: FULL JOIN sinh cả những "
-                f"dòng KHÔNG có bản ghi {self._spec.entity.__name__} nào. Ví dụ: "
-                ".select(ma=..., ten=...)"
+                f"`{ten}` phải đi với `.select(...)`: nó sinh cả những dòng KHÔNG "
+                f"có bản ghi {self._spec.entity.__name__} nào, mà mặc định truy vấn "
+                f"trả về {self._spec.entity.__name__}. Hoặc đảo lại: lấy "
+                f"{thieu[0].entity.__name__} làm bảng gốc rồi `left_join`."
             )
 
     async def all(self) -> list[Any]:
@@ -826,6 +886,23 @@ class Query(Generic[E]):
             f"<Query[{spec.entity.__name__}] joins={len(spec.joins)} "
             f"where={len(spec.conditions)} limit={spec.limit}>"
         )
+
+
+def _compose(branches: list[list[Condition]]) -> list[Condition]:
+    """Các nhánh -> danh sách điều kiện mà backend hiểu (nối ngầm bằng AND).
+
+    Một nhánh thì trả nguyên danh sách chứ không gói thêm một tầng `OR` một
+    phần tử. Chỉ để `spec` đọc cho dễ khi soi lỗi — câu SQL thì giống hệt, đã
+    thử: SQLAlchemy dẹp luôn `or_()` một vế.
+
+    Nhiều nhánh thì gói thành đúng một `OR` của các `AND`.
+    """
+    kept = [b for b in branches if b]
+    if not kept:
+        return []
+    if len(kept) == 1:
+        return list(kept[0])
+    return [Group("or", tuple(b[0] if len(b) == 1 else Group("and", tuple(b)) for b in kept))]
 
 
 # ------------------------------------------------- tính bằng Python (memory)
@@ -940,6 +1017,7 @@ def sort_key(orders: Sequence[Order]) -> Any:
 
 
 __all__ = [
+    "JOIN_KINDS",
     "Aggregate",
     "Column",
     "Condition",
