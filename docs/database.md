@@ -626,13 +626,13 @@ Một entity là một bảng. Viết vào `src/api/<module>/entities/`:
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from fastapi_modular import Entity, entity
 from fastapi_modular.core.clock import utcnow
-from fastapi_modular.core.container import entity
 
 
 @entity()
 @dataclass(slots=True)
-class Camera:
+class Camera(Entity):
     id: str                                              # BẮT BUỘC, là khoá chính
     name: str
     ip: str
@@ -665,6 +665,12 @@ print(cam.id)     # "3f2a...", khung vừa sinh
 `save()` đóng dấu lại `updated_at` — không có chỗ nào quên, vì mọi đường ghi
 đều đi qua đó. Tương đương `@UpdateDateColumn` của TypeORM. Bản ghi mới thì hai
 mốc bằng nhau, nên "chưa từng sửa" nhận ra được bằng `created_at == updated_at`.
+
+**Kế thừa `Entity` để viết điều kiện bằng toán tử thường.** Đây là thứ duy
+nhất `Entity` làm: `Camera.fps >= 25` cho ra một điều kiện thay vì lỗi. Không
+kế thừa cũng chạy bình thường, chỉ là phải viết `.where(fps__gte=25)` hoặc
+`F(Camera).fps >= 25`. Nó **không** thêm method nào vào entity, và không làm
+đối tượng nặng thêm một byte nào — xem [Tra cứu](#tra-cứu).
 
 **Tên bảng mặc định là tên class viết thường + `s`**: `Camera` → `cameras`. Đổi
 bằng `@entity(name="camera_list")`.
@@ -711,12 +717,12 @@ Sự kiện phải thuộc về một camera. Camera thuộc về một khu vự
 `reference(...)` đặt ngay trên cột:
 
 ```python
-from fastapi_modular import reference
+from fastapi_modular import Entity, reference
 
 
 @entity()
 @dataclass(slots=True)
-class Event:
+class Event(Entity):
     id: str
     label: str
     camera_id: str = field(metadata=reference(Camera, on_delete="CASCADE"))
@@ -988,27 +994,53 @@ Viết ở đuôi tên cột, sau hai dấu gạch dưới:
 Tiền tố là tên bảng đã `join`, mặc định là tên class viết thường:
 `camera__name__like="Cổng%"`. Đặt tên khác bằng `.join(Camera, ..., alias="cam")`.
 
-### Khi kwargs không đủ
+### Toán tử thường thay cho đuôi `__gte`
 
-Hai ca kwargs không viết nổi — dùng đối tượng cột `F(Entity)`:
+Entity kế thừa `Entity` thì viết thẳng phép so sánh:
 
 ```python
-E, C = F(Event), F(Camera)
+await repo.query().where(Event.score >= 0.8, Event.label == "person").all()
+await repo.query().where(Event.reviewed_at == None).all()        # IS NULL
+```
 
+Giống hệt `.where(score__gte=0.8, label="person")`, chọn kiểu nào là tuỳ bạn.
+Cái được: IDE gợi ý tên cột, và gõ sai tên là hỏng ngay lúc import.
+
+Entity **chưa** kế thừa `Entity` thì lấy cột bằng `F(Event)` — y hệt, chỉ dài hơn:
+
+```python
+E = F(Event)
+await repo.query().where(E.score >= 0.8).all()
+```
+
+**Chưa kế thừa mà cứ viết `Event.score == 0.8` thì không phải lỗi cú pháp** —
+Python cho so sánh hai đối tượng bất kỳ, kết quả là `False`, và câu truy vấn
+lặng lẽ sai. Builder chặn ngay chỗ đó:
+
+```
+Điều kiện là False chứ không phải phép so sánh. Viết `Event.score == 0.8` chỉ
+ra điều kiện khi entity kế thừa `Entity` (`class Event(Entity):`); chưa kế thừa
+thì dùng `F(Event).score == 0.8` hoặc `.where(score=0.8)`.
+```
+
+### Hai ca kwargs không viết nổi
+
+```python
 # OR
-await repo.query().where(or_(E.score >= 0.8, E.label == "fire")).all()
+await repo.query().where(or_(Event.score >= 0.8, Event.label == "fire")).all()
 
 # so CỘT với CỘT
 await (repo.query()
-       .join(Camera, on=E.camera_id == C.id)
-       .where(E.score > C.threshold)        # events.score > cameras.threshold
+       .join(Camera)
+       .where(Event.score > Camera.threshold)   # events.score > cameras.threshold
        .all())
 ```
 
-`F(Event).score` kiểm tên cột **ngay lúc dựng** và lỗi liệt kê đủ tên hợp lệ, nên
-gõ sai không phải đợi tới lúc chạy mới biết.
-
-Nối điều kiện bằng `&`, `|`, `~` cũng được: `.where((E.score >= 0.9) & ~(E.label == "car"))`.
+Nối điều kiện bằng `&`, `|`, `~` cũng được — nhưng **phải có ngoặc quanh từng
+vế**: `&` trong Python ưu tiên cao hơn `>=`, nên thiếu ngoặc là
+`Event.score >= (0.9 & Event.label)` rồi `TypeError`. Viết
+`.where((Event.score >= 0.9) & ~(Event.label == "car"))`, hoặc tránh hẳn bằng
+`and_(...)` / gọi `.where()` nhiều lần.
 
 ### Nối theo cột nào
 
@@ -1113,6 +1145,28 @@ postgres/sqlite.
 | `.order_by("-created_at")` | dấu trừ = giảm dần; nhận cả `X.cot` và `F(X).cot.desc()` |
 | `.limit(n)` · `.offset(n)` · `.distinct()` | |
 | `.select("id", ten_khac=X.cot)` | đổi kiểu trả về sang `list[dict]` |
+
+| Cột | |
+|---|---|
+| `Event.score` | cần `class Event(Entity)` |
+| `F(Event).score` | không cần gì |
+| `"score"` | chỉ ở `on=`, `order_by`, `select` — chỗ đã biết bảng |
+
+**Giá của việc kế thừa `Entity`** — chỉ đọc nếu bạn đang cân nhắc có nên kế thừa
+hay không. Đo trên máy dev, trung vị 7 lần:
+
+| | không kế thừa | kế thừa `Entity` |
+|---|---|---|
+| `event.score` (đọc thuộc tính) | 6.8ns | 6.8ns |
+| `event.score = x` (ghi) | 7.3ns | 7.3ns |
+| dựng một entity | 112ns | 112ns |
+| `sizeof` một entity 8 trường | 96B | 96B |
+| `Event.score` (đọc TỪ LỚP) | 12.6ns | 152ns |
+
+Đối tượng entity không mất gì vì `Entity` chen vào **metaclass**, tức chỉ ở
+đường đọc-từ-lớp — thứ chỉ chạy lúc bạn dựng câu truy vấn. Cách làm hiển nhiên
+hơn (đặt descriptor vào thân lớp) thì mọi lần đọc thuộc tính đội lên 66ns và
+`find()` 5000 dòng chậm thêm 24%, nên không dùng.
 
 | Chạy | Trả về |
 |---|---|

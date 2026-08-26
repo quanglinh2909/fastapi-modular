@@ -21,7 +21,7 @@ from fastapi_modular.core.clock import utcnow
 from fastapi_modular.core.config import DatabaseSettings
 from fastapi_modular.core.container import entity
 from fastapi_modular.core.exceptions import BadRequestError, NotFoundError
-from fastapi_modular.infrastructure.database import F, Repository, or_, reference
+from fastapi_modular.infrastructure.database import Entity, F, Repository, or_, reference
 from fastapi_modular.infrastructure.database.factory import create_backend
 
 CO_SQLITE = bool(os.getenv("TEST_SQLITE")) and importlib.util.find_spec("aiosqlite") is not None
@@ -29,7 +29,7 @@ CO_SQLITE = bool(os.getenv("TEST_SQLITE")) and importlib.util.find_spec("aiosqli
 
 @entity()
 @dataclass(slots=True)
-class QCamera:
+class QCamera(Entity):
     id: str
     name: str
     zone: str
@@ -256,6 +256,71 @@ async def test_join_mot_nhieu_thi_distinct(kho):
 
     assert len(await q.all()) == 6, "mỗi sự kiện một dòng"
     assert ids(await q.distinct().all()) == ["c1", "c2"]
+
+
+# ------------------------------------------- toán tử thường (kế thừa Entity)
+async def test_toan_tu_thuong_thay_cho_duoi_gach(kho):
+    """`QCamera.threshold >= 0.7` — QCamera có kế thừa `Entity`."""
+    _, cameras = kho
+    assert ids(await cameras.query().where(QCamera.threshold >= 0.7).all()) == ["c1", "c2"]
+    assert ids(await cameras.query().where(QCamera.zone == "Tầng 1").all()) == ["c1", "c3"]
+    assert ids(await cameras.query().where(QCamera.name.like("Cổng%")).all()) == ["c1"]
+    assert ids(await cameras.query().where(
+        or_(QCamera.threshold > 0.8, QCamera.zone == "Tầng 1")).all()) == ["c1", "c2", "c3"]
+
+
+async def test_toan_tu_thuong_dung_duoc_ca_o_join_va_order_by(kho):
+    events, _ = kho
+    rows = await (
+        events.query()
+        .join(QCamera)
+        .where(QCamera.zone == "Tầng 2", F(QEvent).score >= 0.9)   # QEvent không kế thừa Entity
+        .order_by(QCamera.name)
+        .all()
+    )
+    assert ids(rows) == ["e3"]
+
+
+async def test_ke_thua_entity_khong_lam_doi_tuong_nang_them(kho):
+    """Cái giá của `Entity` phải bằng 0 với đối tượng — chỉ đọc TỪ LỚP mới khác."""
+    import sys
+
+    @dataclass(slots=True)
+    class Doi:                                   # y hệt QCamera nhưng không kế thừa
+        id: str
+        name: str
+        zone: str
+        threshold: float = 0.5
+        created_at: datetime = field(default_factory=utcnow)
+        updated_at: datetime = field(default_factory=utcnow)
+
+    a = QCamera(id="x", name="n", zone="z")
+    b = Doi(id="x", name="n", zone="z")
+    assert not hasattr(a, "__dict__"), "kế thừa Entity mà mọc lại __dict__ là mất hết slots"
+    assert sys.getsizeof(a) == sys.getsizeof(b)
+    a.threshold = 0.9                            # ghi vẫn đi đường slot bình thường
+    assert a.threshold == 0.9
+
+
+async def test_lop_con_khai_lai_truong_van_giu_gia_tri_mac_dinh():
+    """Bẫy của metaclass: `@dataclass` đọc mặc định bằng `getattr(cls, ten)`."""
+    @dataclass(slots=True)
+    class QCamCon(QCamera):
+        threshold: float = 0.99
+
+    assert QCamCon(id="x", name="n", zone="z").threshold == 0.99
+    assert isinstance(QCamCon.threshold >= 0.5, object)
+
+
+async def test_chua_ke_thua_Entity_ma_dung_bang_bang_thi_bao_ro(kho):
+    """`QEvent.label == "x"` cho ra `False` chứ không lỗi — phải chặn, không nuốt."""
+    events, _ = kho
+    with pytest.raises(BadRequestError) as loi:
+        events.query().where(QEvent.label == "person")
+    assert "Entity" in str(loi.value) and "F(Event)" in str(loi.value)
+
+    with pytest.raises(BadRequestError):
+        or_(QEvent.label == "person", QEvent.label == "car")
 
 
 # --------------------------------------------------------------- OR / NOT

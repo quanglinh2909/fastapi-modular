@@ -31,7 +31,8 @@ public API, and this README, are in English. Start with
 | `@Injectable({scope: Scope.REQUEST})` | `@injectable(scope=Scope.REQUEST)` |
 | `forwardRef(() => X)` | `Lazy[X]` |
 | `@InjectRepository(X) repo: Repository<X>` | `repo: Repository[X]` |
-| `repo.createQueryBuilder()` (TypeORM) | `repo.query().join(X).where(score__gte=…)` — real SQL, `.sql()` to see it |
+| `repo.createQueryBuilder()` (TypeORM) | `repo.query().join(X).where(Event.score >= …)` — real SQL, `.sql()` to see it |
+| `Repository.find({where: {score: MoreThan(…)}})` (TypeORM) | `class Event(Entity)` then `.where(Event.score >= …)`, or `.where(score__gte=…)` |
 | `@ManyToOne(…, {onDelete: 'CASCADE'})` (TypeORM) | `field(metadata=reference(Camera, on_delete="CASCADE"))` — a real FK in the database |
 | `@UseGuards()` | `guards=[...]` on the controller or a single route |
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
@@ -413,7 +414,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              940 tests that need no infrastructure, 111 more with real drivers/servers
+tests/              945 tests that need no infrastructure, 115 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 

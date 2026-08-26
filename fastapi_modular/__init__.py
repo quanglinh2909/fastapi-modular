@@ -40,7 +40,7 @@ from fastapi_modular.core.websocket import Socket, WebSocketServer, gateway, sub
 from fastapi_modular.core.workers import WorkerContext, WorkerPool, worker
 from fastapi_modular.discovery import DEFAULT_PACKAGE, register_routes
 from fastapi_modular.factory import add_middleware, bind_settings, create_app, new_fastapi
-from fastapi_modular.infrastructure.database.base import reference
+from fastapi_modular.infrastructure.database.base import Entity, reference
 
 __version__ = "0.2.1"
 
@@ -51,6 +51,7 @@ __all__ = [
     "CapabilityNotSupportedError",
     "ComponentNotEnabledError",
     "ConflictError",
+    "Entity",
     "EventBus",
     "ForbiddenError",
     "JobQueue",

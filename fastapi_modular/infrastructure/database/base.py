@@ -39,6 +39,62 @@ def index_name(prefix: str, storage: str, columns: Sequence[str]) -> str:
     return f"{prefix}_{storage[:40]}_{digest}"
 
 
+class EntityMeta(type):
+    """Metaclass làm cho `Event.score >= 0.8` viết được.
+
+    Đọc một trường TỪ LỚP trả về `Column` (đối tượng có nạp chồng `>=`, `==`,
+    `<`...), đọc TỪ ĐỐI TƯỢNG vẫn là giá trị thường. Kế thừa `Entity` để bật.
+
+    Vì sao là metaclass chứ không phải descriptor đặt vào thân lớp: descriptor
+    phải có `__set__` mới sống chung được với `slots=True`, và khi đó MỌI lần
+    đọc/ghi thuộc tính của entity đi qua một lời gọi Python. Đo được: đọc
+    thuộc tính 6.8ns -> 66ns, dựng một entity 112ns -> 615ns, và trên đường
+    truy vấn thật `find()` 5000 dòng chậm thêm 24% (sqlite) tới 46% (memory).
+    Metaclass chỉ chen vào lúc đọc từ LỚP — thứ chỉ xảy ra khi bạn dựng câu
+    truy vấn — nên đối tượng entity không mất gì.
+
+    Chỉ chen khi `__dataclass_fields__` đã nằm trong `__dict__` của CHÍNH lớp
+    đó, tức `@dataclass` đã chạy xong. Nếu không, một lớp con khai lại trường
+    có sẵn (`score: float = 1.0`) sẽ bị `@dataclass` đọc nhầm `Column` thành
+    giá trị mặc định.
+    """
+
+    def __getattribute__(cls, name: str) -> Any:
+        own = type.__getattribute__(cls, "__dict__").get("__dataclass_fields__")
+        if own is not None and name in own:
+            return _column_of(cls, name)
+        return type.__getattribute__(cls, name)
+
+
+@cache
+def _column_of(entity: type, name: str) -> Any:
+    """`Column` của một trường, dựng một lần rồi dùng lại."""
+    from fastapi_modular.infrastructure.database.query import Column
+
+    return Column(entity, name)
+
+
+class Entity(metaclass=EntityMeta):
+    """Kế thừa để viết điều kiện bằng toán tử thường thay vì đuôi `__gte`.
+
+        @entity()
+        @dataclass(slots=True)
+        class Event(Entity):
+            id: str
+            score: float
+
+        await repo.query().where(Event.score >= 0.8, Event.label == "person").all()
+
+    Không kế thừa cũng không sao: `.where(score__gte=0.8)` và `F(Event).score`
+    vẫn dùng được y như trước.
+
+    `__slots__ = ()` để lớp con khai `slots=True` không bị mọc lại `__dict__` —
+    thiếu dòng này thì kế thừa `Entity` âm thầm làm entity to ra.
+    """
+
+    __slots__ = ()
+
+
 OnDelete = Literal["CASCADE", "SET NULL", "SET DEFAULT", "RESTRICT", "NO ACTION"]
 
 _METADATA_KEY = "fastapi_modular.reference"

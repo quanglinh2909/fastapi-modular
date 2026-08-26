@@ -206,8 +206,8 @@ def column_of(value: Any, *, fallback: type | None = None) -> Column:
             )
         return Column(fallback, value)
     raise BadRequestError(
-        f"{value!r} không phải một cột. Viết `Entity.ten_cot` (entity phải khai "
-        f"`@dataclass(slots=True)` thì cách này mới chạy), `F(Entity).ten_cot`, "
+        f"{value!r} không phải một cột. Viết `Event.ten_cot` (được, nếu entity khai "
+        f"`@dataclass(slots=True)` hoặc kế thừa `Entity`), `F(Event).ten_cot`, "
         f"hoặc chuỗi \"ten_cot\"."
     )
 
@@ -258,8 +258,30 @@ class Not(Condition):
     part: Condition
 
 
+def as_condition(value: Any) -> Condition:
+    """Kiểm một điều kiện, và bắt cái bẫy `Entity.cot == x` khi chưa kế thừa `Entity`.
+
+    `==` giữa hai đối tượng bất kỳ luôn trả `True`/`False` chứ không báo lỗi,
+    nên `where(Event.score == 0.8)` với entity chưa kế thừa `Entity` sẽ lặng lẽ
+    thành `where(False)`. Chặn ngay ở đây, đắt nhất là một `isinstance`.
+    """
+    if isinstance(value, Condition):
+        return value
+    if isinstance(value, bool):
+        raise BadRequestError(
+            f"Điều kiện là {value!r} chứ không phải phép so sánh. Viết "
+            "`Event.score == 0.8` chỉ ra điều kiện khi entity kế thừa `Entity` "
+            "(`class Event(Entity):`); chưa kế thừa thì dùng "
+            "`F(Event).score == 0.8` hoặc `.where(score=0.8)`."
+        )
+    raise BadRequestError(
+        f"{value!r} không phải điều kiện. Dùng `Event.cot >= x`, `F(Event).cot >= x`, "
+        "hoặc kiểu ngắn `.where(cot__gte=x)`."
+    )
+
+
 def and_(*parts: Condition) -> Condition:
-    return Group("and", tuple(parts))
+    return Group("and", tuple(as_condition(p) for p in parts))
 
 
 def or_(*parts: Condition) -> Condition:
@@ -269,11 +291,11 @@ def or_(*parts: Condition) -> Condition:
     """
     if not parts:
         raise BadRequestError("`or_()` cần ít nhất một điều kiện")
-    return Group("or", tuple(parts))
+    return Group("or", tuple(as_condition(p) for p in parts))
 
 
 def not_(part: Condition) -> Condition:
-    return Not(part)
+    return Not(as_condition(part))
 
 
 # ------------------------------------------------------------------- join
@@ -463,7 +485,7 @@ class Query(Generic[E]):
 
         Tiền tố là tên bảng đã `join`: `camera__name__like="Cổng%"`.
         """
-        self._spec.conditions.extend(conditions)
+        self._spec.conditions.extend(as_condition(c) for c in conditions)
         for key, value in lookups.items():
             self._spec.conditions.append(self._parse_lookup(key, value))
         return self
