@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from fastapi_modular import Entity, entity
 from fastapi_modular.core.clock import utcnow
 from fastapi_modular.core.compat import StrEnum
-from fastapi_modular.core.container import entity
 
 
 class DeviceStatus(StrEnum):
@@ -33,7 +33,7 @@ class DeviceStatus(StrEnum):
     ],
 )
 @dataclass(slots=True)
-class Device:
+class Device(Entity):
     id: str
     name: str
     serial: str

@@ -9,13 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from fastapi_modular import Entity, entity
 from fastapi_modular.core.clock import utcnow
-from fastapi_modular.core.container import entity
 
 
 @entity(unique=["email"])
 @dataclass(slots=True)
-class User:
+class User(Entity):
     id: str
     email: str
     full_name: str

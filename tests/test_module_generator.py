@@ -119,6 +119,7 @@ def test_entity_co_san_ba_truong_bat_buoc():
     assert "created_at: datetime" in model
     assert "updated_at: datetime" in model
     assert "@entity(" in model
+    assert "(Entity):" in model, "khuôn sinh phải kế thừa Entity, không thì `.where(X.a == b)` gãy"
     assert "TODO" in model, "phải có chỗ đánh dấu để người dùng thêm trường"
 
 

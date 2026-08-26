@@ -76,6 +76,7 @@ quét nó đi". Xếp khác thì nói ra một lần trong `src/main.py`:
 | `repo.createQueryBuilder()` (TypeORM) | `repo.query()` — JOIN, so sánh, NULL; xem [database.md](database.md#truy-vấn-phức-tạp--join-lớnbé-null) |
 | `@ManyToOne(…, {onDelete})` (TypeORM) | `reference(X, on_delete=…)` — xem [database.md](database.md#khoá-ngoại-nối-hai-bảng-với-nhau) |
 | `@Entity()` | `@entity` |
+| `extends BaseEntity` | `class X(Entity)` — chỉ để lọc bằng toán tử: `.where(X.score >= 0.8)` |
 | `overrideProvider()` | `container.override()` |
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
 | `@SubscribeMessage('x')` | `@subscribe("x")` |
@@ -177,7 +178,7 @@ src/api/alerts/
 ├── dto/__init__.py
 ├── dto/alert_dto.py     AlertBase / AlertCreate / AlertUpdate / AlertOut
 ├── entities/__init__.py
-└── entities/alert_model.py   @entity dataclass: id, created_at, updated_at
+└── entities/alert_model.py   @entity dataclass kế thừa Entity: id, created_at, updated_at
 ```
 
 Khởi động lại là route đã có trong OpenAPI, bảng đã được tạo, validate đã chạy —

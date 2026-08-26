@@ -55,8 +55,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from fastapi_modular import Entity, entity
 from fastapi_modular.core.clock import utcnow
-from fastapi_modular.core.container import entity
 
 
 @entity(
@@ -66,7 +66,9 @@ from fastapi_modular.core.container import entity
     # Ràng buộc duy nhất PHẢI khai ở đây; kiểm tra trong service là một cuộc đua.
 )
 @dataclass(slots=True)
-class {cls}:
+class {cls}(Entity):
+    # Kế thừa `Entity` để lọc bằng toán tử thường: `.where({cls}.name == "x")`.
+    # Nó không thêm method nào và không làm đối tượng nặng thêm.
     id: str
 
     # TODO: thêm các trường của bạn ở đây. Trường có giá trị mặc định thì bản
