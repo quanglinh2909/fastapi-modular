@@ -13,6 +13,7 @@ from fastapi_modular.core.config import Settings, get_settings, use_settings
 from fastapi_modular.core.container import Lazy, Scope, container, entity, injectable
 from fastapi_modular.core.controller import controller, delete, get, patch, post, put
 from fastapi_modular.core.error_handlers import register_error_handlers
+from fastapi_modular.core.events import EventBus, on_event
 from fastapi_modular.core.exceptions import (
     AppError,
     BadRequestError,
@@ -49,6 +50,7 @@ __all__ = [
     "CapabilityNotSupportedError",
     "ComponentNotEnabledError",
     "ConflictError",
+    "EventBus",
     "ForbiddenError",
     "JobQueue",
     "JobRunner",
@@ -85,6 +87,7 @@ __all__ = [
     "job",
     "lifespan",
     "new_fastapi",
+    "on_event",
     "patch",
     "post",
     "provider",

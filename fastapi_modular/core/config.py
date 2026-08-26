@@ -366,6 +366,31 @@ class SchedulerSettings(BaseModel):
     """Nhịp gia hạn khoá. Chỉ có ý nghĩa với khoá Redis; `flock` không cần."""
 
 
+class EventSettings(BaseModel):
+    """`@on_event` + `EventBus` — fanout trong tiến trình. Đặt qua APP_EVENTS__*."""
+
+    enabled: bool = True
+    """Tắt thì `emit`/`dispatch` không gọi ai. Để gỡ rối khi nghi một handler
+    nghe sự kiện đang gây ra hiệu ứng phụ."""
+
+    max_seconds: float = 0.0
+    """Hạn mặc định cho MỘT lượt handler; 0 = không giới hạn. `@on_event` có
+    thể đặt riêng và giá trị riêng thắng.
+
+    Đáng đặt khi dùng `await bus.emit(...)` trong đường đi của request: không
+    có hạn thì một nơi nghe treo là cả request treo theo."""
+
+    max_pending: int = 1000
+    """Trần số lượt handler NỀN (`dispatch`) được chạy cùng lúc.
+
+    Chạm trần thì `dispatch` bỏ lượt đó và ghi log kèm con số, thay vì xếp hàng
+    cho tới hết RAM. Chạm trần nghĩa là bên nghe chậm hơn bên phát — chỗ đó cần
+    `@job` hoặc một hàng đợi thật, không phải một trần cao hơn."""
+
+    drain_seconds: float = 5.0
+    """Lúc tắt app, chờ handler nền chạy nốt bao lâu trước khi huỷ."""
+
+
 class JobSettings(BaseModel):
     """Cấu hình hàng đợi việc trong tiến trình. Đặt qua APP_JOBS__*.
 
@@ -483,6 +508,7 @@ class Settings(BaseSettings):
         default_factory=SchedulerSettings, alias="APP_SCHEDULER"
     )
     jobs: JobSettings = Field(default_factory=JobSettings, alias="APP_JOBS")
+    events: EventSettings = Field(default_factory=EventSettings, alias="APP_EVENTS")
     workers: WorkerSettings = Field(default_factory=WorkerSettings, alias="APP_WORKERS")
 
 

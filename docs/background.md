@@ -1,14 +1,15 @@
 # Việc chạy nền
 
-Ba thứ khác nhau, hay bị gộp làm một:
+Bốn thứ khác nhau, hay bị gộp làm một:
 
-| | Chạy khi nào | Sống bao lâu | Dùng gì |
+| | Chạy khi nào | Ai chạy | Dùng gì |
 |---|---|---|---|
-| **Theo lịch** | tới giờ là chạy | một lượt rồi thôi | `@interval` · `@cron` · `@timeout` |
-| **Theo yêu cầu** | khi có ai gửi việc vào | một việc rồi thôi | `@job` + `JobQueue.submit()` |
-| **Vòng lặp sống mãi** | khi bạn gọi hàm | tới khi bảo nó dừng | `@worker` |
+| **Theo lịch** | tới giờ là chạy | một handler | `@interval` · `@cron` · `@timeout` |
+| **Theo yêu cầu** | khi có ai gửi việc vào | một handler, **tuần tự** | `@job` + `JobQueue.submit()` |
+| **Vòng lặp sống mãi** | khi bạn gọi hàm | một handler, chạy mãi | `@worker` |
+| **Báo cho nhiều nơi** | khi có việc gì đó xảy ra | **N handler, song song** | `@on_event` + `EventBus.emit()` |
 
-Cả ba đều **không cần hạ tầng gì** — không Redis, không RabbitMQ, không thêm
+Cả bốn đều **không cần hạ tầng gì** — không Redis, không RabbitMQ, không thêm
 một dòng cấu hình. Có decorator thì chạy, không có thì thôi.
 
 ---
@@ -16,18 +17,31 @@ một dòng cấu hình. Có decorator thì chạy, không có thì thôi.
 ## Chọn cái nào
 
 ```
-Việc này chạy xong rồi thôi, hay chạy mãi?
-├── Chạy MÃI (đọc camera, giữ kết nối, nghe cổng)      -> @worker
-└── Chạy xong rồi thôi
-    ├── Không ai gửi, cứ tới giờ là chạy               -> @interval / @cron / @timeout
-    └── Có người gửi vào
-        ├── Mất việc thì chấp nhận được                 -> @job
-        └── Mất việc là hỏng nghiệp vụ                  -> @rabbitmq_subscriber
+Cần MỘT nơi làm, hay BÁO cho nhiều nơi?
+├── Báo cho nhiều nơi, chúng tự lo             -> @on_event
+└── Một nơi làm
+    ├── Chạy MÃI (đọc camera, giữ kết nối)     -> @worker
+    └── Chạy xong rồi thôi
+        ├── Cứ tới giờ là chạy                 -> @interval / @cron / @timeout
+        └── Có người gửi vào
+            ├── Mất việc thì chấp nhận được     -> @job
+            └── Mất việc là hỏng nghiệp vụ      -> @rabbitmq_subscriber
 ```
 
 Dấu hiệu nhận ra `@worker`: **có phần dựng ở TRƯỚC vòng lặp**. Mở camera, mở
 socket, nạp model — thứ làm một lần rồi dùng lại suốt. `@interval` không giữ
 được gì giữa hai lượt nên nó sẽ mở lại camera mỗi 5 giây.
+
+Nhánh đầu tiên là ranh giới hay bị bỏ qua nhất. `@job` và `@on_event` trông
+giống nhau — đều là "gửi cái gì đó đi rồi quên" — nhưng khác hẳn nhau ở chỗ ai
+nhận:
+
+| | `@job("detect")` | `@on_event("order.paid")` |
+|---|---|---|
+| Bao nhiêu handler | **đúng một**; trùng tên là lỗi | **bao nhiêu cũng được**; đó là điểm của nó |
+| Chạy thế nào | xếp hàng, tuần tự | song song, không theo thứ tự |
+| Có hàng đợi không | có, `max_queued` | không — gọi thẳng |
+| Bên gửi nghĩ gì | "làm giúp tôi việc này" | "chuyện này vừa xảy ra, ai quan tâm thì lo" |
 
 Nhánh cuối là chỗ chỉ có một cách trả lời trung thực: **`@job` giữ việc trong
 RAM. App tắt hay chết là mất sạch phần chưa chạy.** Xem
@@ -680,6 +694,167 @@ vào handler; sai khuôn thì ghi log và bỏ việc đó, không làm chết w
 
 ---
 
+## Báo cho nhiều nơi — `@on_event`
+
+```python
+from fastapi_modular import EventBus, injectable, on_event
+
+@injectable
+class OrderService:
+    def __init__(self, events: EventBus) -> None:
+        self._events = events
+
+    async def pay(self, order_id: str) -> None:
+        await self._repo.mark_paid(order_id)
+        await self._events.emit("order.paid", {"id": order_id})
+
+@injectable
+class MailService:
+    @on_event("order.paid")
+    async def send_receipt(self, data: dict) -> None: ...
+
+@injectable
+class StatsService:
+    @on_event("order.paid")
+    async def count(self, data: dict) -> None: ...
+```
+
+Hai handler đó chạy **song song**, và `OrderService` **không biết chúng tồn
+tại**. Thêm một nơi nghe là thêm một method, không phải sửa chỗ phát. Đó là
+toàn bộ giá trị của kiểu này — và cũng là lý do đừng dùng nó khi bên phát CẦN
+biết kết quả.
+
+Đây là `fanout` của RabbitMQ, hoặc observer/`EventEmitter` của NestJS — nhưng
+**chỉ trong một tiến trình**, không qua mạng, không cần cài gì.
+
+### Hai cách phát
+
+```python
+await bus.emit("order.paid", data)   # CHỜ mọi nơi nghe xong, trả về số handler chạy trót lọt
+bus.dispatch("order.paid", data)     # trả về NGAY, handler chạy nền, trả về số nơi sẽ chạy
+```
+
+`emit` khi bên phát cần mọi thứ xong trước khi đi tiếp — ví dụ trước khi trả
+lời HTTP. `dispatch` khi không cần, và đây mới là cái hay dùng: **một request
+không nên chậm đi chỉ vì có thêm người đăng ký nghe**.
+
+`dispatch` giữ nguyên request-id của bên phát, nên log của handler nền vẫn nối
+được về đúng request đã sinh ra nó.
+
+### Ký tự đại diện
+
+Tên sự kiện ngăn bằng dấu chấm, và mẫu dùng đúng luật của RabbitMQ topic:
+
+| Mẫu | Khớp | Không khớp |
+|---|---|---|
+| `order.paid` | `order.paid` | `order.shipped` |
+| `order.*` | `order.paid` | `order.item.added` — `*` là ĐÚNG một tầng |
+| `order.#` | `order.paid`, `order.item.added`, `order` | |
+| `camera.*.motion` | `camera.12.motion` | `camera.motion` |
+
+Đại diện chỉ dùng khi **nghe**. Phát `emit("order.*")` bị chặn ngay — phát một
+mẫu thì không ai biết là ý gì.
+
+### Một nơi nghe hỏng thì sao
+
+Ghi log rồi thôi; **những nơi khác vẫn chạy**. Bắt buộc phải vậy: gửi mail hỏng
+mà kéo theo không cập nhật được thống kê là vô lý.
+
+```python
+so = await bus.emit("order.paid", data)
+if so < len(bus.listeners("order.paid")):
+    ...            # có ai đó hỏng — chi tiết nằm trong log events.handler_failed
+```
+
+**Không có thử lại.** Cần thử lại, cần chạy nốt sau khi app khởi động lại — thì
+chính handler đó nên đẩy việc sang `@job` (mất được) hoặc RabbitMQ (không mất
+được). Đừng chờ lớp này lo giúp.
+
+Sợ một nơi nghe treo làm treo cả `emit` thì đặt hạn:
+
+```python
+@on_event("order.paid", max_seconds=2.0)
+async def goi_api_ngoai(self, data: dict) -> None: ...
+```
+
+### Nghe lúc đang chạy, không qua decorator
+
+```python
+bo_nghe = bus.subscribe("camera.*.motion", ham_cua_toi)
+...
+bo_nghe()
+```
+
+`@on_event` đủ cho gần hết mọi trường hợp. Cái này dành cho nơi nghe chỉ sống
+một lúc: một phiên WebSocket, một lần chờ trong test, một tính năng bật/tắt
+theo cấu hình.
+
+### `thread=True` và `ctx`
+
+Giống hệt ba decorator kia:
+
+```python
+@on_event("anh.moi", thread=True)
+def nhan_dang(self, data: dict, ctx: WorkerContext) -> None:
+    ket_qua = model.predict(data["path"])       # đang ở thread, gọi thẳng
+    ctx.run(self._repo.save(ket_qua))           # cầu nối sang event loop
+```
+
+### Ranh giới: chỉ trong MỘT tiến trình
+
+`fam run --workers 4` là **bốn tiến trình**. Sự kiện phát ở tiến trình 1 KHÔNG
+tới tiến trình 2 — mỗi tiến trình có `EventBus` riêng của nó.
+
+Đây không phải thiếu sót mà là định nghĩa: nó gọi thẳng hàm trong bộ nhớ, nên
+không cần cài gì và nhanh hơn hẳn mọi đường đi qua mạng. Đo với handler rỗng:
+
+| | Lượt phát/giây | Mỗi lượt phát |
+|---|---|---|
+| `emit`, 1 nơi nghe | 220.000 | 4,6 µs |
+| `emit`, 3 nơi nghe | 38.000 | 26 µs |
+| `emit`, 10 nơi nghe | 16.000 | 62 µs |
+| `dispatch`, 3 nơi nghe | 69.000 | 14 µs *(chưa tính lúc chạy nền)* |
+
+Số lượt phát giảm khi thêm nơi nghe là đương nhiên — mỗi nơi nghe là một
+coroutine phải dựng và chờ. Nhìn theo tổng số lượt handler thì nó vẫn tăng:
+1 nơi nghe 220.000 lượt/s, 10 nơi nghe 158.000 lượt/s. So với RabbitMQ
+`emit` 126 tin/s thì khác nhau ba bậc — nhưng RabbitMQ đi được sang máy khác,
+còn cái này thì không.
+
+Muốn xuyên tiến trình thì đó là việc của broker:
+
+| Cần | Dùng |
+|---|---|
+| trong một tiến trình | `@on_event` |
+| mọi tiến trình đều nhận một bản | RabbitMQ `fanout`, hoặc `@redis_subscriber` |
+| chia việc cho các tiến trình | `@rabbitmq_subscriber` |
+
+Cầu nối giữa hai bên chỉ là một handler:
+
+```python
+@on_event("order.paid")
+async def bao_ra_ngoai(self, data: dict) -> None:
+    await self._mq.emit("order.paid", data, exchange="events",
+                        exchange_type="fanout")
+```
+
+### `@on_event(...)`
+
+```python
+@on_event(
+    "order.paid",       # tên sự kiện, hoặc mẫu có * / #
+    *,
+    thread=False,
+    max_seconds=0.0,    # 0 = không giới hạn
+)
+```
+
+Chữ ký hàm: `(self)`, `(self, data)`, `(self, data, ctx)`. Tham số `data` chú
+kiểu bằng model Pydantic thì dữ liệu được kiểm khuôn trước khi vào handler, và
+sai khuôn thì handler đó bị bỏ qua — những handler khác vẫn chạy.
+
+---
+
 ## Cấu hình
 
 Không cần đặt gì để chạy. Các biến dưới đây để chỉnh:
@@ -701,6 +876,10 @@ Không cần đặt gì để chạy. Các biến dưới đây để chỉnh:
 | `APP_WORKERS__SINGLE` | `true` | worker khai `single=True` thì có khoá thật hay không |
 | `APP_WORKERS__TAKEOVER_SECONDS` | `5.0` | bản đang chờ thì bao lâu thử giành quyền lại |
 | `APP_WORKERS__THREAD_POOL_SIZE` | `0` | số thread cho `ctx.blocking`; 0 = mặc định Python `min(32, nhân+4)` |
+| `APP_EVENTS__ENABLED` | `true` | tắt hẳn `@on_event`; `emit`/`dispatch` không gọi ai |
+| `APP_EVENTS__MAX_SECONDS` | `0.0` | hạn mặc định cho một lượt handler; 0 = không giới hạn |
+| `APP_EVENTS__MAX_PENDING` | `1000` | trần số lượt `dispatch` chạy nền cùng lúc |
+| `APP_EVENTS__DRAIN_SECONDS` | `5.0` | chờ handler nền chạy nốt khi tắt app |
 
 ---
 
@@ -717,6 +896,10 @@ Không cần đặt gì để chạy. Các biến dưới đây để chỉnh:
 | `jobs_queued` | *(gauge — con số đáng theo dõi nhất)* |
 | `workers_started_total` / `workers_restarted_total` | `worker` |
 | `workers_running` | *(gauge)* |
+| `events_emitted_total` | `event` |
+| `event_handlers_done_total` / `event_handlers_failed_total` | `event` |
+| `event_handler_duration_seconds` | `event` |
+| `event_handlers_pending` | *(gauge)* |
 
 | Thấy gì | Gần như luôn là |
 |---|---|
@@ -730,6 +913,9 @@ Không cần đặt gì để chạy. Các biến dưới đây để chỉnh:
 | `worker.stop_timeout` lúc tắt app | vòng lặp không kiểm `ctx.running`, hoặc lời gọi chặn không có timeout |
 | API đứng hình khi worker chạy | quên bọc `ctx.blocking(...)` quanh hàm chặn |
 | `ctx.blocking` chậm dần khi thêm worker | vượt trần pool — nới `APP_WORKERS__THREAD_POOL_SIZE` |
+| phát sự kiện mà không thấy gì chạy | in `bus.listeners("ten.su.kien")` ra; thường là sai mẫu, hoặc class chưa `@injectable` |
+| log `events.not_started` | phát trước khi lifespan chạy xong — chuyển lời gọi đó vào sau `startup` |
+| log `events.dispatch_dropped` | bên nghe chậm hơn bên phát; chỗ đó cần `@job`, không phải `MAX_PENDING` cao hơn |
 | **Ctrl+C bấm mà không có gì xảy ra** | xem mục ngay dưới |
 
 ## Ctrl+C như không ăn

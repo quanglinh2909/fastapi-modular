@@ -37,6 +37,7 @@ public API, and this README, are in English. Start with
 | `@EventPattern('x')` (RabbitMQ) | `@rabbitmq_subscriber("events", "x", queue="…")` |
 | `@MessagePattern('x')` | `@rabbitmq_responder("x", queue="…")` — the return value is sent back |
 | `@Interval()` / `@Cron()` / `@Timeout()` | `@interval(seconds=5)` / `@cron("0 3 * * *")` / `@timeout(seconds=10)` |
+| `@OnEvent('x')` + `EventEmitter2` | `@on_event("x")` + `EventBus.emit()` — in-process fanout |
 | `client.emit(p, d)` / `client.send(p, d)` | `broker.emit(p, d, queue=…)` / `await broker.send(p, d, queue=…)` |
 | `CacheModule` / `CACHE_MANAGER` | `RedisClient.cached(key, factory, ttl=…)` |
 | socket.io Redis adapter | `APP_WS__ADAPTER=redis` |
@@ -256,7 +257,7 @@ broker goes down the app keeps serving and reconnects on its own. Details:
 
 ## Background work
 
-Two different things, neither needs any infrastructure:
+Four different things, none of which needs any infrastructure:
 
 ```python
 # on a SCHEDULE — @nestjs/schedule
@@ -285,12 +286,29 @@ for camera in cameras:
     await service.watch(camera.id, {"ip": camera.ip})   # key + data at call time
 
 await self.watch.stop(camera.id)       # stops ONE instance, waits for its cleanup
+
+# FANOUT inside the process — one event, N listeners, in PARALLEL
+@on_event("order.paid")                       # also "order.*" / "camera.#"
+async def send_receipt(self, data: dict) -> None: ...
+
+@on_event("order.paid")                       # a second listener is normal here
+async def update_stats(self, data: dict) -> None: ...
+
+await self._events.emit("order.paid", {"id": id})   # waits for all of them
+self._events.dispatch("order.paid", {"id": id})     # returns immediately
 ```
 
-All four decorators come in two shapes: `async def` (the default) and
+All five decorators come in two shapes: `async def` (the default) and
 `thread=True` for bodies that are all blocking calls. `ctx` is optional — take
 it when you need `ctx.running` to leave a loop, `ctx.blocking(...)` to call
 blocking code, or `ctx.run(...)` to write to the DB from inside a thread.
+
+`@on_event` covers what `@job` cannot: `@job` is one name, **one** handler,
+processed in order — a work queue. `@on_event` is one event, **many** handlers,
+running in parallel — nobody owns the work, and the emitter doesn't know who is
+listening. One listener raising doesn't stop the others. It is `fanout` /
+`EventEmitter`, but in-process only: with `fam run --workers 4` an event does
+not cross to the other three processes.
 
 `@worker` covers what `@interval` and `@job` cannot: a setup phase **before**
 the loop (open the camera, load the model) and a body that runs until you stop
@@ -393,7 +411,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              868 tests that need no infrastructure, 71 more with real drivers/servers
+tests/              901 tests that need no infrastructure, 71 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 
@@ -436,7 +454,7 @@ Written in Vietnamese, organised for reference rather than reading front to back
 - [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: generate, run, roll back
 - [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — WebSocket gateway, rooms, Postman, Next.js
 - [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — all 5 exchange types, TTL, background consumers, `.retry` / `.dlq`
-- [docs/background.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/background.md) — scheduled work (`@interval`/`@cron`/`@timeout`) and an in-process job queue (`@job`)
+- [docs/background.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/background.md) — scheduled work (`@interval`/`@cron`/`@timeout`), an in-process job queue (`@job`), long-running loops (`@worker`) and in-process fanout (`@on_event`)
 - [docs/rpc.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rpc.md) — `emit` / `send` / `@rabbitmq_responder`, NestJS-compatible wire format
 - [docs/redis.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/redis.md) — cache, atomic counters, pub/sub
 - [docs/mqtt.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mqtt.md) — QoS, retain, `+` and `#` topic matching

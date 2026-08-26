@@ -81,6 +81,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Import muộn: Database kéo theo factory driver, mà factory chỉ được chạm
     # tới sau khi mọi module đã nạp xong (entity phải đăng ký trước create_schema).
+    from fastapi_modular.core.events import EventBus
     from fastapi_modular.core.jobs import JobQueue, JobRunner
     from fastapi_modular.core.scheduler import SchedulerRunner
     from fastapi_modular.core.workers import WorkerPool
@@ -159,6 +160,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Việc chạy nền bật CUỐI CÙNG: chúng dùng database và hàng đợi, nên phải
     # đợi những thứ đó sẵn sàng. Không cần hạ tầng gì để chạy, nhưng không có
     # @interval/@cron/@timeout hay @job nào thì hai lời gọi này không làm gì.
+    # Sự kiện bật TRƯỚC hàng đợi việc và lịch: cả hai đều có thể phát sự kiện
+    # ngay ở lượt chạy đầu, và phát lúc chưa ai nghe thì mất luôn.
+    events = container.resolve(EventBus)
+    await events.startup()
+    app.state.events = events
+
     jobs = container.resolve(JobRunner)
     await jobs.startup()
     scheduler = container.resolve(SchedulerRunner)
@@ -196,6 +203,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # trước thì hàng đợi mới cạn được thay vì bị bơm thêm trong lúc đang dọn.
         await scheduler.shutdown()
         await jobs.shutdown()
+        # Sự kiện tắt SAU: worker, lịch và việc đều có thể phát sự kiện trong
+        # lúc chúng đang dọn dẹp.
+        await events.shutdown()
         await kafka_consumers.shutdown()
         await kafka.shutdown()
         await mqtt.shutdown()
@@ -209,6 +219,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             blocking_pool.shutdown()
         container.reset()
         app.state.container = None
+        app.state.events = None
         app.state.database = None
         app.state.websockets = None
         app.state.broker = None

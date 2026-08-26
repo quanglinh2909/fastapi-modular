@@ -24,6 +24,7 @@ fastapi_modular/                     THƯ VIỆN — thứ được đóng gói,
 │   ├── cron.py                đọc biểu thức cron 5 trường
 │   ├── jobs.py                @job + JobQueue: hàng đợi việc trong tiến trình
 │   ├── workers.py             @worker: vòng lặp sống mãi, N bản theo tham số
+│   ├── events.py              @on_event + EventBus: fanout trong tiến trình
 │   ├── locks.py               khoá "chỉ một tiến trình chạy" (flock hoặc Redis)
 │   └── websocket/             @gateway / @subscribe, phòng, adapter nhiều worker
 ├── infrastructure/            mỗi hạ tầng MỘT package, không biết nhau
@@ -85,6 +86,7 @@ quét nó đi". Xếp khác thì nói ra một lần trong `src/main.py`:
 | `@EventPattern('x')` (microservices) | `@rabbitmq_subscriber("events", "x", queue="...")` |
 | `@MessagePattern('x')` | `@rabbitmq_responder("x", queue="...")` — xem [rpc.md](rpc.md) |
 | `@Interval` / `@Cron` / `@Timeout` (`@nestjs/schedule`) | `@interval` / `@cron` / `@timeout` — xem [background.md](background.md) |
+| `@OnEvent('x')` + `EventEmitter2` (`@nestjs/event-emitter`) | `@on_event("x")` + `EventBus.emit()` — fanout trong tiến trình |
 | `ClientProxy.emit/send` | `broker.emit(...)` / `await broker.send(...)`, khuôn tin tương thích NestJS |
 | `@EventPattern('x')` (transport Kafka) | `@kafka_subscriber("x", group="...")` |
 | `@EventPattern('x')` (transport MQTT) | `@mqtt_subscriber("x/+/y", qos=1)` |
@@ -255,7 +257,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 868 test trên backend memory (71 test nữa cần hạ tầng hoặc driver thật)
+fam test       # 901 test trên backend memory (71 test nữa cần hạ tầng hoặc driver thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

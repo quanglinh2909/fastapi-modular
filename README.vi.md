@@ -32,6 +32,7 @@ fam init && fam dev
 | `@EventPattern('x')` (RabbitMQ) | `@rabbitmq_subscriber("events", "x", queue="…")` |
 | `@MessagePattern('x')` | `@rabbitmq_responder("x", queue="…")` — giá trị trả về được gửi ngược |
 | `@Interval()` / `@Cron()` / `@Timeout()` | `@interval(seconds=5)` / `@cron("0 3 * * *")` / `@timeout(seconds=10)` |
+| `@OnEvent('x')` + `EventEmitter2` | `@on_event("x")` + `EventBus.emit()` — fanout trong tiến trình |
 | `client.emit(p, d)` / `client.send(p, d)` | `broker.emit(p, d, queue=…)` / `await broker.send(p, d, queue=…)` |
 | `CacheModule` / `CACHE_MANAGER` | `RedisClient.cached(key, factory, ttl=…)` |
 | socket.io Redis adapter | `APP_WS__ADAPTER=redis` |
@@ -252,7 +253,7 @@ vẫn phục vụ và tự nối lại. Chi tiết: [docs/rabbitmq.md](https://g
 
 ## Việc chạy nền
 
-Hai thứ khác nhau, không cần hạ tầng gì:
+Bốn thứ khác nhau, không cần hạ tầng gì:
 
 ```python
 # theo LỊCH — @nestjs/schedule
@@ -281,12 +282,29 @@ for camera in cameras:
     await service.watch(camera.id, {"ip": camera.ip})   # khoá + data lúc gọi
 
 await self.watch.stop(camera.id)       # dừng MỘT bản, chờ nó dọn dẹp xong
+
+# FANOUT trong tiến trình — một sự kiện, N nơi nghe, chạy SONG SONG
+@on_event("order.paid")                       # nhận cả "order.*" / "camera.#"
+async def gui_bien_lai(self, data: dict) -> None: ...
+
+@on_event("order.paid")                       # nơi nghe thứ hai là chuyện bình thường
+async def cap_nhat_thong_ke(self, data: dict) -> None: ...
+
+await self._events.emit("order.paid", {"id": id})   # CHỜ mọi nơi nghe xong
+self._events.dispatch("order.paid", {"id": id})     # trả về NGAY
 ```
 
-Cả bốn decorator đều có hai dạng: `async def` (mặc định) và `thread=True` cho
+Cả năm decorator đều có hai dạng: `async def` (mặc định) và `thread=True` cho
 thân hàm toàn lời gọi chặn. `ctx` là tuỳ chọn — khai khi cần `ctx.running` để
 dừng vòng lặp, `ctx.blocking(...)` để gọi hàm chặn, hoặc `ctx.run(...)` để ghi
 database từ trong thread.
+
+`@on_event` là chỗ `@job` không với tới: `@job` là một tên việc, **một**
+handler, xếp hàng chạy tuần tự — đó là hàng đợi. `@on_event` là một sự kiện,
+**nhiều** handler, chạy song song — không ai "sở hữu" việc, và bên phát không
+biết ai đang nghe. Một nơi nghe ném lỗi thì những nơi khác vẫn chạy. Nó là
+`fanout` / `EventEmitter`, nhưng **chỉ trong một tiến trình**: `fam run
+--workers 4` thì sự kiện không sang được ba tiến trình kia.
 
 `@worker` là chỗ `@interval` và `@job` không với tới: nó có phần **dựng ở trước
 vòng lặp** (mở camera, nạp model) và chạy tới khi bạn bảo dừng. Hỏng thì tự dựng
@@ -391,7 +409,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              868 test chạy không cần hạ tầng, 71 test nữa cần driver/server thật
+tests/              901 test chạy không cần hạ tầng, 71 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 
@@ -430,7 +448,7 @@ MIT — xem [LICENSE](https://github.com/quanglinh2909/fastapi-modular/blob/main
 - [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: sinh, chạy, lùi migration
 - [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — gateway WebSocket, phòng, Postman, Next.js
 - [docs/rabbitmq.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rabbitmq.md) — đủ 5 kiểu exchange, hạn dùng (TTL), consumer nền, `.retry` / `.dlq`
-- [docs/background.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/background.md) — việc theo lịch (`@interval`/`@cron`/`@timeout`) và hàng đợi việc trong tiến trình (`@job`)
+- [docs/background.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/background.md) — việc theo lịch (`@interval`/`@cron`/`@timeout`), hàng đợi việc trong tiến trình (`@job`), vòng lặp sống mãi (`@worker`) và fanout trong tiến trình (`@on_event`)
 - [docs/rpc.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/rpc.md) — `emit` / `send` / `@rabbitmq_responder`, khuôn tin tương thích NestJS
 - [docs/redis.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/redis.md) — cache, đếm nguyên tử, pub/sub
 - [docs/mqtt.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mqtt.md) — QoS, retain, luật khớp topic `+` và `#`
