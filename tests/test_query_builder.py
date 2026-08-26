@@ -323,6 +323,22 @@ async def test_chua_ke_thua_Entity_ma_dung_bang_bang_thi_bao_ro(kho):
         or_(QEvent.label == "person", QEvent.label == "car")
 
 
+def test_chu_ky_where_de_Any_de_IDE_khong_gach_do_cau_dung():
+    """Khai `Condition` ở đây là IDE báo lỗi trên câu HOÀN TOÀN ĐÚNG.
+
+    Type checker đọc annotation `score: float` nên với nó `Camera.score > 1`
+    là `bool` — metaclass là thứ chỉ có lúc chạy, nó không thấy. Sai kiểu thật
+    đã có `as_condition` bắt lúc chạy.
+    """
+    import inspect
+
+    from fastapi_modular.infrastructure.database import Query
+
+    for ten in ("where",):
+        chu_ky = inspect.signature(getattr(Query, ten))
+        assert chu_ky.parameters["conditions"].annotation == "Any", ten
+
+
 # --------------------------------------------------------------- OR / NOT
 async def test_or_va_not(kho):
     events, _ = kho

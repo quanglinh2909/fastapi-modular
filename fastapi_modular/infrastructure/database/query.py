@@ -280,11 +280,11 @@ def as_condition(value: Any) -> Condition:
     )
 
 
-def and_(*parts: Condition) -> Condition:
+def and_(*parts: Any) -> Condition:        # `Any`: xem ghi chú ở `Query.where`
     return Group("and", tuple(as_condition(p) for p in parts))
 
 
-def or_(*parts: Condition) -> Condition:
+def or_(*parts: Any) -> Condition:
     """`WHERE a OR b` — thứ mà kwargs không viết được.
 
         .where(or_(F(Event).score >= 0.8, F(Event).label == "fire"))
@@ -294,7 +294,7 @@ def or_(*parts: Condition) -> Condition:
     return Group("or", tuple(as_condition(p) for p in parts))
 
 
-def not_(part: Condition) -> Condition:
+def not_(part: Any) -> Condition:
     return Not(as_condition(part))
 
 
@@ -474,7 +474,7 @@ class Query(Generic[E]):
             + ". Chọn một bằng `on=...`."
         )
 
-    def where(self, *conditions: Condition, **lookups: Any) -> Query[E]:
+    def where(self, *conditions: Any, **lookups: Any) -> Query[E]:
         """Thêm điều kiện. Nhiều lời gọi `where` nối với nhau bằng AND.
 
             .where(score__gte=0.8, label="person")      # kiểu ngắn
@@ -484,6 +484,11 @@ class Query(Generic[E]):
         endswith contains isnull between`. Không có đuôi thì là so bằng.
 
         Tiền tố là tên bảng đã `join`: `camera__name__like="Cổng%"`.
+
+        `conditions` khai `Any` chứ không phải `Condition`, cố ý: type checker
+        đọc annotation `score: float` nên với nó `Camera.score > 1` là `bool`,
+        và khai `Condition` ở đây làm IDE gạch đỏ một câu hoàn toàn đúng. Sai
+        kiểu thật thì `as_condition` bắt lúc chạy, kèm lời chỉ cách viết lại.
         """
         self._spec.conditions.extend(as_condition(c) for c in conditions)
         for key, value in lookups.items():

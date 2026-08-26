@@ -1023,6 +1023,20 @@ ra điều kiện khi entity kế thừa `Entity` (`class Event(Entity):`); chư
 thì dùng `F(Event).score == 0.8` hoặc `.where(score=0.8)`.
 ```
 
+**IDE có thể gạch đỏ một dòng hoàn toàn đúng.** PyCharm/mypy đọc khai báo
+`score: float` rồi kết luận `Event.score > 0.8` là `bool` — chúng không thấy
+metaclass, thứ chỉ tồn tại lúc chạy. Cảnh báo *"Expected type 'Condition', got
+'bool' instead"* đã hết vì `.where()` khai tham số là `Any`, nhưng **mypy chặt**
+vẫn còn kêu hai câu không sửa được từ phía thư viện:
+
+```
+error: Cannot access instance-only attribute "score" on class object
+error: "score" in __slots__ conflicts with class variable access
+```
+
+Chạy mypy trong CI thì dùng `F(Event).score > 0.8` (hàm `F` trả `Any` nên im
+lặng) hoặc kiểu ngắn `.where(score__gt=0.8)`. Cả hai chạy y hệt.
+
 ### Hai ca kwargs không viết nổi
 
 ```python
