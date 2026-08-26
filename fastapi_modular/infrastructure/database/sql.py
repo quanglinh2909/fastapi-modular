@@ -538,22 +538,55 @@ class SqlBackend(DatabaseBackend):
         `find(match=...)` vốn phải kéo cả bảng về rồi lọc bằng Python.
         """
         from sqlalchemy import and_ as sql_and
+        from sqlalchemy import func
         from sqlalchemy import not_ as sql_not
         from sqlalchemy import or_ as sql_or
 
         from fastapi_modular.infrastructure.database.query import (
-            Column as QColumn,
-        )
-        from fastapi_modular.infrastructure.database.query import (
+            Aggregate,
             Compare,
             Group,
             Not,
+            table_of,
+        )
+        from fastapi_modular.infrastructure.database.query import (
+            Column as QColumn,
+        )
+        from fastapi_modular.infrastructure.database.query import (
+            _alias_of as alias_of_entity,
         )
 
         root = self._table(spec.entity)
 
+        # Bảng tra theo TÊN chứ không theo entity: nối bảng với chính nó thì
+        # hai cột cùng entity lại là hai bảng khác nhau trong câu lệnh.
+        tables: dict[str, Any] = {alias_of_entity(spec.entity): root}
+        for join in spec.joins:
+            table = self._table(join.entity)
+            if join.alias != alias_of_entity(join.entity):
+                table = table.alias(join.alias)
+            tables[join.alias] = table
+
         def col(column: QColumn) -> Any:
-            return self._table(column.entity).c[column.field]
+            name = table_of(column)
+            table = tables.get(name)
+            if table is None:
+                raise BadRequestError(
+                    f"Cột {column!r} trỏ tới bảng {name!r} chưa có trong truy vấn. "
+                    f"Đang có: {', '.join(sorted(tables))}."
+                )
+            return table.c[column.field]
+
+        def gop(item: Aggregate) -> Any:
+            if item.column is None:
+                return func.count()
+            inner = col(item.column)
+            if item.distinct:
+                inner = inner.distinct()
+            return getattr(func, item.func)(inner)
+
+        def value_of(item: Any) -> Any:
+            return gop(item) if isinstance(item, Aggregate) else col(item)
 
         def build(condition: Any) -> Any:
             if isinstance(condition, Group):
@@ -564,10 +597,10 @@ class SqlBackend(DatabaseBackend):
             if not isinstance(condition, Compare):
                 raise BadRequestError(f"Điều kiện lạ: {condition!r}")
 
-            left = col(condition.column)
+            left = value_of(condition.column)
             value = condition.value
-            if isinstance(value, QColumn):
-                value = col(value)
+            if isinstance(value, (QColumn, Aggregate)):
+                value = value_of(value)
             op = condition.op
             if op == "isnull":
                 return left.is_(None) if value else left.isnot(None)
@@ -596,23 +629,28 @@ class SqlBackend(DatabaseBackend):
             raise BadRequestError(f"Toán tử {op!r} chưa cài cho SQL")
 
         if spec.selects:
-            stmt = select(*(col(c).label(name) for name, c in spec.selects.items()))
+            stmt = select(*(value_of(c).label(name) for name, c in spec.selects.items()))
         else:
             stmt = select(root)
 
         target: Any = root
         for join in spec.joins:
-            other = self._table(join.entity)
-            target = target.join(other, build(join.on), isouter=join.outer)
+            target = target.join(
+                tables[join.alias], build(join.on), isouter=join.outer, full=join.full
+            )
         if spec.joins:
             stmt = stmt.select_from(target)
 
         for condition in spec.conditions:
             stmt = stmt.where(build(condition))
+        for column in spec.groups:
+            stmt = stmt.group_by(col(column))
+        for condition in spec.havings:
+            stmt = stmt.having(build(condition))
         if spec.distinct:
             stmt = stmt.distinct()
         for order in spec.orders:
-            column = col(order.column)
+            column = value_of(order.column)
             stmt = stmt.order_by(column.desc() if order.descending else column.asc())
         if spec.offset:
             stmt = stmt.offset(spec.offset)
@@ -635,7 +673,10 @@ class SqlBackend(DatabaseBackend):
 
         from sqlalchemy import func
 
-        plain = _dc.replace(spec, orders=[], limit=None, offset=0, selects={})
+        # Có `group_by` thì SELECT phải là chính các cột gộp: Postgres từ chối
+        # `SELECT * ... GROUP BY x`. Đếm xong là đếm SỐ NHÓM, đúng như SQL.
+        selects = {f"g{i}": c for i, c in enumerate(spec.groups)} if spec.groups else {}
+        plain = _dc.replace(spec, orders=[], limit=None, offset=0, selects=selects)
         inner = self._compile(plain).subquery()
         async with self._conn() as conn:
             return int((await conn.execute(select(func.count()).select_from(inner))).scalar() or 0)

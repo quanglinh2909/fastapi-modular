@@ -12,6 +12,10 @@
 | "Còn hoá đơn thì KHÔNG cho xoá khách hàng" | [`RESTRICT`](#restrict--chặn-không-cho-xoá) |
 | "Đọc/ghi dữ liệu trong service" | [Dùng Repository trong code](#dùng-repository-trong-code) |
 | "Lọc lớn hơn, nhỏ hơn, NULL, nối bảng" | [Truy vấn phức tạp](#truy-vấn-phức-tạp--join-lớnbé-null) |
+| "**Điều kiện này HOẶC điều kiện kia**" | [OR và AND lồng nhau](#or-và-and-lồng-nhau) |
+| "**Mỗi camera có bao nhiêu sự kiện**" | [Gộp nhóm](#gộp-nhóm-đếm-tính-trung-bình) |
+| "**Chỉ lấy camera có hơn 5 sự kiện**" | [HAVING](#having--lọc-theo-kết-quả-gộp) |
+| "Camera cha của camera này tên gì" | [Nối bảng với chính nó](#nối-bảng-với-chính-nó-self-join) |
 | "Chọn database nào" | [Cách chọn driver](#cách-chọn-driver) |
 | "Thêm/xoá trường mà không mất dữ liệu" | [Tự chỉnh schema](#tự-chỉnh-schema-thêm--xoá-trường) |
 
@@ -1037,24 +1041,58 @@ error: "score" in __slots__ conflicts with class variable access
 Chạy mypy trong CI thì dùng `F(Event).score > 0.8` (hàm `F` trả `Any` nên im
 lặng) hoặc kiểu ngắn `.where(score__gt=0.8)`. Cả hai chạy y hệt.
 
-### Hai ca kwargs không viết nổi
+### OR và AND lồng nhau
+
+Nhiều `.where()` nối với nhau bằng **AND**. Muốn OR thì gọi `or_(...)`:
 
 ```python
-# OR
-await repo.query().where(or_(Event.score >= 0.8, Event.label == "fire")).all()
+# score >= 0.8 AND (label = 'fire' OR label = 'car')
+await (repo.query()
+       .where(Event.score >= 0.8)
+       .where(or_(Event.label == "fire", Event.label == "car"))
+       .all())
+```
 
-# so CỘT với CỘT
+**Hai điều kiện rồi OR ở giữa** — ca hay gặp nhất, `and_` lồng trong `or_`:
+
+```python
+# (label = 'person' AND score >= 0.9) OR (label = 'fire' AND score >= 0.3)
+await (repo.query()
+       .where(or_(and_(Event.label == "person", Event.score >= 0.9),
+                  and_(Event.label == "fire",   Event.score >= 0.3)))
+       .all())
+```
+
+Sinh ra đúng câu này, và dấu ngoặc do database tự hiểu theo thứ tự ưu tiên
+`AND` trước `OR`:
+
+```sql
+WHERE events.label = 'person' AND events.score >= 0.9
+   OR events.label = 'fire' AND events.score >= 0.3
+```
+
+Viết bằng `&` `|` `~` cũng được, kết quả y hệt — nhưng **phải có ngoặc quanh
+từng phép so sánh**, vì trong Python `&` ưu tiên cao hơn `>=`:
+
+```python
+.where(((Event.label == "person") & (Event.score >= 0.9))
+       | ((Event.label == "fire") & (Event.score >= 0.3)))
+```
+
+Thiếu ngoặc thì `Event.score >= 0.9 & Event.label` chạy trước và bạn nhận
+`TypeError: unsupported operand type(s) for &`. Không thích đếm ngoặc thì dùng
+`and_()` / `or_()` — không có bẫy nào.
+
+`~` là NOT: `.where(~or_(Event.label == "fire", Event.label == "car"))`.
+
+### So CỘT với CỘT
+
+```python
 await (repo.query()
        .join(Camera)
        .where(Event.score > Camera.threshold)   # events.score > cameras.threshold
        .all())
 ```
-
-Nối điều kiện bằng `&`, `|`, `~` cũng được — nhưng **phải có ngoặc quanh từng
-vế**: `&` trong Python ưu tiên cao hơn `>=`, nên thiếu ngoặc là
-`Event.score >= (0.9 & Event.label)` rồi `TypeError`. Viết
-`.where((Event.score >= 0.9) & ~(Event.label == "car"))`, hoặc tránh hẳn bằng
-`and_(...)` / gọi `.where()` nhiều lần.
 
 ### Nối theo cột nào
 
@@ -1096,16 +1134,134 @@ bằng `reference(...)`. Nói rõ bằng `on=Camera.ten_cot` hoặc `on="ten_cot
 Hai cột cùng trỏ sang một bảng (`vao_id`, `ra_id` cùng trỏ `Camera`) cũng vậy —
 liệt kê cả hai rồi bắt bạn chọn.
 
-`outer=True` cho `LEFT JOIN` — giữ cả dòng không có bên phải. Đây là cách tìm
-"cái nào còn trống":
+### Bốn kiểu nối
+
+| Viết | Ra SQL | Dùng khi |
+|---|---|---|
+| `.join(Camera)` | `JOIN` | chỉ cần dòng khớp cả hai bên |
+| `.join(Event, outer=True)` | `LEFT JOIN` | giữ cả dòng **không** có bên phải |
+| `.join(Event, full=True)` | `FULL OUTER JOIN` | giữ cả hai bên; bắt buộc `.select(...)` |
+| `.join(Camera, alias="cha", on=…)` | `JOIN … AS cha` | nối bảng với **chính nó** |
+
+**`RIGHT JOIN` không có, và không thiếu.** Builder trả về entity của bảng GỐC,
+nên "RIGHT JOIN" chỉ là đổi bảng nào làm gốc rồi dùng `outer=True`:
+
+```python
+# thay vì  events.query().join(Camera, right=True)
+await cameras.query().join(Event, outer=True)...
+```
+
+Chọn bảng gốc là việc bạn phải làm dù thế nào — nó quyết định bạn nhận về cái
+gì — nên chọn xong là hết chuyện RIGHT.
+
+**`LEFT JOIN` là cách tìm "cái nào còn trống":**
 
 ```python
 # camera CHƯA có sự kiện nào
 await (cameras.query()
-       .join(Event, on=F(Camera).id == F(Event).camera_id, outer=True)
+       .join(Event, outer=True)
        .where(F(Event).id.is_null())
        .all())
 ```
+
+**`FULL JOIN` bắt buộc `.select(...)`**, vì nó sinh cả những dòng không có bản
+ghi nào bên bảng gốc — trả về một `Camera` toàn `None` thì chỉ là bịa. Không
+có `.select` thì báo lỗi ngay chứ không trả rác. SQLite phải từ 3.39 trở lên
+mới có `FULL OUTER JOIN`.
+
+### Nối bảng với chính nó (self join)
+
+Camera có `parent_id` trỏ sang một camera khác. Cùng một bảng đóng hai vai, nên
+phải đặt tên cho vai thứ hai bằng `alias=`, và lấy cột của nó bằng
+`F(Camera, "cha")`:
+
+```python
+Cha = F(Camera, "cha")
+
+rows = await (cameras.query()
+              .join(Camera, on=Camera.parent_id, alias="cha")
+              .select("id", "name", ten_cha=Cha.name)
+              .where(Cha.zone == "Tầng 1")
+              .all())
+```
+
+```sql
+SELECT cameras.id, cameras.name, cha.name AS ten_cha
+FROM cameras JOIN cameras AS cha ON cameras.parent_id = cha.id
+WHERE cha.zone = 'Tầng 1'
+```
+
+**`alias=` ở `.join()` và `F(Camera, "cha")` phải trùng chuỗi.** Lệch nhau thì
+báo lỗi kèm danh sách tên bảng đang có, không sinh câu lệnh sai.
+
+Kiểu ngắn cũng dùng alias làm tiền tố: `.where(cha__zone="Tầng 1")`.
+
+### Gộp nhóm: đếm, tính trung bình
+
+```python
+from fastapi_modular.infrastructure.database import avg, count, max_, min_, sum_
+
+rows = await (events.query()
+              .group_by(Event.camera_id)
+              .select("camera_id", so_luong=count(), diem_tb=avg(Event.score))
+              .order_by(count().desc())
+              .all())
+# [{"camera_id": "c1", "so_luong": 12, "diem_tb": 0.83}, ...]
+```
+
+`group_by` **bắt buộc đi với `.select(...)`**: sau khi gộp thì một dòng không
+còn là một bản ghi nữa. Không có `.select` thì báo lỗi chứ không trả entity bịa.
+
+| Hàm | SQL | Ghi chú |
+|---|---|---|
+| `count()` | `count(*)` | đếm dòng |
+| `count(Event.label)` | `count(label)` | **bỏ qua NULL** |
+| `count(Event.label, distinct=True)` | `count(DISTINCT label)` | đếm giá trị khác nhau |
+| `sum_(Event.score)` | `sum(score)` | |
+| `avg(Event.score)` | `avg(score)` | |
+| `min_(...)` `max_(...)` | `min` `max` | |
+
+Tên có gạch dưới (`sum_`, `min_`, `max_`) vì `sum`, `min`, `max` là hàm sẵn có
+của Python.
+
+**Nhóm rỗng cho `NULL` chứ không phải 0.** `sum_` của một nhóm không có dòng
+nào là `None` — đúng luật SQL, và backend `memory` giữ y hệt để `fam test`
+không nói dối. Chỉ `count()` mới ra 0.
+
+**Không có `group_by` mà vẫn dùng hàm gộp** thì cả bảng là một nhóm:
+
+```python
+await events.query().select(tong_so=count(), diem_tb=avg(Event.score)).all()
+# [{"tong_so": 1042, "diem_tb": 0.77}]
+```
+
+### HAVING — lọc theo kết quả gộp
+
+```python
+# camera nào có hơn 5 sự kiện
+rows = await (events.query()
+              .group_by(Event.camera_id)
+              .select("camera_id", so_luong=count())
+              .having(count() > 5)
+              .all())
+```
+
+**`where` bỏ bớt DÒNG trước khi gộp, `having` bỏ bớt NHÓM sau khi gộp.** Đây là
+chỗ nhầm nhiều nhất, và hai cách cho ra con số khác hẳn nhau:
+
+```python
+# "camera có hơn 5 sự kiện ĐIỂM CAO"  -> lọc dòng trước, rồi đếm
+.where(Event.score >= 0.8).having(count() > 5)
+
+# "camera có hơn 5 sự kiện, và điểm trung bình cao" -> đếm hết, rồi lọc nhóm
+.having(count() > 5, avg(Event.score) >= 0.8)
+```
+
+Nhiều điều kiện trong một `having` nối với nhau bằng AND, y như `where`.
+`or_(...)` dùng được ở đây luôn.
+
+`.count()` trên một truy vấn có `group_by` đếm **số nhóm**, đúng như
+`SELECT count(*) FROM (...)` của SQL.
 
 ### Lấy cột của bảng đã join
 
@@ -1128,7 +1284,7 @@ rows = await (repo.query()
 hiện 10 lần — đúng theo SQL, nhưng thường không phải ý bạn:
 
 ```python
-await cameras.query().join(Event, on=...).distinct().all()
+await cameras.query().join(Event).distinct().all()
 ```
 
 **`count()` là `SELECT count(*)` thật**, không kéo dòng nào về. Đừng viết
@@ -1154,17 +1310,28 @@ postgres/sqlite.
 | Dựng | |
 |---|---|
 | `.join(Entity)` | nối bảng, cột lấy từ `reference(...)` |
+| `.join(Entity, outer=True)` · `full=True` | LEFT JOIN · FULL OUTER JOIN (cần `.select`) |
+| `.join(Entity, alias="cha")` | nối bảng với chính nó; lấy cột bằng `F(Entity, "cha")` |
+| `.group_by(X.cot)` | gộp nhóm; bắt buộc kèm `.select(...)` |
+| `.having(count() > 5)` | lọc theo kết quả gộp |
 | `.join(Entity, on=…, outer=False, alias="")` | `on=` nhận `Entity.cot`, `"cot"`, `("cot","cot_kia")`, hoặc cả một điều kiện |
 | `.where(*điều_kiện, **kwargs)` | nhiều lần `where` nối bằng AND |
 | `.order_by("-created_at")` | dấu trừ = giảm dần; nhận cả `X.cot` và `F(X).cot.desc()` |
 | `.limit(n)` · `.offset(n)` · `.distinct()` | |
 | `.select("id", ten_khac=X.cot)` | đổi kiểu trả về sang `list[dict]` |
+| `.select(so=count(), tb=avg(X.cot))` | hàm gộp, phải đặt tên |
 
 | Cột | |
 |---|---|
 | `Event.score` | cần `class Event(Entity)` |
 | `F(Event).score` | không cần gì |
-| `"score"` | chỉ ở `on=`, `order_by`, `select` — chỗ đã biết bảng |
+| `F(Event, "cha").score` | cột của bảng đã đặt `alias="cha"` |
+| `"score"` | chỉ ở `on=`, `group_by`, `order_by`, `select` — chỗ đã biết bảng |
+
+| Hàm gộp | |
+|---|---|
+| `count()` · `count(X.cot)` · `count(X.cot, distinct=True)` | `count(*)` · bỏ NULL · `DISTINCT` |
+| `sum_(X.cot)` · `avg(X.cot)` · `min_(X.cot)` · `max_(X.cot)` | nhóm rỗng ra `None`, không phải 0 |
 
 **Giá của việc kế thừa `Entity`** — chỉ đọc nếu bạn đang cân nhắc có nên kế thừa
 hay không. Đo trên máy dev, trung vị 7 lần:
@@ -1187,7 +1354,7 @@ hơn (đặt descriptor vào thân lớp) thì mọi lần đọc thuộc tính 
 | `await .all()` | `list[Entity]`, hoặc `list[dict]` nếu có `.select()` |
 | `await .first()` | một cái hoặc `None`; tự đặt `LIMIT 1` |
 | `await .one()` | một cái, không có thì ném 404 |
-| `await .count()` | `int` |
+| `await .count()` | `int`; có `group_by` thì là SỐ NHÓM |
 | `await .exists()` | `bool` |
 | `.sql()` | chuỗi SQL sẽ chạy (chỉ có ở sqlite/postgres) |
 

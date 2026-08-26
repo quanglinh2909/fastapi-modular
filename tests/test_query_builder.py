@@ -21,7 +21,19 @@ from fastapi_modular.core.clock import utcnow
 from fastapi_modular.core.config import DatabaseSettings
 from fastapi_modular.core.container import entity
 from fastapi_modular.core.exceptions import BadRequestError, NotFoundError
-from fastapi_modular.infrastructure.database import Entity, F, Repository, or_, reference
+from fastapi_modular.infrastructure.database import (
+    Entity,
+    F,
+    Repository,
+    and_,
+    avg,
+    count,
+    max_,
+    min_,
+    or_,
+    reference,
+    sum_,
+)
 from fastapi_modular.infrastructure.database.factory import create_backend
 
 CO_SQLITE = bool(os.getenv("TEST_SQLITE")) and importlib.util.find_spec("aiosqlite") is not None
@@ -34,6 +46,7 @@ class QCamera(Entity):
     name: str
     zone: str
     threshold: float = 0.5
+    parent_id: str | None = None
     created_at: datetime = field(default_factory=utcnow)
     updated_at: datetime = field(default_factory=utcnow)
 
@@ -77,8 +90,10 @@ async def kho(request, tmp_path):
     events, cameras = Repository(QEvent, db), Repository(QCamera, db)
 
     await cameras.save(QCamera(id="c1", name="Cổng chính", zone="Tầng 1", threshold=0.7))
-    await cameras.save(QCamera(id="c2", name="Kho hàng", zone="Tầng 2", threshold=0.9))
-    await cameras.save(QCamera(id="c3", name="Bãi xe", zone="Tầng 1", threshold=0.5))
+    await cameras.save(QCamera(id="c2", name="Kho hàng", zone="Tầng 2", threshold=0.9,
+                               parent_id="c1"))
+    await cameras.save(QCamera(id="c3", name="Bãi xe", zone="Tầng 1", threshold=0.5,
+                               parent_id="c1"))
 
     goc = utcnow()
     mau = [
@@ -291,6 +306,7 @@ async def test_ke_thua_entity_khong_lam_doi_tuong_nang_them(kho):
         name: str
         zone: str
         threshold: float = 0.5
+        parent_id: str | None = None
         created_at: datetime = field(default_factory=utcnow)
         updated_at: datetime = field(default_factory=utcnow)
 
@@ -339,7 +355,190 @@ def test_chu_ky_where_de_Any_de_IDE_khong_gach_do_cau_dung():
         assert chu_ky.parameters["conditions"].annotation == "Any", ten
 
 
+# ------------------------------------------------- nối bảng với chính nó
+async def test_self_join_bang_alias(kho):
+    """Camera có `parent_id` trỏ về camera khác — cùng một bảng, hai vai."""
+    _, cameras = kho
+    Cha = F(QCamera, "cha")
+    rows = await (
+        cameras.query()
+        .join(QCamera, on=QCamera.parent_id, alias="cha")
+        .select("id", cha=Cha.name)
+        .order_by("id")
+        .all()
+    )
+    assert rows == [{"id": "c2", "cha": "Cổng chính"}, {"id": "c3", "cha": "Cổng chính"}]
+
+
+async def test_self_join_loc_theo_bang_kia(kho):
+    """Điều kiện trên bảng đã đặt alias, cả hai kiểu viết."""
+    _, cameras = kho
+    Cha = F(QCamera, "cha")
+    q = cameras.query().join(QCamera, on=QCamera.parent_id, alias="cha")
+    assert ids(await q.where(Cha.zone == "Tầng 1").all()) == ["c2", "c3"]
+
+    q2 = cameras.query().join(QCamera, on=QCamera.parent_id, alias="cha")
+    assert ids(await q2.where(cha__name__like="Cổng%").all()) == ["c2", "c3"]
+
+
+@pytest.mark.skipif(not CO_SQLITE, reason="đặt TEST_SQLITE=1 và cài aiosqlite")
+async def test_self_join_sinh_ra_alias_that_trong_SQL(tmp_path):
+    """Không có alias thật thì câu lệnh là `FROM qcameras JOIN qcameras` — vô nghĩa."""
+    backend = create_backend(DatabaseSettings(
+        driver="sqlite", dsn=f"sqlite+aiosqlite:///{tmp_path}/self.db"))
+    await backend.startup()
+    await backend.create_schema(QCamera)
+    cameras = Repository(QCamera, _Db(backend))
+
+    sql = " ".join(
+        cameras.query().join(QCamera, on=QCamera.parent_id, alias="cha")
+        .select("id", cha=F(QCamera, "cha").name).sql().split()
+    )
+    assert "JOIN qcameras AS cha ON qcameras.parent_id = cha.id" in sql
+    assert "cha.name" in sql
+    await backend.shutdown()
+
+
+# --------------------------------------------------------------- FULL JOIN
+async def test_full_join_giu_ca_hai_ben(kho):
+    """Nối theo điều kiện hẹp: còn camera không khớp ai VÀ sự kiện không khớp ai."""
+    _, cameras = kho
+    rows = await (
+        cameras.query()
+        .join(QEvent, on=and_(F(QEvent).camera_id == QCamera.id, F(QEvent).label == "person"),
+              full=True)
+        .select(cam=QCamera.id, ev=F(QEvent).id)
+        .all()
+    )
+    cap = sorted((r["cam"] or "-", r["ev"] or "-") for r in rows)
+    assert ("c3", "-") in cap, "camera không có sự kiện person nào vẫn phải còn"
+    assert ("-", "e2") in cap, "sự kiện label=fire không khớp camera nào vẫn phải còn"
+
+
+async def test_full_join_khong_co_select_thi_bao_ro(kho):
+    _, cameras = kho
+    with pytest.raises(BadRequestError) as loi:
+        await cameras.query().join(QEvent, full=True).all()
+    assert "select" in str(loi.value).lower()
+
+
+# ------------------------------------------------------- gộp nhóm + HAVING
+async def test_group_by_va_cac_ham_gop(kho):
+    events, _ = kho
+    rows = await (
+        events.query()
+        .group_by(QEvent.camera_id)
+        .select("camera_id", so=count(), tb=avg(QEvent.score),
+                cao=max_(QEvent.score), thap=min_(QEvent.score), tong=sum_(QEvent.score))
+        .order_by("camera_id")
+        .all()
+    )
+    assert [r["camera_id"] for r in rows] == ["c1", "c2"]
+    assert [r["so"] for r in rows] == [4, 2]
+    assert rows[1]["cao"] == 0.95 and rows[1]["thap"] == 0.85
+    assert round(rows[1]["tong"], 6) == 1.8
+
+
+async def test_having_loc_theo_nhom_chu_khong_theo_dong(kho):
+    events, _ = kho
+    rows = await (events.query().group_by(QEvent.camera_id)
+                  .select("camera_id", so=count()).having(count() > 2).all())
+    assert rows == [{"camera_id": "c1", "so": 4}]
+
+
+async def test_where_truoc_having_sau_cho_ket_qua_khac_nhau(kho):
+    """Đây là chỗ hay nhầm nhất: `where` bỏ DÒNG, `having` bỏ NHÓM."""
+    events, _ = kho
+    chi_diem_cao = await (events.query().where(F(QEvent).score >= 0.9)
+                          .group_by(QEvent.camera_id)
+                          .select("camera_id", so=count()).order_by("camera_id").all())
+    assert chi_diem_cao == [{"camera_id": "c1", "so": 2}, {"camera_id": "c2", "so": 1}]
+
+    moi_dong = await (events.query().group_by(QEvent.camera_id)
+                      .select("camera_id", so=count()).order_by("camera_id").all())
+    assert moi_dong == [{"camera_id": "c1", "so": 4}, {"camera_id": "c2", "so": 2}]
+
+
+async def test_gop_ca_bang_khong_can_group_by(kho):
+    events, _ = kho
+    assert await events.query().select(so=count(), tb=avg(QEvent.score)).all() == [
+        {"so": 6, "tb": pytest.approx(sum([0.95, 0.6, 0.3, 0.95, 0.85, 0.99]) / 6)}
+    ]
+
+
+async def test_gop_tren_bang_rong_theo_dung_luat_SQL(kho):
+    """`count` = 0 nhưng `sum` = NULL chứ không phải 0 — memory phải giống SQL."""
+    events, _ = kho
+    rows = await (events.query().where(F(QEvent).label == "khong-ton-tai")
+                  .select(so=count(), tong=sum_(QEvent.score)).all())
+    assert rows == [{"so": 0, "tong": None}]
+
+
+async def test_count_bo_qua_NULL_con_count_sao_thi_khong(kho):
+    events, _ = kho
+    rows = await events.query().select(
+        dong=count(), da_duyet=count(QEvent.reviewed_at),
+        nhan_khac_nhau=count(QEvent.label, distinct=True)).all()
+    assert rows == [{"dong": 6, "da_duyet": 1, "nhan_khac_nhau": 3}]
+
+
+async def test_gop_sau_join_va_sap_theo_ham_gop(kho):
+    events, _ = kho
+    rows = await (events.query().join(QCamera).group_by(QCamera.zone)
+                  .select(zone=QCamera.zone, so=count()).order_by(count().desc()).all())
+    assert rows == [{"zone": "Tầng 1", "so": 4}, {"zone": "Tầng 2", "so": 2}]
+
+
+async def test_count_tren_truy_van_gop_la_dem_SO_NHOM(kho):
+    events, _ = kho
+    q = events.query().group_by(QEvent.camera_id).select("camera_id", so=count())
+    assert await q.count() == 2
+
+
+async def test_group_by_khong_co_select_thi_bao_ro(kho):
+    events, _ = kho
+    with pytest.raises(BadRequestError) as loi:
+        await events.query().group_by(QEvent.camera_id).all()
+    assert "select" in str(loi.value).lower()
+
+
+async def test_ham_gop_trong_select_phai_dat_ten(kho):
+    events, _ = kho
+    with pytest.raises(BadRequestError) as loi:
+        events.query().group_by(QEvent.camera_id).select(count())
+    assert "đặt tên" in str(loi.value)
+
+
 # --------------------------------------------------------------- OR / NOT
+async def test_or_long_trong_and_hai_tang(kho):
+    """`(a AND b) OR (c AND d)` — hỏi nhiều nhất, và là chỗ dấu ngoặc dễ sai."""
+    events, _ = kho
+    mong_doi = ["e0", "e2", "e3", "e5"]
+
+    bang_ham = await (events.query().where(
+        or_(and_(F(QEvent).label == "person", F(QEvent).score >= 0.9),
+            and_(F(QEvent).label == "fire", F(QEvent).score >= 0.3))).all())
+    assert ids(bang_ham) == mong_doi
+
+    bang_toan_tu = await (events.query().where(
+        ((F(QEvent).label == "person") & (F(QEvent).score >= 0.9))
+        | ((F(QEvent).label == "fire") & (F(QEvent).score >= 0.3))).all())
+    assert ids(bang_toan_tu) == mong_doi
+
+
+async def test_and_ngoai_or_trong_va_nguoc_lai(kho):
+    """`x AND (a OR b)` khác hẳn `(x AND a) OR b` — cả hai phải viết được."""
+    events, _ = kho
+    a = await (events.query().where(F(QEvent).score >= 0.9)
+               .where(or_(F(QEvent).label == "fire", F(QEvent).label == "person")).all())
+    assert ids(a) == ["e0", "e3", "e5"]
+
+    b = await (events.query().where(
+        or_(and_(F(QEvent).score >= 0.9, F(QEvent).label == "person"),
+            F(QEvent).label == "fire")).all())
+    assert ids(b) == ["e0", "e2", "e3", "e5"]
+
+
 async def test_or_va_not(kho):
     events, _ = kho
     E = F(QEvent)

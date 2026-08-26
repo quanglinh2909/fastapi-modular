@@ -92,10 +92,10 @@ class Column:
     phải là giá trị thường, hoặc là một `Column` khác để so **cột với cột**.
     """
 
-    __slots__ = ("entity", "field")
+    __slots__ = ("alias", "entity", "field")
     __hash__ = None                      # type: ignore[assignment]
 
-    def __init__(self, entity: type, field: str) -> None:
+    def __init__(self, entity: type, field: str, alias: str = "") -> None:
         fields = mapping_for(entity).fields
         if field not in fields:
             raise BadRequestError(
@@ -104,6 +104,9 @@ class Column:
             )
         self.entity = entity
         self.field = field
+        # Tên bảng trong truy vấn. Rỗng = bảng mặc định của entity này. Chỉ
+        # khác rỗng khi một entity xuất hiện hai lần (self join).
+        self.alias = alias
 
     # Trả về Condition chứ không phải bool — đây là điểm của lớp này.
     def __eq__(self, other: Any) -> Condition:      # type: ignore[override]
@@ -152,31 +155,40 @@ class Column:
         return Order(self, descending=True)
 
     def __repr__(self) -> str:
+        if self.alias:
+            return f"{self.alias}.{self.field}"
         return f"{self.entity.__name__}.{self.field}"
 
 
 class _Fields:
     """Cái `F(Event)` trả về. `__getattr__` dựng `Column` và kiểm tên ngay."""
 
-    __slots__ = ("_entity",)
+    __slots__ = ("_alias", "_entity")
 
-    def __init__(self, entity: type) -> None:
+    def __init__(self, entity: type, alias: str = "") -> None:
         self._entity = entity
+        self._alias = alias
 
     def __getattr__(self, name: str) -> Column:
-        return Column(self._entity, name)
+        return Column(self._entity, name, self._alias)
 
     def __repr__(self) -> str:
-        return f"F({self._entity.__name__})"
+        return f"F({self._entity.__name__}, alias={self._alias!r})"
 
 
-def F(entity: type) -> Any:
+def F(entity: type, alias: str = "") -> Any:
     """Cổng vào các cột của một entity: `F(Event).score >= 0.8`.
+
+    `alias` chỉ cần khi một bảng xuất hiện hai lần trong cùng truy vấn — nối
+    bảng với chính nó. Phải trùng `alias=` đã truyền cho `.join(...)`:
+
+        Cha = F(Camera, "cha")
+        cameras.query().join(Camera, on=Camera.parent_id, alias="cha").where(Cha.zone == "A")
 
     Trả về `Any` để type checker không cản `F(Event).score` — tên trường được
     kiểm lúc chạy, ngay khi dựng, và lỗi liệt kê đủ tên hợp lệ.
     """
-    return _Fields(entity)
+    return _Fields(entity, alias)
 
 
 def column_of(value: Any, *, fallback: type | None = None) -> Column:
@@ -214,8 +226,86 @@ def column_of(value: Any, *, fallback: type | None = None) -> Column:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class Order:
-    column: Column
+    column: Any                      # Column hoặc Aggregate
     descending: bool = False
+
+
+# --------------------------------------------------------------- hàm gộp
+AGGREGATES = ("count", "sum", "avg", "min", "max")
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Aggregate:
+    """`count()`, `avg(Event.score)`... — chỉ dùng được sau `group_by`.
+
+    So sánh được như một cột, nhưng kết quả phải đặt trong `having()` chứ
+    không phải `where()`: `where` lọc TỪNG DÒNG trước khi gộp, `having` lọc
+    TỪNG NHÓM sau khi gộp. Đó là khác biệt duy nhất giữa hai cái, và cũng là
+    thứ hay bị nhầm nhất.
+    """
+
+    func: str
+    column: Column | None = None
+    distinct: bool = False
+
+    def __post_init__(self) -> None:
+        if self.func not in AGGREGATES:
+            raise BadRequestError(f"Hàm gộp {self.func!r} không có. Có: {', '.join(AGGREGATES)}")
+        if self.func != "count" and self.column is None:
+            raise BadRequestError(f"`{self.func}` cần một cột: {self.func}(Event.score)")
+
+    def __eq__(self, other: Any) -> Condition:      # type: ignore[override]
+        return Compare(self, "eq", other)
+
+    def __ne__(self, other: Any) -> Condition:      # type: ignore[override]
+        return Compare(self, "ne", other)
+
+    def __gt__(self, other: Any) -> Condition:
+        return Compare(self, "gt", other)
+
+    def __ge__(self, other: Any) -> Condition:
+        return Compare(self, "gte", other)
+
+    def __lt__(self, other: Any) -> Condition:
+        return Compare(self, "lt", other)
+
+    def __le__(self, other: Any) -> Condition:
+        return Compare(self, "lte", other)
+
+    def between(self, low: Any, high: Any) -> Condition:
+        return Compare(self, "between", [low, high])
+
+    def asc(self) -> Order:
+        return Order(self, descending=False)
+
+    def desc(self) -> Order:
+        return Order(self, descending=True)
+
+    def __repr__(self) -> str:
+        inner = "" if self.column is None else repr(self.column)
+        return f"{self.func}({'DISTINCT ' if self.distinct else ''}{inner})"
+
+
+def count(column: Any = None, *, distinct: bool = False) -> Aggregate:
+    """`count()` đếm dòng; `count(Event.id)` bỏ qua NULL; `distinct=True` đếm giá trị khác nhau."""
+    return Aggregate("count", None if column is None else column_of(column), distinct)
+
+
+def sum_(column: Any) -> Aggregate:
+    """Tên có gạch dưới vì `sum` là hàm sẵn có của Python."""
+    return Aggregate("sum", column_of(column))
+
+
+def avg(column: Any) -> Aggregate:
+    return Aggregate("avg", column_of(column))
+
+
+def min_(column: Any) -> Aggregate:
+    return Aggregate("min", column_of(column))
+
+
+def max_(column: Any) -> Aggregate:
+    return Aggregate("max", column_of(column))
 
 
 # ---------------------------------------------------------------- điều kiện
@@ -236,7 +326,7 @@ class Condition:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class Compare(Condition):
-    column: Column
+    column: Any                      # Column hoặc Aggregate
     op: str
     value: Any
 
@@ -322,11 +412,21 @@ class Join:
     alias: str
     on: Condition
     outer: bool = False
+    full: bool = False
 
 
 def _alias_of(entity: type) -> str:
     """`Camera` -> `camera`. Đây là tiền tố dùng trong kwargs: `camera__name`."""
     return entity.__name__.lower()
+
+
+def table_of(column: Column) -> str:
+    """Tên bảng mà một cột trỏ tới trong truy vấn — alias nếu có, không thì mặc định.
+
+    Backend tra bảng bằng CHUỖI này chứ không bằng `column.entity`: nối bảng với
+    chính nó thì hai cột cùng entity mà là hai bảng khác nhau.
+    """
+    return column.alias or _alias_of(column.entity)
 
 
 # ------------------------------------------------------------------- spec
@@ -345,8 +445,10 @@ class QuerySpec:
     orders: list[Order] = dataclasses.field(default_factory=list)
     limit: int | None = None
     offset: int = 0
-    selects: dict[str, Column] = dataclasses.field(default_factory=dict)
+    selects: dict[str, Any] = dataclasses.field(default_factory=dict)
     distinct: bool = False
+    groups: list[Column] = dataclasses.field(default_factory=list)
+    havings: list[Condition] = dataclasses.field(default_factory=list)
 
     def entity_of(self, alias: str) -> type:
         if alias == _alias_of(self.entity):
@@ -381,6 +483,7 @@ class Query(Generic[E]):
         *,
         on: Any = _INFER,
         outer: bool = False,
+        full: bool = False,
         alias: str = "",
     ) -> Query[E]:
         """Nối thêm một bảng để LỌC theo cột của nó.
@@ -399,8 +502,18 @@ class Query(Generic[E]):
         đang nối thì vế kia là khoá chính của bảng gốc, và ngược lại. Nhờ vậy
         chiều một-nhiều (`.join(Event, on=Event.camera_id)`) viết y hệt.
 
-        `outer=True` cho `LEFT JOIN` — giữ cả những dòng không có bên phải.
-        Cần khi bạn muốn lọc kiểu "camera CHƯA có sự kiện nào".
+        Bốn kiểu nối:
+
+            .join(Camera)                       # INNER: chỉ dòng khớp cả hai bên
+            .join(Camera, outer=True)           # LEFT : giữ cả dòng không có bên phải
+            .join(Camera, full=True)            # FULL : giữ cả hai bên, cần `.select(...)`
+            .join(Camera, alias="cha", on=...)  # nối bảng với CHÍNH NÓ
+
+        `RIGHT JOIN` không có, và không thiếu: builder trả về entity của bảng
+        GỐC, nên "RIGHT JOIN" chỉ là đổi bảng nào làm gốc rồi dùng `outer=True`
+        — `cameras.query().join(Event, outer=True)` thay cho
+        `events.query().join(Camera, right=True)`. Bảng gốc cũng chính là thứ
+        bạn muốn nhận về, nên chọn nó là bước bạn phải làm dù thế nào.
         """
         name = alias or _alias_of(entity)
         if name in {_alias_of(self._spec.entity), *(j.alias for j in self._spec.joins)}:
@@ -408,8 +521,18 @@ class Query(Generic[E]):
                 f"Đã có bảng tên {name!r} trong truy vấn. Truyền `alias=` để đặt tên khác."
             )
 
+        # Cột chỉ mang alias khi alias KHÁC tên mặc định của bảng. Nhờ vậy
+        # truy vấn thường không có alias nào bám vào cột, và hai cách viết cùng
+        # một phép nối cho ra đúng một điều kiện giống hệt nhau.
+        rieng = "" if name == _alias_of(entity) else name
         self._spec.joins.append(
-            Join(entity=entity, alias=name, on=self._on_condition(entity, on), outer=outer)
+            Join(
+                entity=entity,
+                alias=name,
+                on=self._on_condition(entity, on, rieng),
+                outer=outer or full,
+                full=full,
+            )
         )
         return self
 
@@ -417,30 +540,34 @@ class Query(Generic[E]):
         """Các bảng đã có trong truy vấn, bảng gốc trước."""
         return [self._spec.entity, *(j.entity for j in self._spec.joins)]
 
-    def _on_condition(self, entity: type, on: Any) -> Condition:
+    def _on_condition(self, entity: type, on: Any, name: str) -> Condition:
         if on is _INFER:
-            return self._infer_on(entity)
+            return self._infer_on(entity, name)
         if isinstance(on, Condition):
             return on
         if isinstance(on, tuple):
             left, right = on
-            return Column(self._spec.entity, left) == Column(entity, right)
+            return Column(self._spec.entity, left) == Column(entity, right, name)
         if isinstance(on, str):
-            return Column(self._spec.entity, on) == Column(entity, "id")
+            return Column(self._spec.entity, on) == Column(entity, "id", name)
 
         column = column_of(on)
+        # Thứ tự hai nhánh này quyết định ca nối bảng với CHÍNH NÓ: ở đó cả hai
+        # nhánh đều đúng kiểu, và cột không mang alias thì hiểu là bảng gốc.
+        if column.entity is self._spec.entity and not column.alias:
+            return column == Column(entity, "id", name)
         if column.entity is entity:
             # Cột nằm ở bảng ĐANG nối: chiều một-nhiều, vế kia là khoá chính bảng gốc.
-            return column == Column(self._spec.entity, "id")
+            return Column(entity, column.field, name) == Column(self._spec.entity, "id")
         if column.entity in self._known():
-            return column == Column(entity, "id")
+            return column == Column(entity, "id", name)
         raise BadRequestError(
             f"`on={column!r}` không dùng được: {column.entity.__name__} không phải "
             f"{entity.__name__} lẫn bảng nào đã có trong truy vấn "
             f"({', '.join(k.__name__ for k in self._known())})."
         )
 
-    def _infer_on(self, entity: type) -> Condition:
+    def _infer_on(self, entity: type, name: str) -> Condition:
         """Đọc `reference(...)` để tìm cột nối, khi người dùng không nói."""
         known = self._known()
         if len(set(known)) != len(known):
@@ -453,10 +580,10 @@ class Query(Generic[E]):
         for owner in known:
             for field, ref in mapping_for(owner).references:
                 if ref.target is entity:
-                    pairs.append((Column(owner, field), Column(entity, ref.column)))
+                    pairs.append((Column(owner, field), Column(entity, ref.column, name)))
         for field, ref in mapping_for(entity).references:
             if ref.target in known:
-                pairs.append((Column(entity, field), Column(ref.target, ref.column)))
+                pairs.append((Column(entity, field, name), Column(ref.target, ref.column)))
 
         if len(pairs) == 1:
             left, right = pairs[0]
@@ -522,14 +649,15 @@ class Query(Generic[E]):
                 )
             entity = self._spec.entity_of(parts[0])
             field = "__".join(parts[1:])
+            alias = "" if parts[0] == _alias_of(entity) else parts[0]
         else:
-            entity, field = self._spec.entity, parts[0]
+            entity, field, alias = self._spec.entity, parts[0], ""
 
         if op in {"startswith", "endswith", "contains"}:
             pattern = {"startswith": f"{value}%", "endswith": f"%{value}",
                        "contains": f"%{value}%"}[op]
-            return Compare(Column(entity, field), "like", pattern)
-        return Compare(Column(entity, field), op, value)
+            return Compare(Column(entity, field, alias), "like", pattern)
+        return Compare(Column(entity, field, alias), op, value)
 
     def order_by(self, *fields: Any) -> Query[E]:
         """`order_by("-created_at")` — dấu trừ là giảm dần.
@@ -546,8 +674,38 @@ class Query(Generic[E]):
                 self._spec.orders.append(
                     Order(Column(self._spec.entity, name), descending=descending)
                 )
+            elif isinstance(item, Aggregate):
+                self._spec.orders.append(Order(item))
             else:
                 self._spec.orders.append(Order(column_of(item)))
+        return self
+
+    def group_by(self, *fields: Any) -> Query[E]:
+        """Gộp dòng thành nhóm. Bắt buộc đi kèm `.select(...)`.
+
+            rows = await (events.query()
+                          .group_by(Event.camera_id)
+                          .select("camera_id", so_luong=count(), diem_tb=avg(Event.score))
+                          .having(count() > 5)
+                          .all())
+            # [{"camera_id": "c1", "so_luong": 12, "diem_tb": 0.83}, ...]
+
+        Phải có `.select(...)` vì sau khi gộp thì một dòng không còn là một bản
+        ghi nữa — trả về `Event` lúc này chỉ là bịa.
+        """
+        for item in fields:
+            self._spec.groups.append(column_of(item, fallback=self._spec.entity))
+        return self
+
+    def having(self, *conditions: Any) -> Query[E]:
+        """Lọc theo kết quả gộp: `.having(count() > 5, avg(Event.score) >= 0.8)`.
+
+        Khác `where` ở chỗ lọc lúc nào: `where` bỏ bớt DÒNG trước khi gộp,
+        `having` bỏ bớt NHÓM sau khi gộp. "Camera có hơn 5 sự kiện điểm cao"
+        là `.where(Event.score >= 0.8).having(count() > 5)` — đổi chỗ hai cái
+        cho ra con số khác hẳn.
+        """
+        self._spec.havings.extend(as_condition(c) for c in conditions)
         return self
 
     def limit(self, count: int | None) -> Query[E]:
@@ -574,19 +732,46 @@ class Query(Generic[E]):
         Không gọi `select` thì trả về `list[Event]` như `find()`.
         """
         for item in fields:
+            if isinstance(item, Aggregate):
+                raise BadRequestError(
+                    f"`{item!r}` phải được đặt tên: `.select(so_luong={item!r})`"
+                )
             column = column_of(item, fallback=self._spec.entity)
             self._spec.selects[column.field] = column
         for name, item in renamed.items():
-            self._spec.selects[name] = column_of(item, fallback=self._spec.entity)
+            self._spec.selects[name] = (
+                item if isinstance(item, Aggregate)
+                else column_of(item, fallback=self._spec.entity)
+            )
         return self
 
     # ------------------------------------------------------------- chạy
+    def _need_select(self) -> None:
+        """Có hai ca một dòng kết quả KHÔNG còn là một bản ghi của bảng gốc."""
+        if self._spec.selects:
+            return
+        if self._spec.groups:
+            raise BadRequestError(
+                "`group_by` phải đi với `.select(...)`: sau khi gộp thì một dòng "
+                "không còn là một bản ghi, trả về "
+                f"{self._spec.entity.__name__} lúc này chỉ là bịa. Ví dụ: "
+                ".select('camera_id', so_luong=count())"
+            )
+        if any(j.full for j in self._spec.joins):
+            raise BadRequestError(
+                "`full=True` phải đi với `.select(...)`: FULL JOIN sinh cả những "
+                f"dòng KHÔNG có bản ghi {self._spec.entity.__name__} nào. Ví dụ: "
+                ".select(ma=..., ten=...)"
+            )
+
     async def all(self) -> list[Any]:
         """Chạy và trả về mọi dòng khớp."""
+        self._need_select()
         return await self._backend().run_query(self._spec)
 
     async def first(self) -> Any | None:
         """Dòng đầu tiên, hoặc None. Tự đặt `LIMIT 1`."""
+        self._need_select()
         keep = self._spec.limit
         self._spec.limit = 1
         try:
@@ -644,6 +829,11 @@ class Query(Generic[E]):
 
 
 # ------------------------------------------------- tính bằng Python (memory)
+# Khoá giữ các dòng thành viên của một nhóm trong dòng đã gộp. Không đụng tên
+# bảng nào được vì alias luôn là định danh Python hợp lệ.
+BUCKET_KEY = "*"
+
+
 def evaluate(condition: Condition, rows: dict[str, Any]) -> bool:
     """Chạy một điều kiện trên một dòng đã ghép. `rows` là {alias: entity}."""
     if isinstance(condition, Group):
@@ -689,9 +879,38 @@ def evaluate(condition: Condition, rows: dict[str, Any]) -> bool:
     raise BadRequestError(f"Toán tử {op!r} chưa cài cho backend memory")
 
 
-def _value_of(column: Column, rows: dict[str, Any]) -> Any:
-    obj = rows.get(_alias_of(column.entity))
+def _value_of(column: Any, rows: dict[str, Any]) -> Any:
+    if isinstance(column, Aggregate):
+        return aggregate_of(column, rows.get(BUCKET_KEY) or [])
+    obj = rows.get(table_of(column))
     return None if obj is None else getattr(obj, column.field, None)
+
+
+def aggregate_of(item: Aggregate, bucket: list[dict[str, Any]]) -> Any:
+    """Tính một hàm gộp trên một nhóm, cho backend memory.
+
+    Bám đúng luật của SQL để hai backend không lệch: `count()` đếm dòng,
+    `count(cot)` BỎ QUA NULL, `sum`/`avg`/`min`/`max` cũng bỏ qua NULL và trả
+    về NULL khi nhóm rỗng — chứ không phải 0.
+    """
+    if item.func == "count" and item.column is None:
+        return len(bucket)
+
+    values = [_value_of(item.column, row) for row in bucket]
+    values = [v for v in values if v is not None]
+    if item.distinct:
+        values = list(dict.fromkeys(values))
+    if item.func == "count":
+        return len(values)
+    if not values:
+        return None
+    if item.func == "sum":
+        return sum(values)
+    if item.func == "avg":
+        return sum(values) / len(values)
+    if item.func == "min":
+        return min(values)
+    return max(values)
 
 
 def _like(text: str, pattern: str, *, fold: bool) -> bool:
@@ -721,6 +940,7 @@ def sort_key(orders: Sequence[Order]) -> Any:
 
 
 __all__ = [
+    "Aggregate",
     "Column",
     "Condition",
     "F",
@@ -729,8 +949,13 @@ __all__ = [
     "Query",
     "QuerySpec",
     "and_",
+    "avg",
+    "count",
     "evaluate",
+    "max_",
+    "min_",
     "not_",
     "or_",
     "sort_key",
+    "sum_",
 ]

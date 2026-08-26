@@ -21,6 +21,7 @@ from fastapi_modular.infrastructure.database.base import (
     mapping_for,
     matches,
 )
+from fastapi_modular.infrastructure.database.query import BUCKET_KEY as _BUCKET
 
 E = TypeVar("E")
 
@@ -90,22 +91,46 @@ class MemoryBackend(DatabaseBackend):
         from fastapi_modular.infrastructure.database.query import evaluate, sort_key
 
         root_alias = spec.entity.__name__.lower()
+        aliases = [root_alias]
         rows: list[dict[str, Any]] = [
             {root_alias: obj} for obj in self._table(spec.entity).values()
         ]
 
         for join in spec.joins:
             others = list(self._table(join.entity).values())
+            da_khop: set[int] = set()
             ghep: list[dict[str, Any]] = []
             for row in rows:
-                khop = [o for o in others if evaluate(join.on, {**row, join.alias: o})]
+                khop = [
+                    (i, o) for i, o in enumerate(others)
+                    if evaluate(join.on, {**row, join.alias: o})
+                ]
                 if khop:
-                    ghep.extend({**row, join.alias: o} for o in khop)
+                    da_khop.update(i for i, _ in khop)
+                    ghep.extend({**row, join.alias: o} for _, o in khop)
                 elif join.outer:
                     ghep.append({**row, join.alias: None})
+            if join.full:
+                # FULL JOIN: thêm nốt những dòng bên PHẢI không khớp ai, với
+                # toàn bộ bên trái để trống.
+                trong = dict.fromkeys(aliases)
+                ghep.extend(
+                    {**trong, join.alias: o}
+                    for i, o in enumerate(others) if i not in da_khop
+                )
+            aliases.append(join.alias)
             rows = ghep
 
         for condition in spec.conditions:
+            rows = [row for row in rows if evaluate(condition, row)]
+
+        if spec.groups:
+            rows = _group(spec, rows)
+        elif _co_ham_gop(spec):
+            # `select(so=count())` không kèm `group_by` = gộp CẢ BẢNG thành một
+            # nhóm, y như SQL. Bảng rỗng vẫn ra một dòng (`count` = 0).
+            rows = [{**(rows[0] if rows else {}), _BUCKET: rows}]
+        for condition in spec.havings:
             rows = [row for row in rows if evaluate(condition, row)]
 
         if spec.orders:
@@ -143,6 +168,7 @@ class MemoryBackend(DatabaseBackend):
         return [row[root_alias] for row in rows]
 
     async def count_query(self, spec: Any) -> int:
+        # Có `group_by` thì đếm SỐ NHÓM, giống `SELECT count(*) FROM (...)`.
         return len(self._rows_for(spec))
 
     async def save(self, entity: type[E], obj: E) -> E:
@@ -255,5 +281,28 @@ class MemoryBackend(DatabaseBackend):
 
 
 def _read(row: dict[str, Any], column: Any) -> Any:
-    obj = row.get(column.entity.__name__.lower())
-    return None if obj is None else getattr(obj, column.field, None)
+    from fastapi_modular.infrastructure.database.query import _value_of
+
+    return _value_of(column, row)
+
+
+def _co_ham_gop(spec: Any) -> bool:
+    from fastapi_modular.infrastructure.database.query import Aggregate
+
+    return any(isinstance(x, Aggregate) for x in spec.selects.values()) or bool(spec.havings)
+
+
+def _group(spec: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Gộp dòng theo `spec.groups`, giữ nguyên thứ tự nhóm xuất hiện lần đầu.
+
+    Dòng đại diện lấy từ bản ghi ĐẦU TIÊN của nhóm — cột không nằm trong
+    `group_by` vì vậy có giá trị của bản ghi đó. PostgreSQL từ chối hẳn kiểu
+    truy vấn này; SQLite thì cho, và cho đúng như vậy.
+    """
+    from fastapi_modular.infrastructure.database.query import BUCKET_KEY, _value_of
+
+    nhom: dict[tuple, list[dict[str, Any]]] = {}
+    for row in rows:
+        key = tuple(_value_of(column, row) for column in spec.groups)
+        nhom.setdefault(key, []).append(row)
+    return [{**bucket[0], BUCKET_KEY: bucket} for bucket in nhom.values()]
