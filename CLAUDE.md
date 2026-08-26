@@ -122,7 +122,7 @@ link trong `docs/*.md` thì cứ để tương đối.
 ## Kiểm chứng trước khi nói là xong
 
 ```bash
-pytest -q                       # 1017 passed, 222 skipped (222 skip cần hạ tầng hoặc driver thật)
+pytest -q                       # 1023 passed, 228 skipped (228 skip cần hạ tầng hoặc driver thật)
 fam lint fastapi_modular src tests    # `fam lint` trần chỉ soi `src`, thiếu thư viện và test
 ```
 

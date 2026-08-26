@@ -499,7 +499,7 @@ class Include:
     root_field: str                  # cột bên bảng gốc dùng để ghép
     other_field: str                 # cột bên bảng kia
     to_list: bool                    # một-nhiều -> list, nhiều-một -> một object
-    fields: tuple[str, ...] = ()
+    fields: tuple[tuple[str, str], ...] = ()      # (tên kết quả, tên cột)
     conditions: tuple[Condition, ...] = ()
     orders: tuple[Order, ...] = ()
 
@@ -512,7 +512,7 @@ class Nest:
     name: str                        # tên trường chứa danh sách con
     child_field: str                 # cột khoá ngoại bên bảng gốc
     parent_field: str                # cột bên bảng cha
-    fields: tuple[str, ...] = ()
+    fields: tuple[tuple[str, str], ...] = ()      # (tên kết quả, tên cột)
 
 
 # Số id nhét vào một câu `WHERE ... IN (...)`. SQLite mặc định chỉ cho 999 tham
@@ -543,12 +543,48 @@ def _field_name(entity: type, item: Any) -> str:
     return item
 
 
-def _fields_of(entity: type, fields: Sequence[Any], exclude: Sequence[Any]) -> tuple[str, ...]:
-    """Chốt danh sách cột sẽ trả về, và bắt tên sai NGAY chứ không im lặng bỏ qua."""
+def _fields_of(
+    entity: type,
+    fields: Any,
+    exclude: Sequence[Any],
+    rename: dict[str, Any] | None = None,
+) -> tuple[tuple[str, str], ...]:
+    """Chốt các cột sẽ trả về, dạng `(tên kết quả, tên cột)`.
+
+    Ba tham số, ba việc khác nhau — dùng riêng hay dùng chung đều được:
+
+        fields=["id", Camera.name]        chỉ những cột này
+        exclude=["raw"]                   mọi cột TRỪ những cột này
+        rename={"ma": "id"}               giữ nguyên tập cột, chỉ đổi TÊN TRẢ VỀ
+
+    `rename` có mặt vì `fields={"ma": "id"}` bắt liệt kê hết mọi cột khi bạn chỉ
+    muốn đổi tên một hai cái.
+
+    **Chiều của dict là `{tên bạn muốn: tên cột có thật}`** — giống hệt
+    `select(ma=Camera.id)`. Viết ngược thì `"ma"` không phải tên cột nên báo lỗi
+    ngay, không âm thầm cho ra tên sai.
+
+    Tên cột sai bị bắt NGAY tại đây, kèm danh sách tên đúng.
+    """
     known = mapping_for(entity).fields
-    chosen = tuple(_field_name(entity, f) for f in fields) or tuple(known)
+    if isinstance(fields, dict):
+        chosen = [(ten, _field_name(entity, cot)) for ten, cot in fields.items()]
+    else:
+        chosen = [(_field_name(entity, f),) * 2 for f in fields] or [(f, f) for f in known]
+
     bo = {_field_name(entity, f) for f in exclude}
-    return tuple(f for f in chosen if f not in bo)
+    giu = [(ten, cot) for ten, cot in chosen if cot not in bo]
+
+    # Đổi tên TẠI CHỖ, không xoá rồi thêm vào cuối: thứ tự khoá trong dict trả
+    # về chính là thứ tự trường trong response JSON, đổi vị trí là người ta thấy.
+    ten_moi_cua = {_field_name(entity, cot): ten for ten, cot in (rename or {}).items()}
+    ket: dict[str, str] = {}
+    for ten, cot in giu:
+        ket[ten_moi_cua.get(cot, ten)] = cot
+    for cot, ten in ten_moi_cua.items():
+        if cot not in ket.values():
+            ket[ten] = cot
+    return tuple(ket.items())
 
 
 # ------------------------------------------------------------------- spec
@@ -881,8 +917,9 @@ class Query(Generic[E]):
         *,
         name: str = "",
         on: Any = _INFER,
-        fields: Sequence[Any] = (),
+        fields: Any = (),
         exclude: Sequence[Any] = (),
+        rename: dict[str, Any] | None = None,
         where: Any = None,
         order_by_asc: Any = None,
         order_by_desc: Any = None,
@@ -904,9 +941,13 @@ class Query(Generic[E]):
         Tên trường mặc định là tên class viết thường, thêm `s` nếu là list
         (`events`, `camera`). Đổi bằng `name="su_kien"`.
 
-        `fields=` / `exclude=` chọn cột của bảng ĐƯỢC LẤY KÈM — nhận cả chuỗi
-        lẫn cột thật (`fields=[Event.id, Event.label]`). `where=`,
-        `order_by_asc=`, `order_by_desc=` lọc và sắp bảng đó.
+        Chọn cột của bảng ĐƯỢC LẤY KÈM bằng ba tham số giống hệt `select`:
+
+            fields=["id", Event.label]           chỉ những cột này
+            exclude=["raw"]                      mọi cột trừ những cột này
+            rename={"nhan": "label"}             đủ cột, chỉ đổi tên trả về
+
+        `where=`, `order_by_asc=`, `order_by_desc=` lọc và sắp bảng đó.
 
         **Có `include` thì kết quả là `list[dict]`, không phải `list[Entity]`** —
         entity là dataclass `slots=True`, không gắn thêm trường vào được.
@@ -921,7 +962,7 @@ class Query(Generic[E]):
             root_field=root_field,
             other_field=other_field,
             to_list=to_list,
-            fields=_fields_of(entity, fields, exclude),
+            fields=_fields_of(entity, fields, exclude, rename),
             conditions=tuple(as_condition(c) for c in (
                 where if isinstance(where, (list, tuple)) else [where] if where is not None else []
             )),
@@ -973,8 +1014,9 @@ class Query(Generic[E]):
         *,
         name: str = "",
         on: Any = _INFER,
-        fields: Sequence[Any] = (),
+        fields: Any = (),
         exclude: Sequence[Any] = (),
+        rename: dict[str, Any] | None = None,
     ) -> Query[E]:
         """Đảo chiều kết quả: bảng CHA ra ngoài, dòng của bảng gốc gom vào trong.
 
@@ -990,8 +1032,8 @@ class Query(Generic[E]):
         kiện**: đây là "những camera CÓ sự kiện điểm cao, kèm đúng các sự kiện
         đó", còn kia là "mọi camera, kèm sự kiện của nó".
 
-        `.fields(...)` chọn cột của bảng gốc (nằm trong), `fields=`/`exclude=`
-        chọn cột của bảng cha (nằm ngoài).
+        `.select(...)` chọn cột của bảng gốc (nằm trong); `fields=`, `exclude=`,
+        `rename=` chọn cột của bảng cha (nằm ngoài), cùng luật với `select`.
 
         Ba điều dễ vấp, ghi luôn ở đây:
 
@@ -1016,26 +1058,9 @@ class Query(Generic[E]):
             name=name or f"{self._spec.entity.__name__.lower()}s",
             child_field=child_field,
             parent_field=parent_field,
-            fields=_fields_of(entity, fields, exclude),
+            fields=_fields_of(entity, fields, exclude, rename),
         )
         return self
-
-    def fields(self, *names: Any) -> Query[E]:
-        """Chỉ trả về những cột này của bảng gốc. Kết quả thành `list[dict]`.
-
-            await repo.query().fields("id", "name").all()
-            await repo.query().fields(Camera.id, Camera.name).all()   # y hệt
-        """
-        for name in _fields_of(self._spec.entity, names, ()):
-            self._spec.selects[name] = Column(self._spec.entity, name)
-        return self
-
-    def exclude(self, *names: Any) -> Query[E]:
-        """Trả về mọi cột TRỪ những cột này — cho bảng nhiều cột mà chỉ thừa vài cái.
-
-            await repo.query().exclude("raw_payload").all()
-        """
-        return self.fields(*_fields_of(self._spec.entity, (), names))
 
     def group_by(self, *fields: Any) -> Query[E]:
         """Gộp dòng thành nhóm. Bắt buộc đi kèm `.select(...)`.
@@ -1086,22 +1111,48 @@ class Query(Generic[E]):
         self._spec.distinct = yes
         return self
 
-    def select(self, *fields: Any, **renamed: Any) -> Query[E]:
-        """Đổi kiểu trả về sang `list[dict]` để lấy được cột của bảng đã join.
+    def select(
+        self,
+        *columns: Any,
+        fields: Any = (),
+        exclude: Sequence[Any] = (),
+        rename: dict[str, Any] | None = None,
+        **renamed: Any,
+    ) -> Query[E]:
+        """Chọn cột trả về. Có gọi `select` thì kết quả là `list[dict]`.
 
-            query = repo.query().join(Camera).select("id", "score", camera_name=Camera.name)
-            rows = await query.all()
-            # [{"id": ..., "score": ..., "camera_name": "Cổng chính"}]
+            .select("id", "score")                    # vài cột của bảng gốc
+            .select(fields=["id", "score"])           # y hệt, dạng danh sách
+            .select(fields={"ma": "id", "diem": "score"})   # chỉ 2 cột, đổi tên luôn
+            .select(rename={"ma": "id"})              # ĐỦ cột, chỉ đổi tên `id`
+            .select(exclude=["raw_payload"])          # mọi cột TRỪ cái này
+            .select("id", camera_name=Camera.name)    # cột bảng đã join, đặt tên
+            .select(so_luong=count())                 # hàm gộp, bắt buộc đặt tên
+
+        `fields=` và `exclude=` đặt tên giống hệt `include(...)`, để chỗ nào
+        chọn cột cũng viết một kiểu. `exclude=` lấy mọi cột của **bảng gốc** rồi
+        bỏ đi những cái kể tên — nó cần biết "đủ bộ" là gì nên chỉ làm được với
+        bảng gốc; cột bảng đã join thì thêm bằng `columns`/`fields=`.
 
         Không gọi `select` thì trả về `list[Event]` như `find()`.
+
+        Một hạn chế nhỏ: không đặt được tên cột kết quả là `fields` hay
+        `exclude`, vì hai tên đó đã là tham số. Cần thì đặt tên khác.
         """
-        for item in fields:
+        if exclude or rename or isinstance(fields, dict):
+            # `rename` không kèm `fields` nghĩa là "đủ cột, chỉ đổi tên vài cái".
+            for ten, cot in _fields_of(self._spec.entity, fields, exclude, rename):
+                self._spec.selects[ten] = Column(self._spec.entity, cot)
+            fields = ()
+
+        for item in (*columns, *fields):
             if isinstance(item, Aggregate):
                 raise BadRequestError(
                     f"`{item!r}` phải được đặt tên: `.select(so_luong={item!r})`"
                 )
             column = column_of(item, fallback=self._spec.entity)
             self._spec.selects[column.field] = column
+
         for name, item in renamed.items():
             self._spec.selects[name] = (
                 item if isinstance(item, Aggregate)
@@ -1221,7 +1272,7 @@ class Query(Generic[E]):
             if obj is None:
                 continue
             out.append({
-                **{name: getattr(obj, name, None) for name in nest.fields},
+                **{ten: getattr(obj, cot, None) for ten, cot in nest.fields},
                 nest.name: con,
             })
         return out
@@ -1255,7 +1306,7 @@ class Query(Generic[E]):
         theo_khoa: dict[Any, Any] = {}
         for obj in found:
             key = getattr(obj, inc.other_field, None)
-            shaped = {name: getattr(obj, name, None) for name in inc.fields}
+            shaped = {ten: getattr(obj, cot, None) for ten, cot in inc.fields}
             if inc.to_list:
                 theo_khoa.setdefault(key, []).append(shaped)
             else:

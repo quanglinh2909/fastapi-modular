@@ -218,20 +218,20 @@ async def test_sap_xep_phan_trang(kho):
 
 async def test_fields_va_exclude(kho):
     _, cameras = kho
-    rows = await cameras.query().fields("id", "name").order_by_asc("id").all()
+    rows = await cameras.query().select("id", "name").order_by_asc("id").all()
     assert rows == [{"id": "c1", "name": "Cổng chính"},
                     {"id": "c2", "name": "Kho hàng"},
                     {"id": "c3", "name": "Bãi xe"}]
 
-    row = (await cameras.query().where(id="c2").exclude(
-        "created_at", "threshold", "rtsp", "zone", "kind").all())[0]
+    row = (await cameras.query().where(id="c2").select(exclude=[
+        "created_at", "threshold", "rtsp", "zone", "kind"]).all())[0]
     assert row == {"id": "c2", "name": "Kho hàng", "status": MTrangThai.OFF}
 
 
 async def test_ep_kieu_giong_het_luc_tra_ve_entity(kho):
     """Enum và datetime trong dict phải giống hệt trong entity."""
     _, cameras = kho
-    row = (await cameras.query().where(id="c1").fields("status", "created_at").all())[0]
+    row = (await cameras.query().where(id="c1").select("status", "created_at").all())[0]
     entity_ = (await cameras.query().where(id="c1").all())[0]
     assert row["status"] is MTrangThai.ON is entity_.status
     assert row["created_at"].tzinfo is not None
@@ -247,12 +247,12 @@ async def test_count_exists(kho):
 async def test_include_va_nest_under_chay_duoc_tren_mongo(kho):
     """Hai cái này không cần `$lookup`: chúng là câu lệnh riêng + ghép trong Python."""
     events, cameras = kho
-    rows = await (cameras.query().fields("id").include(MEvent, fields=["id"])
+    rows = await (cameras.query().select("id").include(MEvent, fields=["id"])
                   .order_by_asc("id").all())
     assert [e["id"] for e in rows[0]["mevents"]] == ["e0", "e1", "e2"]
     assert rows[2] == {"id": "c3", "mevents": []}
 
-    nested = await (events.query().where(F(MEvent).score >= 0.95).fields("id")
+    nested = await (events.query().where(F(MEvent).score >= 0.95).select("id")
                     .nest_under(MCamera, fields=["id"]).all())
     assert sorted(r["id"] for r in nested) == ["c1", "c2"]
 

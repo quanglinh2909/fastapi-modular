@@ -26,7 +26,8 @@ builder, không có transaction, không có migration.
 | "**Trả về camera kèm danh sách sự kiện của nó**" | [Dữ liệu lồng nhau](#dữ-liệu-lồng-nhau-include) |
 | "**Trả về sự kiện kèm object camera**" | [Dữ liệu lồng nhau](#dữ-liệu-lồng-nhau-include) |
 | "**Lọc theo sự kiện nhưng trả về camera ở ngoài**" | [`nest_under`](#đảo-chiều-nest_under) |
-| "**Bảng nhiều cột quá, tôi muốn bỏ bớt một cột**" | [`exclude`](#chọn-cột-trả-về) |
+| "**Bảng nhiều cột quá, tôi muốn bỏ bớt một cột**" | [`select(exclude=…)`](#chọn-cột-trả-về) |
+| "**Đổi tên trường trả về**" | [`select(rename=…)`](#chọn-cột-trả-về) |
 | "Chỉ lấy dòng có cột này để trống" | [`is_null`](#like-in-is-null-between--bảy-toán-tử-không-có-ký-hiệu) |
 | "Tìm theo tên gần đúng" | [`like` / `ilike`](#like-in-is-null-between--bảy-toán-tử-không-có-ký-hiệu) |
 | "Chọn database nào" | [Cách chọn driver](#cách-chọn-driver) |
@@ -1384,37 +1385,66 @@ là dataclass `slots=True` — không gắn thêm trường vào một object nh
 
 ### Chọn cột trả về
 
-Ba chỗ chọn cột, cùng một luật:
+Một chỗ duy nhất: `select` cho bảng gốc, và ba tham số cùng tên ở `include` /
+`nest_under` cho bảng kia. **Ba tham số, ba việc khác nhau:**
+
+| Viết | Nghĩa |
+|---|---|
+| `fields=["id", "name"]` | **chỉ** những cột này |
+| `exclude=["raw_payload"]` | mọi cột **trừ** những cột này |
+| `rename={"ma": "id"}` | giữ nguyên tập cột, chỉ **đổi tên** trả về |
 
 ```python
 await (cameras.query()
-       .fields("id", "name")                       # cột của bảng GỐC
-       .include(Event, fields=["id", "label"])     # cột của bảng lấy kèm
+       .select("id", "name")                          # cột của bảng GỐC
+       .include(Event, fields=["id", "label"])        # cột của bảng lấy kèm
        .all())
 ```
+
+`select("id", "name")` và `select(fields=["id", "name"])` là một. Dạng danh sách
+có mặt để `select` viết giống `include` khi bạn dùng cả hai trong một câu.
 
 Chỗ nào nhận tên cột thì nhận cả **cột thật**, y như `join` và `where`:
 
 ```python
 await (cameras.query()
-       .fields(Camera.id, Camera.name)
+       .select(Camera.id, Camera.name)
        .include(Event, fields=[Event.id, Event.label])
        .all())
 ```
 
-Đưa nhầm cột của bảng khác (`include(Event, fields=[Camera.name])`) thì báo lỗi
-ngay — gần như luôn là gõ nhầm, mà để lọt thì kết quả chỉ thiếu trường một cách
-khó hiểu.
+**Đổi tên trường trả về** — hai cách, chọn theo việc bạn có muốn giữ đủ cột không:
+
+```python
+# chỉ 2 cột, đặt tên luôn
+await cameras.query().select(fields={"ma": "id", "ten": Camera.name}).all()
+# [{"ma": "c1", "ten": "Cổng chính"}]
+
+# ĐỦ cột, chỉ sửa tên một hai cái
+await cameras.query().select(rename={"ma": "id"}).all()
+# [{"ma": "c1", "name": "Cổng chính", "ip": "10.0.0.1", ...}]
+
+# ở bảng lấy kèm cũng vậy
+await cameras.query().include(Event, rename={"nhan": "label"}).all()
+```
+
+**Chiều của dict là `{tên bạn muốn: tên cột có thật}`**, giống hệt
+`select(ma=Camera.id)`. Viết ngược (`rename={"id": "ma"}`) thì `"ma"` không phải
+tên cột nên báo lỗi ngay — không âm thầm cho ra tên sai.
+
+Cột được đổi tên **giữ nguyên vị trí** trong dict kết quả, không bị đẩy xuống
+cuối: thứ tự khoá ở đây chính là thứ tự trường trong response JSON.
 
 Nhiều cột quá mà chỉ muốn bỏ vài cái thì đi từ chiều ngược lại:
 
 ```python
-await cameras.query().exclude("threshold").all()                    # bảng gốc
+await cameras.query().select(exclude=["is_active"]).all()           # bảng gốc
 await cameras.query().include(Event, exclude=["created_at"]).all()  # bảng lấy kèm
 ```
 
-`fields` và `exclude` **bắt tên sai ngay lúc dựng câu lệnh**, kèm danh sách tên
-đúng — không im lặng bỏ qua rồi để bạn ngồi tìm cột biến đâu mất.
+Cả ba **bắt tên sai ngay lúc dựng câu lệnh**, kèm danh sách tên đúng — không im
+lặng bỏ qua rồi để bạn ngồi tìm cột biến đâu mất. Đưa nhầm cột của bảng khác
+(`include(Event, fields=[Camera.name])`) cũng bị chặn.
 
 Cột dùng để ghép (`camera_id`) được tự thêm vào câu lệnh nếu bạn không xin, rồi
 **bỏ khỏi kết quả** — bạn không phải nhớ nó.
@@ -1439,9 +1469,9 @@ So với `cameras.query().include(Event, where=...)`:
 | `cameras.query().include(Event, where=…)` | **mọi** camera; camera không có sự kiện khớp thì `events: []` |
 | `events.query().where(…).nest_under(Camera)` | **chỉ** camera có sự kiện khớp |
 
-`.fields(...)` chọn cột của bảng gốc (nằm trong), `fields=`/`exclude=` chọn cột
-của bảng cha (nằm ngoài). Tên trường mặc định là tên bảng gốc viết thường +
-`s`, đổi bằng `name=`.
+`.select(...)` chọn cột của bảng gốc (nằm trong); `fields=`, `exclude=`,
+`rename=` chọn cột của bảng cha (nằm ngoài), cùng luật với `select`. Tên trường
+mặc định là tên bảng gốc viết thường + `s`, đổi bằng `name=`.
 
 Ba điều dễ vấp:
 
@@ -1536,10 +1566,11 @@ bỏ qua mọi dòng có `reviewed_at` NULL. Backend `memory` giữ y hệt lu�
 | `.order_by_asc("name")` · `.order_by_desc("created_at")` | chiều nằm trong TÊN HÀM; nhận `X.cot` và `count()` |
 | `.limit(n)` · `.offset(n)` · `.distinct()` | |
 | `.select("id", ten_khac=X.cot)` | đổi kiểu trả về sang `list[dict]` |
-| `.fields("id", "name")` · `.exclude("cot")` | chọn cột bảng gốc; cũng thành `list[dict]` |
-| `.include(Entity, name=…, fields=…, exclude=…, where=…, order_by_asc=…, order_by_desc=…)` | gắn dữ liệu lồng nhau |
+| `.select("id", ten_khac=X.cot)` | chọn cột bảng gốc; kết quả thành `list[dict]` |
+| `.select(fields=…, exclude=…, rename=…)` | chỉ những cột này · trừ những cột này · đổi tên |
+| `.include(Entity, name=…, fields=…, exclude=…, rename=…, where=…, order_by_asc=…, order_by_desc=…)` | gắn dữ liệu lồng nhau |
 | `async with db.transaction() as tx:` · `await tx.rollback()` | xem [Transaction](#transaction--ghi-nhiều-bảng-thì-cùng-thành-công-hoặc-cùng-không) |
-| `.nest_under(Entity, name=…, fields=…, exclude=…)` | đảo chiều: cha ra ngoài, bảng gốc vào trong |
+| `.nest_under(Entity, name=…, fields=…, exclude=…, rename=…)` | đảo chiều: cha ra ngoài, bảng gốc vào trong |
 | `.select(so=count(), tb=avg(X.cot))` | hàm gộp, phải đặt tên |
 
 | Cột | |
@@ -1547,7 +1578,7 @@ bỏ qua mọi dòng có `reviewed_at` NULL. Backend `memory` giữ y hệt lu�
 | `Event.score` | cần `class Event(Entity)` |
 | `F(Event).score` | không cần gì |
 | `F(Event, "cha").score` | cột của bảng đã đặt `alias="cha"` |
-| `"score"` | chỉ ở `on=`, `group_by`, `order_by_*`, `select`, `fields` — chỗ đã biết bảng |
+| `"score"` | chỉ ở `on=`, `group_by`, `order_by_*`, `select`, `fields=` — chỗ đã biết bảng |
 
 | Hàm gộp | |
 |---|---|

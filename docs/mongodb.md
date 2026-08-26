@@ -231,10 +231,11 @@ Cần ổn định thì sắp thêm một cột nữa: `.order_by_desc("score").
 ### Chọn cột trả về
 
 ```python
-await self._repo.query().fields("id", "name").all()
+await self._repo.query().select("id", "name").all()
 # [{"id": "c1", "name": "Cổng chính"}, ...]
 
-await self._repo.query().exclude("raw_payload").all()
+await self._repo.query().select(exclude=["serial"]).all()      # đủ cột, trừ serial
+await self._repo.query().select(rename={"ma": "id"}).all()     # đủ cột, đổi tên id
 ```
 
 Sinh ra projection thật của Mongo (`find(loc, {"name": 1})`), không phải lấy cả

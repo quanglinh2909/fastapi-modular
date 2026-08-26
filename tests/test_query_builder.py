@@ -524,7 +524,7 @@ async def test_select_ep_kieu_y_het_luc_tra_ve_entity(kho):
     trên sqlite/postgres lại ra kiểu khác.
     """
     _, cameras = kho
-    row = (await cameras.query().where(id="c1").fields("status", "created_at").all())[0]
+    row = (await cameras.query().where(id="c1").select("status", "created_at").all())[0]
     entity_ = (await cameras.query().where(id="c1").all())[0]
 
     assert row["status"] is QTrangThai.ON is entity_.status
@@ -536,7 +536,7 @@ async def test_select_ep_kieu_y_het_luc_tra_ve_entity(kho):
 async def test_include_gan_list_con_vao_cha(kho):
     """Camera kèm danh sách sự kiện, tên trường mặc định là `qevents`."""
     _, cameras = kho
-    rows = await cameras.query().fields("id").include(QEvent, fields=["id"]).order_by_asc("id").all()
+    rows = await cameras.query().select("id").include(QEvent, fields=["id"]).order_by_asc("id").all()
 
     assert rows[0]["id"] == "c1"
     assert [e["id"] for e in rows[0]["qevents"]] == ["e0", "e1", "e2", "e5"]
@@ -546,21 +546,21 @@ async def test_include_gan_list_con_vao_cha(kho):
 async def test_include_gan_object_cha_vao_con(kho):
     """Chiều ngược lại: khoá ngoại nằm bên QEvent nên mỗi sự kiện có MỘT camera."""
     events, _ = kho
-    rows = await (events.query().where(id="e3").fields("id")
+    rows = await (events.query().where(id="e3").select("id")
                   .include(QCamera, fields=["id", "name"]).all())
     assert rows == [{"id": "e3", "qcamera": {"id": "c2", "name": "Kho hàng"}}]
 
 
 async def test_include_doi_ten_truong(kho):
     _, cameras = kho
-    rows = await (cameras.query().where(id="c2").fields("id")
+    rows = await (cameras.query().where(id="c2").select("id")
                   .include(QEvent, name="su_kien", fields=["id"]).all())
     assert rows == [{"id": "c2", "su_kien": [{"id": "e3"}, {"id": "e4"}]}]
 
 
 async def test_include_chon_va_loai_tru_cot_cua_bang_con(kho):
     _, cameras = kho
-    rows = await (cameras.query().where(id="c2").fields("id")
+    rows = await (cameras.query().where(id="c2").select("id")
                   .include(QEvent, exclude=["created_at", "updated_at", "camera_id",
                                             "reviewed_at", "score"]).all())
     assert rows[0]["qevents"][0].keys() == {"id", "label"}
@@ -568,7 +568,7 @@ async def test_include_chon_va_loai_tru_cot_cua_bang_con(kho):
 
 async def test_include_loc_va_sap_bang_con(kho):
     _, cameras = kho
-    rows = await (cameras.query().where(id="c1").fields("id")
+    rows = await (cameras.query().where(id="c1").select("id")
                   .include(QEvent, fields=["id", "score"],
                            where=F(QEvent).score >= 0.9, order_by_desc="score").all())
     assert [e["id"] for e in rows[0]["qevents"]] == ["e5", "e0"]
@@ -577,7 +577,7 @@ async def test_include_loc_va_sap_bang_con(kho):
 async def test_include_khong_lam_lo_cot_ghep_khong_ai_xin(kho):
     """`camera_id` phải có mặt để ghép, nhưng người dùng không xin thì đừng trả."""
     events, _ = kho
-    rows = await events.query().where(id="e0").fields("id").include(QCamera).all()
+    rows = await events.query().where(id="e0").select("id").include(QCamera).all()
     assert set(rows[0]) == {"id", "qcamera"}
 
 
@@ -621,7 +621,7 @@ async def test_include_chia_me_khi_qua_nhieu_id(kho, monkeypatch):
 
     backend.run_query = dem_lai
     try:
-        rows = await (cameras.query().fields("id")
+        rows = await (cameras.query().select("id")
                       .include(QEvent, fields=["id"]).order_by_asc("id").all())
     finally:
         backend.run_query = that
@@ -647,20 +647,94 @@ async def test_fields_exclude_include_nest_deu_nhan_cot_that(kho):
     """`Camera.name` dùng được ở mọi chỗ chọn cột, không riêng chuỗi."""
     events, cameras = kho
     rows = await (cameras.query()
-                  .fields(QCamera.id, QCamera.name)
+                  .select(QCamera.id, QCamera.name)
                   .include(QEvent, fields=[QEvent.id])
                   .where(id="c2").all())
     assert rows == [{"id": "c2", "name": "Kho hàng", "qevents": [{"id": "e3"}, {"id": "e4"}]}]
 
     bo_bot = await (cameras.query()
-                    .exclude(QCamera.parent_id, "status", "threshold",
-                             "created_at", "updated_at")
+                    .select(exclude=[QCamera.parent_id, "status", "threshold",
+                             "created_at", "updated_at"])
                     .where(id="c2").all())
     assert bo_bot == [{"id": "c2", "name": "Kho hàng", "zone": "Tầng 2"}]
 
-    nested = await (events.query().where(id="e4").fields(QEvent.id)
+    nested = await (events.query().where(id="e4").select(QEvent.id)
                     .nest_under(QCamera, fields=[QCamera.name]).all())
     assert nested == [{"name": "Kho hàng", "qevents": [{"id": "e4"}]}]
+
+
+async def test_doi_ten_truong_tra_ve_o_ca_ba_cho(kho):
+    """`fields={"tên mới": cột}` — dùng được ở `select`, `include`, `nest_under`."""
+    events, cameras = kho
+
+    assert await cameras.query().where(id="c2").select(
+        fields={"ma": "id", "ten": QCamera.name}).all() == [
+        {"ma": "c2", "ten": "Kho hàng"}
+    ]
+
+    kem = await (cameras.query().where(id="c2").select("id")
+                 .include(QEvent, fields={"ma_ev": "id", "nhan": QEvent.label}).all())
+    assert kem[0]["qevents"] == [{"ma_ev": "e3", "nhan": "person"},
+                                 {"ma_ev": "e4", "nhan": "car"}]
+
+    dao = await (events.query().where(id="e4").select("id")
+                 .nest_under(QCamera, fields={"ten_cam": QCamera.name}).all())
+    assert dao == [{"ten_cam": "Kho hàng", "qevents": [{"id": "e4"}]}]
+
+
+async def test_rename_giu_du_cot_chi_doi_ten(kho):
+    """Ca `fields=` không làm được: trả về TẤT CẢ, chỉ sửa tên một hai trường."""
+    _, cameras = kho
+    row = (await cameras.query().where(id="c2").select(rename={"ma": "id"}).all())[0]
+
+    assert row["ma"] == "c2"
+    assert "id" not in row
+    assert set(row) == {"ma", "name", "zone", "status", "threshold", "parent_id",
+                        "created_at", "updated_at"}, "phải còn đủ mọi cột khác"
+    assert next(iter(row)) == "ma", "đổi tên tại chỗ, không đẩy cột xuống cuối"
+
+
+async def test_rename_di_cung_exclude_va_o_include(kho):
+    _, cameras = kho
+    row = (await cameras.query().where(id="c2").select(
+        exclude=["parent_id", "status", "threshold", "created_at", "updated_at"],
+        rename={"ten": "name"}).all())[0]
+    assert row == {"id": "c2", "ten": "Kho hàng", "zone": "Tầng 2"}
+
+    kem = (await cameras.query().where(id="c2").select("id")
+           .include(QEvent, fields=["id", "label"], rename={"nhan": "label"}).all())[0]
+    assert kem["qevents"] == [{"id": "e3", "nhan": "person"}, {"id": "e4", "nhan": "car"}]
+
+
+async def test_rename_viet_nguoc_chieu_thi_bao_ngay(kho):
+    """`{tên mới: tên cột}` — viết ngược thì tên mới không phải cột, báo lỗi luôn."""
+    _, cameras = kho
+    with pytest.raises(BadRequestError) as loi:
+        cameras.query().select(rename={"id": "ma"})
+    assert "không có trường 'ma'" in str(loi.value)
+
+    # Ở `include` thì không có `Column(...)` nào kiểm hộ về sau: sai tên mà lọt
+    # qua đây là kết quả lặng lẽ mang giá trị None.
+    with pytest.raises(BadRequestError) as loi:
+        cameras.query().include(QEvent, rename={"nhan": "khong_co_truong_nay"})
+    assert "không có trường 'khong_co_truong_nay'" in str(loi.value)
+
+
+async def test_select_tron_cot_le_voi_dict_va_exclude(kho):
+    _, cameras = kho
+    assert await cameras.query().where(id="c2").select(
+        "zone", fields={"ten": "name"}).all() == [{"ten": "Kho hàng", "zone": "Tầng 2"}]
+
+    assert await cameras.query().where(id="c2").select(
+        exclude=["parent_id", "status", "threshold", "created_at", "updated_at"],
+    ).all() == [{"id": "c2", "name": "Kho hàng", "zone": "Tầng 2"}]
+
+
+async def test_doi_ten_bat_ten_cot_sai(kho):
+    _, cameras = kho
+    with pytest.raises(BadRequestError) as loi:
+        cameras.query().select(fields={"ma": "khong_co_truong_nay"})
+    assert "Có:" in str(loi.value)
 
 
 async def test_chon_cot_cua_bang_khac_thi_bao_ngay(kho):
@@ -674,16 +748,16 @@ async def test_chon_cot_cua_bang_khac_thi_bao_ngay(kho):
 async def test_fields_va_exclude_bat_ten_sai_ngay(kho):
     events, _ = kho
     with pytest.raises(BadRequestError) as loi:
-        events.query().fields("khong_co_truong_nay")
+        events.query().select("khong_co_truong_nay")
     assert "Có:" in str(loi.value)
 
     with pytest.raises(BadRequestError):
-        events.query().exclude("khong_co_truong_nay")
+        events.query().select(exclude=["khong_co_truong_nay"])
 
 
 async def test_exclude_bo_dung_mot_cot(kho):
     events, _ = kho
-    row = (await events.query().where(id="e0").exclude("score").all())[0]
+    row = (await events.query().where(id="e0").select(exclude=["score"]).all())[0]
     assert "score" not in row and "label" in row and "camera_id" in row
 
 
@@ -694,7 +768,7 @@ async def test_nest_under_dua_cha_ra_ngoai(kho):
     rows = await (
         events.query()
         .where(F(QEvent).score >= 0.95)
-        .fields("id", "score")
+        .select("id", "score")
         .nest_under(QCamera, fields=["id", "name"])
         .all()
     )
@@ -708,9 +782,9 @@ async def test_nest_under_dua_cha_ra_ngoai(kho):
 async def test_nest_under_khac_include_o_cho_dieu_kien_nam_ben_nao(kho):
     """`include` = mọi camera; `nest_under` = chỉ camera CÓ sự kiện khớp."""
     events, cameras = kho
-    qua_include = await (cameras.query().fields("id")
+    qua_include = await (cameras.query().select("id")
                          .include(QEvent, fields=["id"], where=F(QEvent).score >= 0.99).all())
-    qua_nest = await (events.query().where(F(QEvent).score >= 0.99).fields("id")
+    qua_nest = await (events.query().where(F(QEvent).score >= 0.99).select("id")
                       .nest_under(QCamera, fields=["id"]).all())
 
     assert [r["id"] for r in qua_include] == ["c1", "c2", "c3"]
@@ -720,14 +794,14 @@ async def test_nest_under_khac_include_o_cho_dieu_kien_nam_ben_nao(kho):
 
 async def test_nest_under_doi_ten_va_chon_cot_hai_tang(kho):
     events, _ = kho
-    rows = await (events.query().where(id="e4").fields("label")
+    rows = await (events.query().where(id="e4").select("label")
                   .nest_under(QCamera, name="su_kien", fields=["name"]).all())
     assert rows == [{"name": "Kho hàng", "su_kien": [{"label": "car"}]}]
 
 
 async def test_nest_under_giu_thu_tu_theo_bang_goc(kho):
     events, _ = kho
-    rows = await (events.query().order_by_desc("created_at").fields("id")
+    rows = await (events.query().order_by_desc("created_at").select("id")
                   .nest_under(QCamera, fields=["id"]).all())
     assert [r["id"] for r in rows] == ["c1", "c2"], "e5 của c1 mới nhất nên c1 đứng trước"
 
@@ -735,14 +809,14 @@ async def test_nest_under_giu_thu_tu_theo_bang_goc(kho):
 async def test_nest_under_bo_dong_co_khoa_ngoai_NULL(kho):
     """Camera gốc không có cha — nó không thuộc nhóm nào để gom vào."""
     _, cameras = kho
-    rows = await (cameras.query().fields("id")
+    rows = await (cameras.query().select("id")
                   .nest_under(QCamera, on=QCamera.parent_id, name="con", fields=["id"]).all())
     assert rows == [{"id": "c1", "con": [{"id": "c2"}, {"id": "c3"}]}]
 
 
 async def test_nest_under_khong_lo_cot_ghep(kho):
     events, _ = kho
-    rows = await (events.query().where(id="e4").fields("id")
+    rows = await (events.query().where(id="e4").select("id")
                   .nest_under(QCamera, fields=["id"]).all())
     assert set(rows[0]["qevents"][0]) == {"id"}, "camera_id chỉ để gom, không phải để trả"
 
@@ -793,7 +867,7 @@ async def test_nest_under_chia_me_khi_qua_nhieu_id(kho, monkeypatch):
     backend = events._db.backend
     da_chay, that = _dem_cau_lenh(backend)
     try:
-        rows = await events.query().fields("id").nest_under(QCamera, fields=["id"]).all()
+        rows = await events.query().select("id").nest_under(QCamera, fields=["id"]).all()
     finally:
         backend.run_query = that
 
