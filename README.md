@@ -42,6 +42,7 @@ public API, and this README, are in English. Start with
 | `select([...])` / `AS` (TypeORM) | `.select(fields=…, exclude=…, rename={"new": "col"})` — same names on `include` |
 | `addSelect()` (TypeORM) | `.select(add={"cam_name": Camera.name})` — keep every column, add one |
 | `find({relations: {events: true}})` (TypeORM) | `.include(Event)` — nested rows, one extra query, not N+1 |
+| `relations: {camera: {logs: {items: true}}}` (TypeORM) | `.nest_under(Camera, CameraLog, ItemLog)` — one query per level |
 | *(no TypeORM equivalent)* | `.nest_under(Camera)` — filter on events, get cameras back with them nested |
 | `@ManyToOne(…, {onDelete: 'CASCADE'})` (TypeORM) | `field(metadata=reference(Camera, on_delete="CASCADE"))` — a real FK in the database |
 | `@UseGuards()` | `guards=[...]` on the controller or a single route |
@@ -423,7 +424,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              1033 tests that need no infrastructure, 238 more with real drivers/servers
+tests/              1039 tests that need no infrastructure, 244 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 

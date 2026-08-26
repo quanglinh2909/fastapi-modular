@@ -77,6 +77,16 @@ class QEvent:
     updated_at: datetime = field(default_factory=utcnow)
 
 
+@entity()
+@dataclass(slots=True)
+class QItem(Entity):
+    """Bảng thứ ba: ItemLog -> CameraLog -> Camera, để thử lồng nhiều mức."""
+
+    id: str
+    note: str
+    event_id: str = field(metadata=reference(QEvent))
+
+
 class _Db:
     """Đủ để `Repository` chạy, không cần cả `Database` với retry và circuit."""
 
@@ -98,10 +108,11 @@ async def kho(request, tmp_path):
     backend = create_backend(settings)
     await backend.startup()
     if hasattr(backend, "create_schema"):        # memory không có schema để dựng
-        await backend.create_schema(QCamera, QEvent)
+        await backend.create_schema(QCamera, QEvent, QItem)
 
     db = _Db(backend)
     events, cameras = Repository(QEvent, db), Repository(QCamera, db)
+    items = Repository(QItem, db)
 
     await cameras.save(QCamera(id="c1", name="Cổng chính", zone="Tầng 1", threshold=0.7,
                                status=QTrangThai.ON))
@@ -124,6 +135,9 @@ async def kho(request, tmp_path):
             QEvent(id=id_, camera_id=cam, label=label, score=score, reviewed_at=reviewed,
                    created_at=goc + timedelta(seconds=i))
         )
+    for id_, ev in (("i1", "e0"), ("i2", "e0"), ("i3", "e3")):
+        await items.save(QItem(id=id_, note=f"ghi chú {id_}", event_id=ev))
+
     yield events, cameras
     await backend.shutdown()
 
@@ -913,11 +927,19 @@ async def test_nest_under_chia_me_khi_qua_nhieu_id(kho, monkeypatch):
     assert sorted(r["id"] for r in rows) == ["c1", "c2"]
 
 
-async def test_nest_under_sai_chieu_thi_chi_sang_include(kho):
+async def test_nest_under_dua_bang_CON_ra_ngoai_thi_lop_trong_la_MOT_object(kho):
+    """Chiều khoá ngoại quyết định lớp trong là danh sách hay một object.
+
+    `cameras.query().nest_under(QEvent)`: khoá ngoại nằm bên QEvent nên mỗi sự
+    kiện chỉ có MỘT camera — lớp trong là object, không phải list.
+    """
     _, cameras = kho
-    with pytest.raises(BadRequestError) as loi:
-        cameras.query().nest_under(QEvent)
-    assert "include" in str(loi.value), "phải chỉ luôn cách làm đúng"
+    rows = await (cameras.query().where(id="c2")
+                  .nest_under(QEvent, fields=["id"]).all())
+
+    assert sorted(r["id"] for r in rows) == ["e3", "e4"]
+    assert rows[0]["qcamera"]["name"] == "Kho hàng"
+    assert not isinstance(rows[0]["qcamera"], list)
 
 
 async def test_cot_lop_ngoai_do_nest_under_quyet_dinh(kho):
@@ -994,6 +1016,68 @@ async def test_nest_under_khong_dung_chung_voi_group_by(kho):
     events, _ = kho
     with pytest.raises(BadRequestError):
         events.query().group_by(QEvent.camera_id).nest_under(QCamera)
+
+
+# ------------------------------------------------ lồng nhiều mức (chuỗi)
+async def test_chuoi_ba_muc_ngoai_vao_trong(kho):
+    """`nest_under(Camera, Event, Item)` — camera > sự kiện > ghi chú."""
+    events, _ = kho
+    rows = await (
+        events.query().where(id__in=["e0", "e3"])
+        .select("id")
+        .include(QCamera, fields=["id", "name"])
+        .include(QItem, fields=["id"])
+        .nest_under(QCamera, QEvent, QItem)
+        .all()
+    )
+    assert rows == [
+        {"id": "c1", "name": "Cổng chính",
+         "qevents": [{"id": "e0", "qitems": [{"id": "i1"}, {"id": "i2"}]}]},
+        {"id": "c2", "name": "Kho hàng",
+         "qevents": [{"id": "e3", "qitems": [{"id": "i3"}]}]},
+    ]
+
+
+async def test_chuoi_chi_them_MOT_cau_lenh_cho_MOI_muc(kho):
+    """Ba mức = ba câu lệnh, không phải một câu cho mỗi dòng."""
+    events, _ = kho
+    backend = events._db.backend
+    da_chay, that = _dem_cau_lenh(backend)
+    try:
+        await events.query().select("id").nest_under(QCamera, QEvent, QItem).all()
+    finally:
+        backend.run_query = that
+    assert [ten for ten, _ in da_chay] == ["QEvent", "QItem", "QCamera"]
+
+
+async def test_chuoi_giu_thu_tu_theo_bang_goc(kho):
+    events, _ = kho
+    rows = await (events.query().where(id__in=["e0", "e3"]).order_by_desc("camera_id")
+                  .select("id").nest_under(QCamera, QEvent).all())
+    assert [r["id"] for r in rows] == ["c2", "c1"], "camera theo thứ tự sự kiện"
+
+
+async def test_chuoi_hai_bang_khong_noi_duoc_thi_mach_duong_di(kho):
+    """`nest_under(QItem, QCamera)` — hai bảng này không có khoá ngoại trực tiếp."""
+    events, _ = kho
+    with pytest.raises(BadRequestError) as loi:
+        await events.query().select("id").nest_under(QItem, QCamera).all()
+
+    assert "QItem -> QEvent -> QCamera" in str(loi.value), "phải mách đường đi"
+    assert "không tự sắp lại" in str(loi.value)
+
+
+async def test_chuoi_lap_bang_bi_chan(kho):
+    events, _ = kho
+    with pytest.raises(BadRequestError):
+        events.query().nest_under(QCamera, QCamera)
+
+
+async def test_nhieu_bang_thi_khai_cot_bang_include(kho):
+    events, _ = kho
+    with pytest.raises(BadRequestError) as loi:
+        events.query().nest_under(QCamera, QEvent, fields=["id"])
+    assert "include(X" in str(loi.value)
 
 
 # -------------------------------------------------------------- RIGHT JOIN

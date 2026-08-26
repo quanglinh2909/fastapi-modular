@@ -505,15 +505,29 @@ class Include:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class Nest:
-    """Đảo chiều kết quả: bảng CHA ra ngoài, các dòng của bảng gốc vào trong."""
+class NestLink:
+    """Một mắt xích giữa hai lớp cạnh nhau trong chuỗi lồng nhau.
 
-    entity: type                     # bảng cha
-    name: str                        # tên trường chứa danh sách con
-    child_field: str                 # cột khoá ngoại bên bảng gốc
-    parent_field: str                # cột bên bảng cha
+    Ghép bằng `dòng_ngoài[outer_field] == dòng_trong[inner_field]`. Chiều khoá
+    ngoại quyết định lớp trong là DANH SÁCH hay MỘT object: khoá ngoại nằm bên
+    lớp trong thì một dòng ngoài có nhiều dòng trong (list), nằm bên lớp ngoài
+    thì ngược lại (object).
+    """
+
+    outer: type
+    inner: type
+    outer_field: str
+    inner_field: str
+    inner_is_list: bool
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class NestLevel:
+    """Một lớp trong chuỗi: bảng nào, trả cột nào, nằm dưới tên trường nào."""
+
+    entity: type
+    name: str                                     # tên trường chứa lớp NÀY
     fields: tuple[tuple[str, str], ...] = ()      # (tên kết quả, tên cột)
-    explicit: bool = False           # người dùng có tự chọn cột ở đây không
 
 
 # Số id nhét vào một câu `WHERE ... IN (...)`. SQLite mặc định chỉ cho 999 tham
@@ -609,7 +623,12 @@ class QuerySpec:
     groups: list[Column] = dataclasses.field(default_factory=list)
     havings: list[Condition] = dataclasses.field(default_factory=list)
     includes: list[Include] = dataclasses.field(default_factory=list)
-    nest: Nest | None = None
+    nest: tuple[type, ...] = ()          # chuỗi lồng nhau, NGOÀI -> TRONG
+    nest_names: dict[type, str] = dataclasses.field(default_factory=dict)
+    nest_cols: dict[type, tuple[tuple[str, str], ...]] = dataclasses.field(
+        default_factory=dict
+    )
+    nest_link: NestLink | None = None    # mắt xích tự khai bằng `on=` (bảng tự trỏ)
 
     def entity_of(self, alias: str) -> type:
         if alias == _alias_of(self.entity):
@@ -1011,57 +1030,70 @@ class Query(Generic[E]):
 
     def nest_under(
         self,
-        entity: type,
-        *,
+        *entities: type,
         name: str = "",
         on: Any = _INFER,
         fields: Any = (),
         exclude: Sequence[Any] = (),
         rename: dict[str, Any] | None = None,
     ) -> Query[E]:
-        """Đảo chiều kết quả: bảng CHA ra ngoài, dòng của bảng gốc gom vào trong.
+        """Xếp thứ tự lồng nhau của kết quả: bảng nào ra ngoài, bảng nào vào trong.
 
-        Lọc theo cột của sự kiện, nhưng nhận về camera:
+        Kể tên từ NGOÀI vào TRONG. Bảng gốc (`repo`) không kể thì hiểu là nằm
+        trong cùng:
 
-            rows = await (events.query()
-                          .where(Event.score >= 0.9)
-                          .nest_under(Camera)
-                          .all())
-            # [{"id": "c1", "name": "Cổng chính", ..., "events": [{...}, {...}]}]
+            events.query().nest_under(Camera)
+            # [{"id": "c1", …, "events": [{…}, {…}]}]
 
-        Khác `cameras.query().include(Event)` ở chỗ **điều kiện nằm bên sự
-        kiện**: đây là "những camera CÓ sự kiện điểm cao, kèm đúng các sự kiện
-        đó", còn kia là "mọi camera, kèm sự kiện của nó".
+            logs.query().nest_under(Camera, CameraLog, ItemLog)
+            # [{"id": "c1", …, "cameralogs": [{…, "itemlogs": [{…}]}]}]
 
-        `.select(...)` chọn cột của bảng gốc (nằm trong); `fields=`, `exclude=`,
-        `rename=` chọn cột của bảng cha (nằm ngoài), cùng luật với `select`.
+        Hai bảng cạnh nhau phải có khoá ngoại **trực tiếp**; chiều khoá ngoại
+        quyết định lớp trong là danh sách hay một object. Không có thì báo lỗi
+        kèm chuỗi đi được, chứ không tự sắp lại giúp — sắp sai thì dữ liệu sai
+        mà không ai thấy.
 
-        Ba điều dễ vấp, ghi luôn ở đây:
+        `nest_under` chỉ nói THỨ TỰ. Cột và tên trường của từng bảng khai bằng
+        `include(X, fields=…, name=…)`; cột của bảng gốc khai bằng `.select(...)`.
+        Dạng một bảng thì truyền thẳng `fields=`/`name=` ở đây cũng được.
+
+        Ba điều dễ vấp:
 
         - **`limit` vẫn đếm theo bảng GỐC.** `.limit(20).nest_under(Camera)` là
           20 sự kiện gom lại thành vài camera, không phải 20 camera.
         - **Dòng có khoá ngoại NULL bị bỏ** — nó không thuộc cha nào để gom vào.
-        - Thứ tự camera theo thứ tự sự kiện đầu tiên của nó trong kết quả, nên
-          `.order_by(...)` của bảng gốc vẫn có tác dụng.
+        - Thứ tự lớp ngoài theo thứ tự xuất hiện của dòng bảng gốc, nên
+          `.order_by_*(...)` vẫn có tác dụng.
         """
         if self._spec.groups:
             raise BadRequestError("`nest_under` và `group_by` không dùng chung được.")
-
-        child_field, parent_field, to_list = self._relation(entity, on)
-        if to_list:
+        if not entities:
+            raise BadRequestError("`nest_under()` cần ít nhất một bảng.")
+        if len(set(entities)) != len(entities):
+            raise BadRequestError("`nest_under(...)` có bảng bị lặp.")
+        if len(entities) > 1 and (name or fields or exclude or rename
+                                  or on is not _INFER):
             raise BadRequestError(
-                f"`nest_under` đi từ bảng CON lên bảng CHA, mà khoá ngoại lại nằm bên "
-                f"{entity.__name__} chứ không phải {self._spec.entity.__name__}. "
-                f"Có lẽ bạn muốn `.include({entity.__name__})`."
+                "Nhiều bảng thì khai cột và tên cho TỪNG bảng bằng "
+                '`include(X, fields=…, name=…)`; `nest_under(...)` chỉ nói thứ tự.'
             )
-        self._spec.nest = Nest(
-            entity=entity,
-            name=name or f"{self._spec.entity.__name__.lower()}s",
-            child_field=child_field,
-            parent_field=parent_field,
-            fields=_fields_of(entity, fields, exclude, rename),
-            explicit=bool(fields or exclude or rename),
-        )
+
+        if fields or exclude or rename:
+            self._spec.nest_cols[entities[0]] = _fields_of(
+                entities[0], fields, exclude, rename
+            )
+        if name:
+            # `name` ở đây đặt tên cho danh sách các dòng của BẢNG GỐC, vì bảng
+            # gốc mới là thứ nằm bên trong bảng vừa nêu.
+            self._spec.nest_names[self._spec.entity] = name
+        if on is not _INFER:
+            # Bảng tự trỏ về chính nó: hai lớp cùng một entity nên phải nói rõ cột.
+            column = column_of(on)
+            self._spec.nest_link = NestLink(
+                outer=entities[0], inner=self._spec.entity,
+                outer_field="id", inner_field=column.field, inner_is_list=True,
+            )
+        self._spec.nest = tuple(entities)
         return self
 
     def group_by(self, *fields: Any) -> Query[E]:
@@ -1235,53 +1267,78 @@ class Query(Generic[E]):
                 f"`group_by(\"{inc.root_field}\")`, hoặc bỏ `include`."
             )
 
-    def _resolve_nest(self) -> tuple[Nest | None, list[Include]]:
-        """Gộp `include(X)` vào `nest_under(X)` khi cả hai nói về cùng một bảng.
+    def _resolve_nest(self) -> tuple[list[NestLevel], list[NestLink], list[Include], int]:
+        """Chuỗi `nest_under(...)` -> các lớp + mắt xích, và phần `include` còn lại.
 
-        Hai câu đó nói hai việc khác nhau: `include(X, fields=…)` khai X trả về
-        NHỮNG CỘT NÀO, `nest_under(X)` khai X nằm Ở ĐÂU. Đi cùng nhau thì cột
-        lấy từ `include`, và X chỉ xuất hiện MỘT lần — ở lớp ngoài, không lồng
-        thêm vào từng dòng bên trong nữa.
+        `include(X, fields=…, name=…)` khai X TRẢ VỀ NHỮNG CỘT NÀO;
+        `nest_under(...)` khai THỨ TỰ. Bảng nào có mặt trong chuỗi thì lấy cột
+        từ `include` của nó rồi bỏ include đó đi — X chỉ hiện một lần, đúng chỗ
+        chuỗi xếp cho nó.
         """
-        nest, includes = self._spec.nest, list(self._spec.includes)
-        if nest is None:
-            return None, includes
+        includes = list(self._spec.includes)
+        if not self._spec.nest:
+            return [], [], includes, -1
 
-        trung = [inc for inc in includes if inc.entity is nest.entity]
-        if not trung:
-            return nest, includes
+        goc = self._spec.entity
+        chuoi = list(self._spec.nest)
+        if self._spec.nest_link is not None or goc not in chuoi:
+            # Bảng tự trỏ về chính nó thì bảng gốc vẫn là một lớp RIÊNG, dù trùng
+            # tên với lớp ngoài — nên nhớ VỊ TRÍ chứ không tìm lại bằng tên.
+            chuoi.append(goc)
+            goc_idx = len(chuoi) - 1
+        else:
+            goc_idx = chuoi.index(goc)
 
-        inc = trung[-1]
-        if nest.explicit:
-            raise BadRequestError(
-                f"Cột của {nest.entity.__name__} đang khai ở HAI chỗ: "
-                f"`include({nest.entity.__name__}, fields=…)` và "
-                f"`nest_under({nest.entity.__name__}, fields=…)`. Bỏ một trong hai."
+        if self._spec.nest_link is not None:
+            links = [self._spec.nest_link]
+        else:
+            links = [_link_between(chuoi[i], chuoi[i + 1]) for i in range(len(chuoi) - 1)]
+
+        levels: list[NestLevel] = []
+        for i, entity in enumerate(chuoi):
+            cua_no = [x for x in includes if x.entity is entity]
+            tu_nest = self._spec.nest_cols.get(entity)
+            if len(cua_no) > 1 or (cua_no and tu_nest is not None):
+                raise BadRequestError(
+                    f"Cột của {entity.__name__} đang khai ở HAI chỗ — `include(...)` và "
+                    f"`nest_under(...)`. Bỏ một trong hai."
+                )
+            inc = cua_no[0] if cua_no else None
+            if inc is not None:
+                if inc.conditions or inc.orders:
+                    raise BadRequestError(
+                        f"`include({entity.__name__}, where=…/order_by_…=…)` không "
+                        f"dùng được khi {entity.__name__} nằm trong `nest_under(...)`: "
+                        f"ở đó nó lấy đúng bản ghi liên quan của từng nhóm, không lọc "
+                        f"hay sắp được ở lớp NGOÀI. Bỏ `where=`/`order_by_*=` đi."
+                    )
+                includes.remove(inc)
+            mac_dinh = _ten_mac_dinh(entity, i == 0 or links[i - 1].inner_is_list)
+            cot = tu_nest if tu_nest is not None else (
+                inc.fields if inc is not None else _fields_of(entity, (), ())
             )
-        if inc.conditions or inc.orders:
-            raise BadRequestError(
-                f"`include({nest.entity.__name__}, where=…/order_by_…=…)` không có "
-                f"tác dụng khi {nest.entity.__name__} nằm ở lớp NGOÀI (`nest_under`): "
-                f"lớp ngoài lấy đúng bản ghi cha của từng nhóm, không lọc hay sắp "
-                f"được. Bỏ `where=`/`order_by_*=` đi."
-            )
-        return dataclasses.replace(nest, fields=inc.fields), [
-            other for other in includes if other is not inc
-        ]
+            levels.append(NestLevel(
+                entity=entity,
+                name=self._spec.nest_names.get(entity, mac_dinh),
+                fields=cot,
+            ))
+        return levels, links, includes, goc_idx
 
     async def all(self) -> list[Any]:
         """Chạy và trả về mọi dòng khớp."""
         self._need_select()
         self._check_grouped()
-        nest, includes = self._resolve_nest()
-        if not includes and nest is None:
+        levels, links, includes, goc_idx = self._resolve_nest()
+        if not includes and not levels:
             return await self._backend().run_query(self._spec)
 
         # Cột dùng để ghép phải có trong kết quả mới ghép được. Người dùng
         # không xin thì tự thêm rồi bỏ đi lúc trả về.
         can = [inc.root_field for inc in includes]
-        if nest is not None:
-            can.append(nest.child_field)
+        if goc_idx > 0:
+            can.append(links[goc_idx - 1].inner_field)
+        if 0 <= goc_idx < len(levels) - 1:
+            can.append(links[goc_idx].outer_field)
         them = {f for f in can if self._spec.selects and f not in self._spec.selects}
         for name in them:
             self._spec.selects[name] = Column(self._spec.entity, name)
@@ -1293,45 +1350,68 @@ class Query(Generic[E]):
         finally:
             for name in them:
                 del self._spec.selects[name]
-        # Gom theo cha TRƯỚC rồi mới bỏ cột ghép: chính nó là cột dùng để gom.
-        if nest is not None:
-            grouped = await self._nest(nest, rows)
-            for group in grouped:
-                for row in group[nest.name]:
-                    for name in them:
-                        row.pop(name, None)
-            return grouped
+        # Dựng cây TRƯỚC rồi mới bỏ cột ghép: chính nó là cột dùng để ghép.
+        if levels:
+            cay = await self._nest(levels, links, goc_idx, rows)
+            for row in rows:
+                for name in them:
+                    row.pop(name, None)
+            return cay
 
         for row in rows:
             for name in them:
                 row.pop(name, None)
         return rows
 
-    async def _nest(self, nest: Nest, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Gom các dòng theo cha, rồi lấy cha về bằng đúng MỘT câu lệnh nữa."""
-        gom: dict[Any, list[dict[str, Any]]] = {}
-        for row in rows:
-            key = row.get(nest.child_field)
-            if key is None:
-                # Không thuộc cha nào. Vòng dưới cũng loại nó (không tra ra cha),
-                # nhưng chặn ở đây thì không nhét NULL vào câu `IN (...)`.
-                continue
-            gom.setdefault(key, []).append(row)
+    async def _nest(
+        self,
+        levels: list[NestLevel],
+        links: list[NestLink],
+        goc_idx: int,
+        rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Lấy về từng lớp rồi ghép thành cây.
 
-        cha = {
-            getattr(obj, nest.parent_field, None): obj
-            for obj in await self._fetch_in(nest.entity, nest.parent_field, list(gom))
-        }
-        out: list[dict[str, Any]] = []
-        for key, con in gom.items():
-            obj = cha.get(key)
-            if obj is None:
-                continue
-            out.append({
-                **{ten: getattr(obj, cot, None) for ten, cot in nest.fields},
-                nest.name: con,
-            })
-        return out
+        Mỗi lớp đúng MỘT câu lệnh `WHERE khoá IN (...)`, đi từ lớp gốc ra hai
+        phía. Không có câu nào chạy cho mỗi dòng.
+        """
+        # (giá trị các cột dùng để ghép, dict sẽ trả về)
+        du_lieu: list[list[tuple[dict[str, Any], dict[str, Any]]]] = [[] for _ in levels]
+        du_lieu[goc_idx] = [(row, row) for row in rows]
+
+        can = _cot_can_ghep(levels, links)
+
+        async def lay(i: int, field: str, keys: list[Any]) -> None:
+            objs = await self._fetch_in(levels[i].entity, field, keys)
+            du_lieu[i] = [
+                ({c: getattr(o, c, None) for c in can[i]},
+                 {ten: getattr(o, cot, None) for ten, cot in levels[i].fields})
+                for o in objs
+            ]
+
+        for i in range(goc_idx + 1, len(levels)):           # đi vào TRONG
+            link = links[i - 1]
+            khoa = _khoa_theo_thu_tu(du_lieu[i - 1], link.outer_field)
+            await lay(i, link.inner_field, khoa)
+        for i in range(goc_idx - 1, -1, -1):                # đi ra NGOÀI
+            link = links[i]
+            khoa = _khoa_theo_thu_tu(du_lieu[i + 1], link.inner_field)
+            await lay(i, link.outer_field, khoa)
+            # Lớp ngoài xếp theo thứ tự xuất hiện của lớp trong, không theo
+            # thứ tự database trả về — nhờ vậy `order_by_*` vẫn còn tác dụng.
+            thu_tu = {k: n for n, k in enumerate(khoa)}
+            du_lieu[i].sort(key=lambda x, f=link.outer_field: thu_tu.get(x[0].get(f), 0))
+
+        for i in range(len(levels) - 1, 0, -1):             # ghép từ TRONG ra
+            link = links[i - 1]
+            theo: dict[Any, list[dict[str, Any]]] = {}
+            for khoa, ra in du_lieu[i]:
+                theo.setdefault(khoa.get(link.inner_field), []).append(ra)
+            for khoa, ra in du_lieu[i - 1]:
+                con = theo.get(khoa.get(link.outer_field), [])
+                ra[levels[i].name] = con if link.inner_is_list else (con[0] if con else None)
+
+        return [ra for _, ra in du_lieu[0]]
 
     async def _fetch_in(self, entity: type, field: str, keys: list[Any]) -> list[Any]:
         """`SELECT ... WHERE field IN (keys)`, chia mẻ để không vượt giới hạn tham số."""
@@ -1428,6 +1508,90 @@ class Query(Generic[E]):
             f"<Query[{spec.entity.__name__}] joins={len(spec.joins)} "
             f"where={len(spec.conditions)} limit={spec.limit}>"
         )
+
+
+def _ten_mac_dinh(entity: type, la_danh_sach: bool) -> str:
+    """Tên trường mặc định: `events` cho danh sách, `camera` cho một object."""
+    ten = entity.__name__.lower()
+    return f"{ten}s" if la_danh_sach else ten
+
+
+def _link_between(outer: type, inner: type) -> NestLink:
+    """Mắt xích giữa hai bảng cạnh nhau, đọc từ khoá ngoại đã khai."""
+    if outer is inner:
+        raise BadRequestError(f"`nest_under(...)` có {outer.__name__} hai lần.")
+
+    ngoai = [(f, r) for f, r in mapping_for(outer).references if r.target is inner]
+    trong = [(f, r) for f, r in mapping_for(inner).references if r.target is outer]
+
+    if len(trong) == 1 and not ngoai:
+        field, ref = trong[0]
+        return NestLink(outer, inner, ref.column, field, True)
+    if len(ngoai) == 1 and not trong:
+        field, ref = ngoai[0]
+        return NestLink(outer, inner, field, ref.column, False)
+    if not ngoai and not trong:
+        raise BadRequestError(
+            f"`nest_under(..., {outer.__name__}, {inner.__name__}, ...)`: hai bảng này "
+            f"không có khoá ngoại TRỰC TIẾP với nhau. Kể tên đủ các bảng trên đường "
+            f"đi ({_goi_y_duong_di(outer, inner)}), hoặc đổi thứ tự. Khung không tự "
+            f"sắp lại giúp: sắp sai thì dữ liệu sai mà không ai thấy."
+        )
+    raise BadRequestError(
+        f"`nest_under(..., {outer.__name__}, {inner.__name__}, ...)`: có nhiều khoá "
+        f"ngoại giữa hai bảng nên không biết ghép theo cột nào."
+    )
+
+
+def _goi_y_duong_di(a: type, b: type) -> str:
+    """Tìm đường đi ngắn nhất giữa hai bảng theo khoá ngoại, để mách trong lỗi."""
+    from collections import deque
+
+    canh: dict[type, set[type]] = {}
+    for entity in list(_ENTITIES_CUA_KHUNG().values()):
+        try:
+            refs = mapping_for(entity).references
+        except TypeError:
+            continue
+        for _, ref in refs:
+            canh.setdefault(entity, set()).add(ref.target)
+            canh.setdefault(ref.target, set()).add(entity)
+
+    hang, da_qua = deque([[a]]), {a}
+    while hang:
+        duong = hang.popleft()
+        if duong[-1] is b:
+            return " -> ".join(x.__name__ for x in duong)
+        for ke in canh.get(duong[-1], ()):
+            if ke not in da_qua:
+                da_qua.add(ke)
+                hang.append([*duong, ke])
+    return f"không có đường nào nối {a.__name__} với {b.__name__}"
+
+
+def _ENTITIES_CUA_KHUNG() -> dict[str, type]:
+    from fastapi_modular.core.container import _ENTITIES
+
+    return _ENTITIES
+
+
+def _cot_can_ghep(levels: list[NestLevel], links: list[NestLink]) -> list[set[str]]:
+    """Mỗi lớp cần giữ lại những cột nào để ghép được với hai lớp cạnh nó."""
+    can: list[set[str]] = [set() for _ in levels]
+    for i, link in enumerate(links):
+        can[i].add(link.outer_field)
+        can[i + 1].add(link.inner_field)
+    return can
+
+
+def _khoa_theo_thu_tu(muc: list[tuple[dict[str, Any], dict[str, Any]]], field: str) -> list[Any]:
+    """Giá trị khoá theo thứ tự xuất hiện, bỏ trùng và bỏ None."""
+    ra: dict[Any, None] = {}
+    for khoa, _ in muc:
+        gia_tri = khoa.get(field)
+        if gia_tri is not None:
+            ra[gia_tri] = None
+    return list(ra)
 
 
 def _as_dict(entity: type, row: Any) -> dict[str, Any]:
@@ -1593,7 +1757,8 @@ __all__ = [
     "F",
     "Include",
     "Join",
-    "Nest",
+    "NestLevel",
+    "NestLink",
     "Order",
     "Query",
     "QuerySpec",

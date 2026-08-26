@@ -26,6 +26,7 @@ builder, không có transaction, không có migration.
 | "**Trả về camera kèm danh sách sự kiện của nó**" | [Dữ liệu lồng nhau](#dữ-liệu-lồng-nhau-include) |
 | "**Trả về sự kiện kèm object camera**" | [Dữ liệu lồng nhau](#dữ-liệu-lồng-nhau-include) |
 | "**Lọc theo sự kiện nhưng trả về camera ở ngoài**" | [`nest_under`](#đảo-chiều-nest_under) |
+| "**Camera > log > item, lồng ba tầng**" | [Lồng nhiều mức](#lồng-nhiều-mức) |
 | "**Bảng nhiều cột quá, tôi muốn bỏ bớt một cột**" | [`select(exclude=…)`](#chọn-cột-trả-về) |
 | "**Đổi tên trường trả về**" | [`select(rename=…)`](#chọn-cột-trả-về) |
 | "**Giữ đủ cột, thêm một cột của bảng đã join**" | [`select(add=…)`](#chọn-cột-trả-về) |
@@ -1535,10 +1536,10 @@ So với `cameras.query().include(Event, where=...)`:
 
 | Câu | Nói về |
 |---|---|
-| `.select(...)` | cột của **bảng gốc** — chính là các dòng nằm bên trong |
+| `.select(...)` | cột của **bảng gốc** |
 | `.include(Camera, fields=…)` | cột của **Camera** — trả về những cột nào |
-| `.nest_under(Camera)` | **chỗ đứng** của Camera: ra lớp ngoài |
-| `.nest_under(Camera, name="…")` | tên trường chứa danh sách; mặc định tên bảng gốc + `s` |
+| `.nest_under(Camera, …)` | **thứ tự lồng nhau**: bảng nào ngoài, bảng nào trong |
+| `.include(Camera, name="…")` | tên trường chứa Camera |
 
 Hai câu cuối đi cùng nhau được, và đó là cách viết gọn nhất:
 
@@ -1556,11 +1557,58 @@ await (events.query()
 `include(Camera)` không lồng camera vào từng dòng bên trong nữa; nó chỉ còn làm
 đúng một việc là khai cột. Gọi hai câu theo thứ tự nào cũng vậy.
 
-Không dùng `include` thì khai thẳng ở `nest_under` cũng được:
+Không dùng `include` thì khai thẳng ở `nest_under` cũng được, nhưng chỉ khi
+chuỗi có **một** bảng:
 
 ```python
 .nest_under(Camera, fields=["id", "name"])
 ```
+
+### Lồng nhiều mức
+
+Kể tên từ NGOÀI vào TRONG. Ba bảng: `Camera` <- `CameraLog` <- `ItemLog`, repo
+là `CameraLog`:
+
+```python
+await (logs.query()
+       .select("id", "label")
+       .include(Camera, fields=["id", "name"])
+       .include(ItemLog, fields=["id", "note"])
+       .nest_under(Camera, CameraLog, ItemLog)
+       .all())
+# [{"id": "c1", "name": "demo",
+#   "cameralogs": [{"id": "l0", "label": "log 0",
+#                   "itemlogs": [{"id": "i0", "note": "…"}]}]}]
+```
+
+Không kể bảng gốc thì nó nằm trong cùng: `nest_under(Camera)` chính là
+`nest_under(Camera, CameraLog)`.
+
+**Chiều khoá ngoại quyết định lớp trong là danh sách hay một object.** Khoá
+ngoại nằm bên lớp trong → một dòng ngoài có nhiều dòng trong (`list`); nằm bên
+lớp ngoài → ngược lại, lớp trong là **một object**:
+
+```python
+await cameras.query().nest_under(Event).all()
+# [{"id": "e1", …, "camera": {…}}, …]     <- mỗi sự kiện MỘT camera
+```
+
+**Hai bảng cạnh nhau phải có khoá ngoại trực tiếp.** Không có thì báo lỗi và
+mách đường đi, chứ khung không tự sắp lại giúp — sắp sai thì dữ liệu sai mà
+không ai thấy:
+
+```
+`nest_under(..., ItemLog, Camera, ...)`: hai bảng này không có khoá ngoại
+TRỰC TIẾP với nhau. Kể tên đủ các bảng trên đường đi
+(ItemLog -> CameraLog -> Camera), hoặc đổi thứ tự.
+```
+
+**Mỗi mức đúng một câu lệnh nữa.** Ba mức là ba câu, không phải một câu cho mỗi
+dòng — có test đếm đúng số câu.
+
+Nhiều bảng thì cột và tên của từng bảng khai bằng `include(X, fields=…,
+name=…)`; truyền `fields=` thẳng vào `nest_under(A, B)` sẽ báo lỗi vì không rõ
+nó nói về bảng nào.
 
 Khai ở **cả hai** chỗ thì báo lỗi, vì không có luật nào để đoán bên nào thắng:
 
@@ -1675,7 +1723,8 @@ bỏ qua mọi dòng có `reviewed_at` NULL. Backend `memory` giữ y hệt lu�
 | `.select(fields=…, exclude=…, rename=…, add=…)` | chỉ những cột này · trừ những cột này · đổi tên · giữ đủ và thêm |
 | `.include(Entity, name=…, fields=…, exclude=…, rename=…, where=…, order_by_asc=…, order_by_desc=…)` | gắn dữ liệu lồng nhau |
 | `async with db.transaction() as tx:` · `await tx.rollback()` | xem [Transaction](#transaction--ghi-nhiều-bảng-thì-cùng-thành-công-hoặc-cùng-không) |
-| `.nest_under(Entity, name=…, fields=…, exclude=…, rename=…)` | đảo chiều: cha ra ngoài, bảng gốc vào trong |
+| `.nest_under(A, B, C)` | thứ tự lồng nhau, NGOÀI -> TRONG; bảng gốc không kể thì nằm trong cùng |
+| `.nest_under(A, name=…, fields=…, exclude=…, rename=…, on=…)` | dạng một bảng: khai luôn cột và tên |
 | `.select(so=count(), tb=avg(X.cot))` | hàm gộp, phải đặt tên |
 
 | Cột | |
