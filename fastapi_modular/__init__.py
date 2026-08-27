@@ -42,7 +42,7 @@ from fastapi_modular.discovery import DEFAULT_PACKAGE, register_routes
 from fastapi_modular.factory import add_middleware, bind_settings, create_app, new_fastapi
 from fastapi_modular.infrastructure.database.base import Entity, reference
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 __all__ = [
     "DEFAULT_PACKAGE",

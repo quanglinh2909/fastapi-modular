@@ -95,7 +95,7 @@ same job `package.json` does for `npm i`.
 
 ```
 # requirements.txt, after `fam install sqlite` and `fam install redis`
-fastapi-modular[redis,sqlite]>=0.3.0
+fastapi-modular[redis,sqlite]>=0.3.1
 ```
 
 It records the extras, not the individual packages: the version ranges of
@@ -441,7 +441,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              1097 tests that need no infrastructure, 292 more with real drivers/servers
+tests/              1101 tests that need no infrastructure, 292 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 

@@ -79,7 +79,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi_modular.core.config import Settings
-from fastapi_modular.core.container import container, injectable
+from fastapi_modular.core.container import container, detach_request_scope, injectable
 from fastapi_modular.core.context import new_request_id, reset_request_id, set_request_id
 from fastapi_modular.core.exceptions import BadRequestError, ServiceUnavailableError
 from fastapi_modular.core.locks import NoLock, SingleFlight, build_lock
@@ -621,6 +621,10 @@ class WorkerPool:
         self, spec: WorkerSpec, instance: Any, data: Any, context: WorkerContext
     ) -> None:
         """Chạy vòng lặp, và dựng lại khi nó hỏng."""
+        # Worker sống lâu hơn thứ sinh ra nó, nên không được dùng chung request
+        # scope với nó — xem `detach_request_scope`. Đặt ở đây là đủ cho cả
+        # thread (`copy_context` lấy từ context của Task này) lẫn `ctx.run`.
+        detach_request_scope()
         if spec.single and not await self._become_owner(spec, context):
             return
 

@@ -363,6 +363,28 @@ async def request_scope() -> AsyncIterator[dict[str, Any]]:
         _request_store.reset(token)
 
 
+def detach_request_scope() -> None:
+    """Cắt khỏi request scope THỪA HƯỞNG từ nơi sinh ra, cho việc chạy nền.
+
+    Vì sao cần: `contextvars` được sao chép khi tạo Task hay Thread, nên một
+    `@worker` sinh ra từ trong một HTTP request — hoặc từ một `@interval` /
+    `@job`, vốn cũng mở request scope — sẽ thấy đúng cái store đó, dù request ấy
+    đã đóng từ lâu.
+
+    Hậu quả đo được, và nó im lặng đến khó chịu: `SqlUnitOfWork` là provider
+    request-scoped, mở một transaction rồi chỉ commit ở `on_request_end`. Worker
+    thừa hưởng nó thì mọi lệnh ghi rơi vào một transaction KHÔNG BAO GIỜ được
+    commit — `repo.delete()` vẫn trả `True` (đúng, nó khớp một dòng), câu SELECT
+    ngay sau đó vẫn thấy dữ liệu mới (cùng connection), nhưng trên đĩa không có
+    gì đổi và tắt app là mất sạch.
+
+    Cắt rồi thì `_conn()` rơi về nhánh "ngoài request": mỗi thao tác một
+    `engine.begin()`, tự commit — đúng như docs mô tả cho worker/job/script.
+    Cần gộp nhiều lệnh ghi thì bọc `async with db.transaction():`.
+    """
+    _request_store.set(None)
+
+
 def Inject(token: type[T] | str) -> Any:
     """Cầu nối container -> FastAPI Depends.
 

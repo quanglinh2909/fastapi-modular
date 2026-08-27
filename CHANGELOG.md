@@ -5,6 +5,34 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 
 ## [Chưa phát hành]
 
+## [0.3.1] — 2026-08-27
+
+### Sửa
+
+- **Worker ghi database không được commit.** `contextvars` được sao chép khi tạo
+  Task/Thread, nên `@worker` sinh ra từ trong một HTTP request — hoặc từ
+  `@interval`/`@job`, vốn cũng mở request scope — thừa hưởng đúng store của
+  request đó. Mà `SqlUnitOfWork` là provider request-scoped: nó mở transaction
+  rồi chỉ commit ở `on_request_end`. Worker sống lâu hơn request nên transaction
+  ấy không bao giờ được commit.
+
+  Kiểu hỏng này im lặng đến khó chịu:
+
+  ```python
+  print("Deleted:", await repo.delete(row.id))   # -> True
+  ```
+
+  `True` là đúng — DELETE khớp một dòng, và câu SELECT ngay sau cũng thấy dữ
+  liệu mới vì cùng một connection. Chỉ có điều trên đĩa không đổi gì, và tắt app
+  là mất sạch.
+
+  Nay worker được cắt khỏi request scope thừa hưởng (`detach_request_scope`),
+  nên mỗi thao tác tự commit như docs vẫn mô tả. Gộp nhiều lệnh ghi thì bọc
+  `async with db.transaction():` — vẫn dùng được trong `ctx.run`.
+
+  Hệ quả có thể thấy: `container.resolve(<provider Scope.REQUEST>)` trong worker
+  giờ báo lỗi thay vì trả về một instance mồ côi. Đó là cố ý.
+
 ## [0.3.0] — 2026-08-27
 
 Bản này thêm **query builder** (JOIN, khoá ngoại, transaction, dữ liệu lồng

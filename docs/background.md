@@ -642,6 +642,26 @@ ctx.run(self._repo.save(event))
 Đừng gọi `asyncio.run()` — nó tạo một event loop MỚI, mà connection pool của
 database thuộc về loop cũ, và nó sẽ hỏng theo những cách rất khó hiểu.
 
+**Mỗi lời gọi tự commit.** Worker không nằm trong request nào, nên mỗi
+`save`/`delete` là một transaction riêng, xong là xong. Muốn nhiều lệnh ghi
+"cùng thành công hoặc cùng không" thì bọc lại — `db.transaction()` dùng được
+trong `ctx.run` như thường:
+
+```python
+async def chuyen_kho(self, tu: str, den: str) -> None:
+    async with self._db.transaction():
+        await self._repo.save(...)
+        await self._repo.delete(...)
+
+# trong worker:
+ctx.run(self._service.chuyen_kho("A", "B"))
+```
+
+**Đừng resolve provider request-scoped trong worker.** Worker sống lâu hơn thứ
+sinh ra nó, nên khung cắt nó khỏi request scope — `container.resolve(Principal)`
+hay bất cứ provider `Scope.REQUEST` nào cũng sẽ báo lỗi ngay. Đó là cố ý: không
+có request thì không có "danh tính của request này".
+
 ---
 
 ## Hỏng thì tra ở đây
@@ -663,6 +683,7 @@ database thuộc về loop cũ, và nó sẽ hỏng theo những cách rất kh�
 | **`ctx.blocking` chậm dần khi thêm worker** | vượt trần pool — nới `APP_WORKERS__THREAD_POOL_SIZE` |
 | **`workers_restarted_total` tăng đều** | camera rớt mạng, hoặc vòng lặp ném lỗi mỗi lượt — xem log `worker.crashed` |
 | **`worker.stop_timeout` lúc tắt app** | vòng lặp không kiểm `ctx.running`, hoặc lời gọi chặn không có timeout |
+| **Ghi/xoá trong worker: `delete()` trả `True` mà dữ liệu vẫn còn** | Bản **trước 0.3.1**: worker thừa hưởng transaction của request sinh ra nó và không ai commit. Nâng cấp: `pip install -U fastapi-modular`. Nhận ra nó bằng cách đọc database bằng **công cụ khác** (`sqlite3 app.db "SELECT …"`), chứ hỏi lại repository thì vẫn thấy "xong rồi" |
 | **Ctrl+C bấm mà không có gì xảy ra** | xem ngay dưới |
 
 ### Ctrl+C như không ăn
