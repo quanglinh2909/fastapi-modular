@@ -173,7 +173,7 @@ class MqttClient:
             log.info("mqtt.default_url", url=DEFAULT_URL, hint="chưa đặt APP_MQTT__URL?")
         if not self._config.clean_session and not self._config.client_id:
             log.warning(
-                "mqtt.session_khong_ben",
+                "mqtt.session_not_persistent",
                 hint="clean_session=false cần APP_MQTT__CLIENT_ID cố định, "
                 "không thì mỗi lần khởi động là một phiên mới và tin giữ lại bị bỏ",
             )

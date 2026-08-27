@@ -6,6 +6,19 @@ chuyện gì đang xảy ra.
 
 ---
 
+## Bạn đang cần làm gì?
+
+| Việc bạn muốn làm | Đọc mục |
+|---|---|
+| "Chặn request thiếu token" | [Guard](#guard) |
+| "Database treo thì request đừng treo theo" | [Circuit breaker](#circuit-breaker-và-hạn-thời-gian) |
+| "Lấy số liệu cho Prometheus/Grafana" | [Metrics](#metrics) |
+| "Đếm ai đang nối WebSocket" | [WebSocket](#websocket) |
+| "Soi hàng đợi RabbitMQ đang ứ" | [RabbitMQ](#rabbitmq) |
+| "Lần một request qua nhiều dòng log" | [Trace](#trace) |
+
+---
+
 ## Guard
 
 Tương đương `@UseGuards` của NestJS. Guard chỉ trả lời một câu: request này có

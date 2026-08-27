@@ -20,24 +20,20 @@ mọi worker** (`publish` + `@redis_subscriber`).
 > Cần gửi rồi **chờ trả lời** (kiểu `client.send` / `@MessagePattern` của
 > NestJS)? Đó là `redis.send()` và `@redis_responder` — [docs/rpc.md](rpc.md).
 
-## Cấu hình
+## Bạn đang cần làm gì?
 
-| Biến | Bắt buộc | Mặc định | Ý nghĩa |
-|---|---|---|---|
-| `APP_REDIS__ENABLED` | không | `false` | bật/tắt toàn bộ lớp này |
-| `APP_REDIS__URL` | **có** | `redis://localhost:6379/0` | `redis://[:pass@]host:port/db`, hoặc `rediss://` nếu có TLS |
-| `APP_REDIS__KEY_PREFIX` | không | *(trống)* | ghép vào **mọi khoá và mọi kênh** |
-| `APP_REDIS__CONNECT_TIMEOUT_SECONDS` | không | `5.0` | chờ mở kết nối |
-| `APP_REDIS__COMMAND_TIMEOUT_SECONDS` | không | `5.0` | trần cho **một** lệnh |
-| `APP_REDIS__RECONNECT_DELAY_SECONDS` | không | `1.0` | chờ trước lần nối lại đầu tiên |
-| `APP_REDIS__MAX_RECONNECT_DELAY_SECONDS` | không | `30.0` | trần thời gian chờ (tăng gấp đôi mỗi lần) |
-
-`KEY_PREFIX` đáng đặt khi nhiều ứng dụng dùng chung một Redis: đặt `"don-hang:"`
-thì khoá `bao-cao:A` nằm ở `don-hang:bao-cao:A`, không ai ghi đè của ai. Nó ghép
-vào cả tên kênh pub/sub, nên hai ứng dụng cũng không nghe nhầm của nhau.
-
-`COMMAND_TIMEOUT_SECONDS` là thứ hay bị bỏ qua: Redis **chậm** còn tệ hơn Redis
-**chết**, vì không có trần thì mọi request đang chờ cache sẽ treo theo.
+| Việc bạn muốn làm | Đọc mục |
+|---|---|
+| "Kết quả tính chậm, muốn **cache 30 giây**" | [Cache](#cache) |
+| "Lưu / đọc một giá trị theo khoá" | [Khoá / giá trị](#khoá--giá-trị) |
+| "**Đếm lượt** — rate limit, lượt xem" | [`incr`](#khoá--giá-trị) |
+| "Xoá cả cụm khoá `bao-cao:*`" | [`delete_prefix`](#khoá--giá-trị) |
+| "**Báo cho mọi worker** một tin" | [Pub/sub](#pubsub) |
+| "Gửi rồi **chờ trả lời**" | [rpc.md](rpc.md) — `redis.send()` + `@redis_responder` |
+| "Scale WebSocket nhiều worker" | KHÔNG phải trang này — `fam env ws-redis`, xem [websocket.md](websocket.md#8-chạy-nhiều-worker) |
+| "Tin không được phép mất" | KHÔNG dùng Redis pub/sub — [RabbitMQ](rabbitmq.md) |
+| "Redis chết thì app có chết theo không" | [Khi Redis chưa lên](#khi-redis-chưa-lên) |
+| "Bảng biến, số đo" | [Tra cứu](#tra-cứu) |
 
 ---
 
@@ -168,7 +164,7 @@ connection cho *lệnh* kế tiếp, nhưng một pubsub đứt thì **mất dan
 
 ---
 
-## Ví dụ chạy được
+## Kiểm xem nó chạy chưa
 
 `src/api/redis_test/` có sẵn, không cần viết gì thêm:
 
@@ -204,7 +200,44 @@ Không có lựa chọn nào để tắt hành vi này — một dịch vụ ph�
 
 ---
 
-## Số đo
+## Hỏng thì tra ở đây
+
+| Triệu chứng | Nguyên nhân |
+|---|---|
+| `ComponentNotEnabledError` (HTTP 503) | `APP_REDIS__ENABLED=false`, hoặc chưa `fam install redis` |
+| `ServiceUnavailableError` (HTTP 503) | không nối được server, hoặc một lệnh quá `COMMAND_TIMEOUT_SECONDS` |
+| `publish` trả `0`, bên nghe không thấy gì | không ai đang `SUBSCRIBE` lúc đó — tin pub/sub không xếp hàng chờ |
+| Bên nghe im lặng dù `publish` trả `> 0` | hai bên khác `KEY_PREFIX` — prefix ghép vào cả tên kênh |
+| log `redis.payload_invalid` | payload không khớp model pydantic của handler — tin bị bỏ |
+| log `redis.handler_failed` | handler ném lỗi; tin KHÔNG được phát lại |
+| log `redis.cache_bypass` | Redis đang chết, `cached()` gọi thẳng `factory()` — app vẫn chạy, chỉ chậm |
+| log `redis.starting_degraded` lúc khởi động | server chưa lên; vòng nối lại chạy ngầm, backoff tới 30s |
+| Đếm bằng `incr` không bao giờ reset | `ttl=` chỉ đặt ở lần cộng ĐẦU; khoá tạo từ trước khi thêm `ttl` thì không có hạn — xoá khoá đi |
+
+---
+
+## Tra cứu
+
+### Cấu hình
+
+| Biến | Bắt buộc | Mặc định | Ý nghĩa |
+|---|---|---|---|
+| `APP_REDIS__ENABLED` | không | `false` | bật/tắt toàn bộ lớp này |
+| `APP_REDIS__URL` | **có** | `redis://localhost:6379/0` | `redis://[:pass@]host:port/db`, hoặc `rediss://` nếu có TLS |
+| `APP_REDIS__KEY_PREFIX` | không | *(trống)* | ghép vào **mọi khoá và mọi kênh** |
+| `APP_REDIS__CONNECT_TIMEOUT_SECONDS` | không | `5.0` | chờ mở kết nối |
+| `APP_REDIS__COMMAND_TIMEOUT_SECONDS` | không | `5.0` | trần cho **một** lệnh |
+| `APP_REDIS__RECONNECT_DELAY_SECONDS` | không | `1.0` | chờ trước lần nối lại đầu tiên |
+| `APP_REDIS__MAX_RECONNECT_DELAY_SECONDS` | không | `30.0` | trần thời gian chờ (tăng gấp đôi mỗi lần) |
+
+`KEY_PREFIX` đáng đặt khi nhiều ứng dụng dùng chung một Redis: đặt `"don-hang:"`
+thì khoá `bao-cao:A` nằm ở `don-hang:bao-cao:A`, không ai ghi đè của ai. Nó ghép
+vào cả tên kênh pub/sub, nên hai ứng dụng cũng không nghe nhầm của nhau.
+
+`COMMAND_TIMEOUT_SECONDS` là thứ hay bị bỏ qua: Redis **chậm** còn tệ hơn Redis
+**chết**, vì không có trần thì mọi request đang chờ cache sẽ treo theo.
+
+### Số đo
 
 | Tên | Ý nghĩa |
 |---|---|
@@ -217,7 +250,7 @@ Không có lựa chọn nào để tắt hành vi này — một dịch vụ ph�
 
 ---
 
-## Chạy thử bằng Docker
+### Chạy thử bằng Docker
 
 ```bash
 docker run -d --name redis-test -p 6389:6379 redis:7-alpine

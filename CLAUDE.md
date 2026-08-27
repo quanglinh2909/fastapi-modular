@@ -58,9 +58,12 @@ Quy tắc viết:
 Docstring trong `fastapi_modular/**.py` thì ngược lại — ở đó viết cho người
 **sửa code**, nên phần "vì sao thiết kế vậy" và chi tiết nội bộ nằm ở đó.
 
-**Mẫu để theo: [`docs/background.md`](docs/background.md).** Những trang còn
-lại trong `docs/` vẫn viết theo lối tra cứu cũ; sửa trang nào thì chuyển trang
-đó sang lối này, đừng viết thêm trang mới theo lối cũ.
+**Mẫu để theo: [`docs/background.md`](docs/background.md).** Đã theo lối này:
+`background`, `database`, `mongodb`, `websocket`, `redis`, `mqtt`, `kafka`;
+các trang còn lại mới có bảng "Bạn đang cần làm gì?" ở đầu — sửa trang nào thì
+chuyển nốt trang đó, đừng viết thêm trang mới theo lối cũ. Toàn bộ quy tắc này
+đóng gói trong skill [`writing-docs`](.claude/skills/writing-docs/SKILL.md) —
+viết docs thì gọi nó.
 
 ## Quy tắc BẮT BUỘC: sửa code là phải sửa docs
 

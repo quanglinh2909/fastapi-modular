@@ -5,6 +5,18 @@ nghĩa phần của khung; **ứng dụng kế thừa để thêm phần của m
 
 ---
 
+## Bạn đang cần làm gì?
+
+| Việc bạn muốn làm | Đọc mục |
+|---|---|
+| "Thêm biến cấu hình của riêng tôi" | [Thêm biến của riêng bạn](#thêm-biến-của-riêng-bạn) |
+| "Biến nào thắng: .env hay biến môi trường?" | [Thứ tự ưu tiên](#thứ-tự-ưu-tiên) |
+| "`.env` sinh ra sao, đổi thế nào" | [`.env` do `fam env` sinh ra](#env-do-fam-env-sinh-ra) |
+| "Sợ mang DEBUG=true lên production" | [Chặn cấu hình nguy hiểm](#chặn-cấu-hình-nguy-hiểm-lên-production) |
+| "Tra một biến `APP_*` nghĩa là gì" | [Các nhóm định nghĩa sẵn](#các-nhóm-khung-định-nghĩa-sẵn) — và bảng chi tiết trong doc của từng phần |
+
+---
+
 ## Thứ tự ưu tiên
 
 ```

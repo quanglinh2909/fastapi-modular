@@ -20,6 +20,23 @@ chết và hạn dùng đều là thứ **tự bật**, không phải thứ mặ
 
 ---
 
+## Bạn đang cần làm gì?
+
+| Việc bạn muốn làm | Đọc mục |
+|---|---|
+| "Đăng một tin cho worker xử lý" | [Đăng tin](#đăng-tin) |
+| "Nhận tin và xử lý nền" | [Consumer nền](#consumer-nền) |
+| "**Tin hỏng thì thử lại**, hết lượt thì giữ lại soi" | [`.retry` và `.dlq`](#retry-và-dlq-là-gì) |
+| "Mọi worker cùng nhận MỘT BẢN SAO" | [fanout](#khi-cần-mọi-worker-cùng-nhận-một-bản-sao) |
+| "Tin quá 30 giây chưa xử lý thì bỏ" | [Hạn dùng (TTL)](#hạn-dùng-ttl) |
+| "Gửi rồi **chờ trả lời**" | [rpc.md](rpc.md) — `emit`/`send` + `@rabbitmq_responder` |
+| "Đẩy sự kiện xuống trình duyệt" | [Đẩy xuống WebSocket](#đẩy-sự-kiện-xuống-client-websocket) |
+| "Broker chết thì app có chết theo không" | [Trạng thái và vòng đời](#trạng-thái-và-vòng-đời) |
+| "Chọn kiểu exchange nào" | [Năm kiểu exchange](#năm-kiểu-exchange) |
+| "Hỏng, tra nhanh" | [Hỏng thì tra ở đây](#hỏng-thì-tra-ở-đây) |
+
+---
+
 ## Cấu hình
 
 Trong `.env` chỉ có thứ thuộc về **kết nối**. Mọi chính sách của từng consumer
@@ -803,6 +820,20 @@ Luôn bật, không có cách tắt.
 
 Thiếu thư viện `aio-pika` mà `ENABLED=true` thì báo lỗi ngay lúc khởi động —
 đó là lỗi cấu hình, không phải sự cố tạm thời.
+
+---
+
+## Hỏng thì tra ở đây
+
+| Triệu chứng | Nguyên nhân |
+|---|---|
+| Đăng tin xong mà không worker nào chạy | routing key không khớp bộ lọc nào — tin rơi khỏi exchange, không lỗi; soi binding trong UI quản trị (cổng 15672) |
+| Tin lỗi biến mất, không thử lại | chưa bật `max_retries` — mặc định là nack rồi bỏ; xem [.retry và .dlq](#retry-và-dlq-là-gì) |
+| `.dlq` phình mãi không ai dọn | đúng thiết kế: `.dlq` là chỗ NGƯỜI soi, xử xong phải xoá tay hoặc đặt `message_ttl` cho nó |
+| Hai worker xử lý TRÙNG một tin | ack sau khi xong (at-least-once) — worker chết giữa chừng thì tin được giao lại; handler phải chịu được tin trùng |
+| Payload sai khuôn model | vào thẳng `.dlq` (nếu bật) — thử lại cũng vô ích nên không thử |
+| log `mq.starting_degraded` lúc khởi động | broker chưa lên; vòng nối lại chạy ngầm, consumer bật lại khi nối được |
+| Muốn mọi worker cùng nhận mà chỉ MỘT worker nhận | các worker đang chung hàng đợi — dùng [fanout + hàng đợi riêng từng worker](#khi-cần-mọi-worker-cùng-nhận-một-bản-sao) |
 
 ---
 

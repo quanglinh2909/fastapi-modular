@@ -16,33 +16,18 @@ Hai việc làm được: **gửi tin** (`MqttClient.publish`) và **nghe topic*
 > Cần gửi rồi **chờ trả lời** (kiểu `client.send` / `@MessagePattern` của
 > NestJS)? Đó là `mqtt.send()` và `@mqtt_responder` — [docs/rpc.md](rpc.md).
 
-## Cấu hình
+## Bạn đang cần làm gì?
 
-| Biến | Bắt buộc | Mặc định | Ý nghĩa |
-|---|---|---|---|
-| `APP_MQTT__ENABLED` | không | `false` | bật/tắt toàn bộ lớp này |
-| `APP_MQTT__URL` | **có** | `mqtt://localhost:1883` | `mqtt://[user:pass@]host:port`, hoặc `mqtts://` nếu có TLS |
-| `APP_MQTT__CLIENT_ID` | không | *(trống → sinh ngẫu nhiên)* | danh tính phiên trên broker |
-| `APP_MQTT__CLEAN_SESSION` | không | `true` | `false` = broker giữ tin QoS≥1 lại trong lúc client ngắt |
-| `APP_MQTT__KEEPALIVE_SECONDS` | không | `30` | nhịp tim; quá ~1.5 nhịp không thấy gì thì broker coi như client chết |
-| `APP_MQTT__CONNECT_TIMEOUT_SECONDS` | không | `10.0` | chờ lần bắt tay đầu tiên |
-| `APP_MQTT__RECONNECT_DELAY_SECONDS` | không | `1.0` | chờ trước lần nối lại đầu tiên |
-| `APP_MQTT__MAX_RECONNECT_DELAY_SECONDS` | không | `30.0` | trần thời gian chờ (tăng gấp đôi mỗi lần) |
-
-Hai biến đi với nhau, và sai một cái là hỏng cả hai:
-
-- **`CLIENT_ID` trống + nhiều worker**: mỗi worker tự sinh id riêng → chạy được.
-- **`CLIENT_ID` cố định + nhiều worker**: **hai worker đá nhau ra khỏi broker
-  liên tục**, vì MQTT chỉ cho một phiên trên mỗi id. Đặt id thì phải kèm số thứ
-  tự worker.
-- **`CLEAN_SESSION=false` + `CLIENT_ID` trống**: vô nghĩa — mỗi lần khởi động là
-  một phiên mới toanh nên chẳng có gì được giữ lại. Khung cảnh báo
-  `mqtt.session_khong_ben` lúc boot.
-- **`CLEAN_SESSION=false` + `CLIENT_ID` cố định**: broker giữ tin QoS≥1 lại
-  trong lúc app tắt và giao khi nối lại. Đây là cách duy nhất để không mất tin
-  lúc deploy.
-
----
+| Việc bạn muốn làm | Đọc mục |
+|---|---|
+| "Gửi một tin xuống thiết bị" | [Gửi tin](#gửi-tin) |
+| "Cảm biến báo gì thì xử lý nấy" | [Nghe topic](#nghe-topic) |
+| "Nghe **cả cụm** topic: `thiet-bi/+/nhiet-do`" | [Luật khớp topic](#luật-khớp-topic) |
+| "Thiết bị mới nối vào phải thấy ngay giá trị mới nhất" | [`retain`](#retain--chỗ-hay-dùng-sai) |
+| "**Không được mất tin** lúc deploy / mất mạng" | [Mức QoS](#mức-qos) + `CLEAN_SESSION` trong [Tra cứu](#tra-cứu) |
+| "Gửi rồi **chờ thiết bị trả lời**" | [rpc.md](rpc.md) — `mqtt.send()` + `@mqtt_responder` |
+| "Broker chết thì app có chết theo không" | [Khi broker chưa lên](#khi-broker-chưa-lên) |
+| "Bảng biến, số đo" | [Tra cứu](#tra-cứu) |
 
 ## Gửi tin
 
@@ -171,7 +156,7 @@ async def canh_bao(self, payload: dict, meta: dict) -> None:
 
 ---
 
-## Ví dụ chạy được
+## Kiểm xem nó chạy chưa
 
 `src/api/mqtt_test/` có sẵn hai handler chồng nhau và hai endpoint:
 
@@ -207,7 +192,50 @@ với phiên persistent.
 
 ---
 
-## Số đo
+## Hỏng thì tra ở đây
+
+| Triệu chứng | Nguyên nhân |
+|---|---|
+| Client cứ nối vào rồi bị đá ra, lặp vô hạn | hai worker dùng chung `CLIENT_ID` — MQTT chỉ cho một phiên mỗi id |
+| Gửi được mà bên nghe không thấy gì | bộ lọc không khớp topic — soi `mqtt_unrouted_total` |
+| log `mqtt.payload_invalid` | payload không khớp model pydantic của handler — tin bị bỏ, không thử lại |
+| log `mqtt.handler_failed` | handler ném lỗi; MQTT không có DLQ, tin không được phát lại |
+| Tin QoS 1 biến mất lúc app tắt | `CLEAN_SESSION=true` (mặc định) — broker không giữ gì; xem `CLEAN_SESSION` ở [Tra cứu](#tra-cứu) |
+| log `mqtt.session_not_persistent` lúc boot | `CLEAN_SESSION=false` nhưng `CLIENT_ID` trống — phiên mới mỗi lần khởi động, không giữ được gì |
+| HTTP 400 khi gửi | topic gửi chứa `+`/`#` — ký tự đại diện chỉ dành cho bên NGHE |
+| log `mqtt.starting_degraded` lúc khởi động | broker chưa lên; vòng nối lại chạy ngầm, backoff tới 30s |
+
+---
+
+## Tra cứu
+
+### Cấu hình
+
+| Biến | Bắt buộc | Mặc định | Ý nghĩa |
+|---|---|---|---|
+| `APP_MQTT__ENABLED` | không | `false` | bật/tắt toàn bộ lớp này |
+| `APP_MQTT__URL` | **có** | `mqtt://localhost:1883` | `mqtt://[user:pass@]host:port`, hoặc `mqtts://` nếu có TLS |
+| `APP_MQTT__CLIENT_ID` | không | *(trống → sinh ngẫu nhiên)* | danh tính phiên trên broker |
+| `APP_MQTT__CLEAN_SESSION` | không | `true` | `false` = broker giữ tin QoS≥1 lại trong lúc client ngắt |
+| `APP_MQTT__KEEPALIVE_SECONDS` | không | `30` | nhịp tim; quá ~1.5 nhịp không thấy gì thì broker coi như client chết |
+| `APP_MQTT__CONNECT_TIMEOUT_SECONDS` | không | `10.0` | chờ lần bắt tay đầu tiên |
+| `APP_MQTT__RECONNECT_DELAY_SECONDS` | không | `1.0` | chờ trước lần nối lại đầu tiên |
+| `APP_MQTT__MAX_RECONNECT_DELAY_SECONDS` | không | `30.0` | trần thời gian chờ (tăng gấp đôi mỗi lần) |
+
+Hai biến đi với nhau, và sai một cái là hỏng cả hai:
+
+- **`CLIENT_ID` trống + nhiều worker**: mỗi worker tự sinh id riêng → chạy được.
+- **`CLIENT_ID` cố định + nhiều worker**: **hai worker đá nhau ra khỏi broker
+  liên tục**, vì MQTT chỉ cho một phiên trên mỗi id. Đặt id thì phải kèm số thứ
+  tự worker.
+- **`CLEAN_SESSION=false` + `CLIENT_ID` trống**: vô nghĩa — mỗi lần khởi động là
+  một phiên mới toanh nên chẳng có gì được giữ lại. Khung cảnh báo
+  `mqtt.session_not_persistent` lúc boot.
+- **`CLEAN_SESSION=false` + `CLIENT_ID` cố định**: broker giữ tin QoS≥1 lại
+  trong lúc app tắt và giao khi nối lại. Đây là cách duy nhất để không mất tin
+  lúc deploy.
+
+### Số đo
 
 | Tên | Ý nghĩa |
 |---|---|
@@ -219,7 +247,7 @@ với phiên persistent.
 
 ---
 
-## Chạy thử bằng Docker
+### Chạy thử bằng Docker
 
 ```bash
 docker run -d --name mqtt-test -p 1893:1883 eclipse-mosquitto:2 \

@@ -16,6 +16,19 @@ Hai việc làm được: **gửi tin** (`KafkaBroker.publish`) và **đọc nh�
 > đọc [docs/rpc.md](rpc.md) trước: Kafka là nhật ký để đọc lại, không phải
 > đường gọi hàm.
 
+## Bạn đang cần làm gì?
+
+| Việc bạn muốn làm | Đọc mục |
+|---|---|
+| "Chọn Kafka hay RabbitMQ đây?" | [Kafka khác RabbitMQ ở đâu](#kafka-khác-rabbitmq-ở-đâu) |
+| "Ghi một sự kiện vào nhật ký" | [Gửi tin](#gửi-tin) |
+| "Xử lý sự kiện, mỗi nhóm một con trỏ riêng" | [Đọc nhật ký](#đọc-nhật-ký) |
+| "**Hai hệ khác nhau cùng đọc** một dòng tin" | [Nhiều nhóm, một dòng tin](#nhiều-nhóm-một-dòng-tin) |
+| "Tin hỏng thì thử lại / đẩy đi đâu" | [Xử lý lỗi](#xử-lý-lỗi) |
+| "Gửi rồi **chờ trả lời**" | [rpc.md](rpc.md) — nhưng đọc kỹ, Kafka không hợp việc đó |
+| "Cụm chết thì app có chết theo không" | [Khi cụm chưa lên](#khi-cụm-chưa-lên) |
+| "Bảng biến, số đo" | [Tra cứu](#tra-cứu) |
+
 ## Kafka khác RabbitMQ ở đâu
 
 Đây là thứ phải nắm trước khi viết dòng code nào, vì nó quyết định chọn cái nào:
@@ -33,24 +46,6 @@ Hai việc làm được: **gửi tin** (`KafkaBroker.publish`) và **đọc nh�
 Chọn Kafka khi cần đọc lại lịch sử, cần nhiều hệ thống độc lập cùng ăn một dòng
 sự kiện, hoặc cần thứ tự theo từng thực thể. Chọn [RabbitMQ](rabbitmq.md) khi
 cần chia việc và xử lý đúng một lần.
-
----
-
-## Cấu hình
-
-| Biến | Bắt buộc | Mặc định | Ý nghĩa |
-|---|---|---|---|
-| `APP_KAFKA__ENABLED` | không | `false` | bật/tắt toàn bộ lớp này |
-| `APP_KAFKA__BOOTSTRAP_SERVERS` | **có** | `localhost:9092` | `host:port` ngăn bằng dấu phẩy |
-| `APP_KAFKA__CLIENT_ID` | không | `fastapi-modular` | tên hiện trong log/số đo của cụm |
-| `APP_KAFKA__ACKS` | không | `all` | `all` an toàn nhất \| `1` chỉ leader \| `0` bắn đi rồi thôi |
-| `APP_KAFKA__REQUEST_TIMEOUT_SECONDS` | không | `20.0` | trần cho một lần gửi/nhận |
-| `APP_KAFKA__CONNECT_TIMEOUT_SECONDS` | không | `10.0` | chờ lần nối đầu tiên |
-| `APP_KAFKA__RECONNECT_DELAY_SECONDS` | không | `1.0` | chờ trước lần nối lại đầu tiên |
-| `APP_KAFKA__MAX_RECONNECT_DELAY_SECONDS` | không | `30.0` | trần thời gian chờ |
-
-Chỉ cần liệt kê **vài** broker trong `BOOTSTRAP_SERVERS` — client tự tìm ra phần
-còn lại của cụm.
 
 ---
 
@@ -189,7 +184,7 @@ tin trùng.
 
 ---
 
-## Ví dụ chạy được
+## Kiểm xem nó chạy chưa
 
 `src/api/kafka_test/` có hai nhóm consumer trên cùng một topic:
 
@@ -222,7 +217,39 @@ một topic khai sai không kéo các topic khác chết theo.
 
 ---
 
-## Số đo
+## Hỏng thì tra ở đây
+
+| Triệu chứng | Nguyên nhân |
+|---|---|
+| Consumer nhận chậm hẳn, tin dồn ứ một phân vùng | một tin đang thử lại — thử lại chạy TRONG vòng đọc, chặn cả phân vùng; giảm `retry_delay` hoặc `max_retries` |
+| Tin lỗi biến mất không dấu vết | `dead_letter=False` (mặc định) — hết lượt thử là bỏ hẳn, chỉ còn log; bật `dead_letter=True` |
+| Xử lý một tin HAI lần sau khi tiến trình chết | ngữ nghĩa ít-nhất-một-lần: offset commit SAU khi handler xong — handler phải chịu được tin trùng |
+| Thêm worker mà không nhanh lên | song song tối đa = số phân vùng của topic, thêm worker quá số đó là thừa |
+| Hai service "tranh nhau" tin | cùng `group_id` — muốn mỗi bên một bản sao thì mỗi bên một nhóm riêng |
+| log `kafka.starting_degraded` lúc khởi động | cụm chưa lên; vòng nối lại chạy ngầm, consumer bật ngay khi nối được |
+| Tin sai khuôn model đi thẳng `.dlt` | payload không khớp pydantic = lỗi vĩnh viễn, thử lại cũng vô ích |
+
+---
+
+## Tra cứu
+
+### Cấu hình
+
+| Biến | Bắt buộc | Mặc định | Ý nghĩa |
+|---|---|---|---|
+| `APP_KAFKA__ENABLED` | không | `false` | bật/tắt toàn bộ lớp này |
+| `APP_KAFKA__BOOTSTRAP_SERVERS` | **có** | `localhost:9092` | `host:port` ngăn bằng dấu phẩy |
+| `APP_KAFKA__CLIENT_ID` | không | `fastapi-modular` | tên hiện trong log/số đo của cụm |
+| `APP_KAFKA__ACKS` | không | `all` | `all` an toàn nhất \| `1` chỉ leader \| `0` bắn đi rồi thôi |
+| `APP_KAFKA__REQUEST_TIMEOUT_SECONDS` | không | `20.0` | trần cho một lần gửi/nhận |
+| `APP_KAFKA__CONNECT_TIMEOUT_SECONDS` | không | `10.0` | chờ lần nối đầu tiên |
+| `APP_KAFKA__RECONNECT_DELAY_SECONDS` | không | `1.0` | chờ trước lần nối lại đầu tiên |
+| `APP_KAFKA__MAX_RECONNECT_DELAY_SECONDS` | không | `30.0` | trần thời gian chờ |
+
+Chỉ cần liệt kê **vài** broker trong `BOOTSTRAP_SERVERS` — client tự tìm ra phần
+còn lại của cụm.
+
+### Số đo
 
 | Tên | Ý nghĩa |
 |---|---|
@@ -234,7 +261,7 @@ một topic khai sai không kéo các topic khác chết theo.
 
 ---
 
-## Chạy thử bằng Docker
+### Chạy thử bằng Docker
 
 ```bash
 docker run -d --name kafka-test -p 9094:9094 \

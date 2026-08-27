@@ -9,6 +9,21 @@ chạy thật hai chiều với `@nestjs/microservices` 11.2.1 — xem [mục cu
 
 ---
 
+## Bạn đang cần làm gì?
+
+| Việc bạn muốn làm | Đọc mục |
+|---|---|
+| "Từ NestJS sang, tôi quen `client.send`" | [Đối chiếu với NestJS](#đối-chiếu-với-nestjs) |
+| "Chạy thử một lượt gọi-trả lời ngay" | [Làm một lượt](#làm-một-lượt) |
+| "Gọi service khác và **chờ kết quả**" | [`send` — bên gọi](#send--bên-gọi) |
+| "Viết bên **trả lời**" | [`@rabbitmq_responder`](#rabbitmq_responder--bên-trả-lời) |
+| "Bắn đi rồi thôi, không cần trả lời" | [`publish` hay `emit`](#publish-hay-emit) |
+| "Dùng Redis / MQTT / Kafka thay RabbitMQ" | [Bốn hạ tầng khác nhau chỗ nào](#bốn-hạ-tầng-khác-nhau-chỗ-nào) |
+| "Nói chuyện với một service NestJS THẬT" | [Đối chứng với NestJS thật](#đối-chứng-với-nestjs-thật) |
+| "Chờ mãi không thấy trả lời" | [Số đo và chẩn đoán](#số-đo-và-chẩn-đoán) |
+
+---
+
 ## Đối chiếu với NestJS
 
 | NestJS | Ở đây |

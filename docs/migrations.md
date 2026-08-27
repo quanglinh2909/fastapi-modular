@@ -3,6 +3,18 @@
 Chỉ dùng cho **SQLite và PostgreSQL**. MongoDB không có schema cố định nên không
 cần migration — xem [mongodb.md](mongodb.md#khai-báo-entity).
 
+## Bạn đang cần làm gì?
+
+| Việc bạn muốn làm | Đọc mục |
+|---|---|
+| "Đổi schema mà không mất dữ liệu production" | [Luồng làm việc](#luồng-làm-việc) |
+| "`sync` tự lo rồi mà, cần gì cái này?" | [Vì sao cần](#vì-sao-cần-khi-đã-có-schema_modesync) |
+| "Ba lệnh là những lệnh nào" | [Ba lệnh dùng hằng ngày](#ba-lệnh-dùng-hằng-ngày) |
+| "Database có dữ liệu SẴN rồi, bắt đầu sao" | [Bắt đầu với database đã có sẵn dữ liệu](#bắt-đầu-với-database-đã-có-sẵn-dữ-liệu) |
+| "Đổi khoá ngoại / on_delete cho bảng cũ" | [database.md — Cascade dừng giữa chừng](database.md#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại) |
+
+---
+
 ## Vì sao cần, khi đã có `schema_mode=sync`
 
 `sync` thêm và xoá được cột, nhưng:
