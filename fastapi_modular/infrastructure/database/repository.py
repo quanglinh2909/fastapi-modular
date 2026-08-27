@@ -13,9 +13,12 @@ xuống SQL/Mongo (backend sẽ lấy dữ liệu về rồi mới lọc).
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, Generic, TypeVar
+
+from pydantic import BaseModel
 
 from fastapi_modular.core.clock import utcnow
 from fastapi_modular.core.config import Settings
@@ -163,6 +166,28 @@ class Database:
             yield handle
 
 
+def _as_dict(value: Any, *, vai_tro: str) -> dict[str, Any]:
+    """dict hoặc DTO pydantic -> dict. DTO thì chỉ lấy field client THỰC SỰ gửi.
+
+    `exclude_unset=True` là mấu chốt, giống hệt `apply_changes`: nó phân biệt
+    "không gửi field này" với "gửi field này = null". Thiếu nó thì PATCH đổi một
+    field sẽ ghi `None` đè lên mọi field còn lại — mất dữ liệu, và không ai báo.
+    """
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, BaseModel):
+        return value.model_dump(exclude_unset=True)
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        raise BadRequestError(
+            f"`update` nhận dict hoặc DTO pydantic làm {vai_tro}, không nhận entity. "
+            f"Đã có sẵn cả bản ghi thì dùng `save(obj)`."
+        )
+    raise BadRequestError(
+        f"`update` không hiểu {vai_tro} kiểu {type(value).__name__}. "
+        f"Truyền dict, hoặc DTO pydantic."
+    )
+
+
 @injectable
 class Repository(Generic[E]):
     """CRUD sẵn có cho một entity, bất kể backend nào bên dưới."""
@@ -243,8 +268,8 @@ class Repository(Generic[E]):
 
     async def update(
         self,
-        where: str | dict[str, Any],
-        changes: dict[str, Any] | None = None,
+        where: str | dict[str, Any] | BaseModel,
+        changes: dict[str, Any] | BaseModel | None = None,
         *,
         match: Callable[[E], bool] | None = None,
         **set_fields: Any,
@@ -268,10 +293,24 @@ class Repository(Generic[E]):
             await repo.update({"zone": "Tầng 1"}, status="off")   # theo cột khác
             await repo.update({"zone": "T1", "status": "on"}, threshold=0.9)
 
-        Giá trị cần ghi truyền bằng dict (tham số thứ hai) hay bằng kwargs đều
-        được; hai cách gộp lại nếu dùng cả hai. Thứ tự tham số lấy đúng của
-        TypeORM (`repo.update(criteria, partialEntity)`) cho người từ NestJS
-        sang đỡ phải nhớ thêm.
+        Giá trị cần ghi truyền bằng dict, bằng kwargs, hay **bằng thẳng DTO**
+        đều được; các cách gộp lại nếu dùng nhiều hơn một. Thứ tự tham số lấy
+        đúng của TypeORM (`repo.update(criteria, partialEntity)`) cho người từ
+        NestJS sang đỡ phải nhớ thêm.
+
+        DTO đi thẳng vào, không phải `model_dump()` nữa:
+
+            @patch("/{camera_id}")
+            async def update(self, camera_id: str, payload: CameraUpdate) -> int:
+                return await self._repo.update(camera_id, payload)
+
+        DTO được đọc bằng `exclude_unset=True`, y như `apply_changes`: chỉ field
+        client THỰC SỰ gửi lên mới được ghi. Đây là chỗ phải cẩn thận — dùng
+        `model_dump()` trần thì mọi field không gửi sẽ thành `None` và ghi đè
+        sạch dữ liệu cũ. Gửi `null` tường minh vẫn xoá được cột, vì `null` đã
+        gửi là đã "set".
+
+        `where` cũng nhận DTO, hợp với bộ lọc sinh bằng `partial_of(...)`.
 
         `updated_at` tự đóng dấu, y như `save()` — trừ khi bạn tự đặt nó.
 
@@ -290,8 +329,13 @@ class Repository(Generic[E]):
         `match=` lọc bằng Python nên phải đọc dòng về trước — dùng khi điều kiện
         không viết được bằng phép so bằng.
         """
-        filters = {"id": where} if isinstance(where, str) else dict(where)
-        values: dict[str, Any] = {**(changes or {}), **set_fields}
+        filters = (
+            {"id": where} if isinstance(where, str) else _as_dict(where, vai_tro="điều kiện")
+        )
+        values: dict[str, Any] = {
+            **(_as_dict(changes, vai_tro="giá trị") if changes is not None else {}),
+            **set_fields,
+        }
 
         if not filters and match is None:
             raise BadRequestError(
@@ -301,9 +345,14 @@ class Repository(Generic[E]):
                 f"`match=lambda _: True`."
             )
         if not values:
+            them = (
+                " DTO không có field nào được gửi lên — `exclude_unset` bỏ hết."
+                if isinstance(changes, BaseModel)
+                else ""
+            )
             raise BadRequestError(
-                f"`update` trên {self._entity.__name__} không có giá trị nào để ghi. "
-                f"Truyền `{{'ten_cot': gia_tri}}` hoặc `ten_cot=gia_tri`."
+                f"`update` trên {self._entity.__name__} không có giá trị nào để ghi."
+                f"{them} Truyền `{{'ten_cot': gia_tri}}` hoặc `ten_cot=gia_tri`."
             )
         if "updated_at" not in values and "updated_at" in mapping_for(self._entity).fields:
             # Đóng dấu ở đây chứ không ở service, cùng lý do với `save()`: mọi

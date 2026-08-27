@@ -16,8 +16,18 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
   await cameras.update({"zone": "Tầng 1"}, status="offline")  # theo cột khác, NHIỀU dòng
   ```
 
-  `where` nhận id (chuỗi) hoặc dict điều kiện so bằng trên bất kỳ trường nào;
-  giá trị truyền bằng dict hay kwargs đều được. Trả về **số dòng khớp**.
+  `where` nhận id (chuỗi), dict điều kiện so bằng trên bất kỳ trường nào, hoặc
+  DTO. Giá trị truyền bằng dict, kwargs, hay **thẳng DTO của PATCH**:
+
+  ```python
+  async def update(self, camera_id: str, payload: CameraUpdate) -> int:
+      return await self._repo.update(camera_id, payload)
+  ```
+
+  DTO đọc bằng `exclude_unset=True`, y như `apply_changes`: chỉ field client
+  THỰC SỰ gửi mới được ghi. `model_dump()` trần sẽ ghi `None` đè lên mọi cột
+  không gửi. Truyền entity thì bị từ chối, kèm lời chỉ đường sang `save(obj)`.
+  Trả về **số dòng khớp**.
   Thứ tự tham số lấy đúng của TypeORM (`repo.update(criteria, partialEntity)`).
 
   `updated_at` tự đóng dấu như `save()`. Ràng buộc vẫn được áp trên cả ba

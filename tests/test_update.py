@@ -19,11 +19,13 @@ from datetime import datetime
 from enum import Enum
 
 import pytest
+from pydantic import BaseModel
 
 from fastapi_modular import Entity, entity
 from fastapi_modular.core.clock import utcnow
 from fastapi_modular.core.config import DatabaseSettings
 from fastapi_modular.core.exceptions import BadRequestError
+from fastapi_modular.core.schemas import partial_of
 from fastapi_modular.infrastructure.database import Repository, reference
 from fastapi_modular.infrastructure.database.factory import create_backend
 
@@ -55,6 +57,16 @@ class UpCamera(Entity):
     zone_id: str | None = field(default=None, metadata=reference(UpZone, on_delete="SET NULL"))
     created_at: datetime = field(default_factory=utcnow)
     updated_at: datetime = field(default_factory=utcnow)
+
+
+class UpCameraBase(BaseModel):
+    name: str
+    zone: str
+    threshold: float
+
+
+class UpCameraUpdate(partial_of(UpCameraBase)):
+    """DTO PATCH: mọi field optional, đúng thứ `fam module` sinh ra."""
 
 
 class _Db:
@@ -180,6 +192,87 @@ async def test_ghi_None_vao_cot_cho_phep_trong(kho):
     cameras, _, _ = kho
     await cameras.update("c1", zone_id=None)
     assert (await cameras.get("c1")).zone_id is None
+
+
+# ---------------------------------------------------------------- truyền DTO
+async def test_truyen_thang_DTO(kho):
+    """Không phải `payload.model_dump()` nữa — DTO đi thẳng vào."""
+    cameras, _, _ = kho
+    assert await cameras.update("c1", UpCameraUpdate(name="Cổng chính")) == 1
+    assert (await cameras.get("c1")).name == "Cổng chính"
+
+
+async def test_DTO_chi_ghi_field_client_THUC_SU_gui(kho):
+    """Cái bẫy đắt nhất của PATCH, và là lý do dùng `exclude_unset`.
+
+    `model_dump()` trần trả về CẢ field client không gửi (giá trị `None` mặc
+    định của `partial_of`), nên PATCH đổi mỗi `name` sẽ ghi `None` đè lên
+    `zone` và `threshold` — mất dữ liệu, không ai báo.
+    """
+    cameras, _, _ = kho
+    truoc = await cameras.get("c1")
+
+    await cameras.update("c1", UpCameraUpdate(name="Chỉ đổi tên"))
+
+    sau = await cameras.get("c1")
+    assert sau.name == "Chỉ đổi tên"
+    assert sau.zone == truoc.zone, "field không gửi phải CÒN NGUYÊN"
+    assert sau.threshold == truoc.threshold
+
+
+async def test_DTO_gui_None_tuong_minh_thi_van_xoa_duoc_cot(kho):
+    """`exclude_unset` phân biệt "không gửi" với "gửi = null"."""
+    cameras, _, _ = kho
+    assert (await cameras.get("c1")).zone_id == "z1"
+
+    await cameras.update("c1", UpCameraUpdate(), zone_id=None)
+
+    assert (await cameras.get("c1")).zone_id is None
+
+
+async def test_DTO_gop_duoc_voi_kwargs(kho):
+    cameras, _, _ = kho
+    await cameras.update("c1", UpCameraUpdate(name="A"), zone="T9")
+    row = await cameras.get("c1")
+    assert (row.name, row.zone) == ("A", "T9")
+
+
+async def test_where_cung_nhan_DTO(kho):
+    """Hợp với bộ lọc sinh bằng `partial_of(...)`."""
+    cameras, _, _ = kho
+    assert await cameras.update(UpCameraUpdate(zone="T1"), status=UpStatus.ON) == 2
+
+
+async def test_where_la_DTO_bo_qua_field_khong_gui_KE_CA_khi_mac_dinh_khac_None(kho):
+    """`dict(model)` không thay được `model_dump(exclude_unset=True)`.
+
+    Hai cách chỉ trùng nhau khi mặc định là `None` — vì `active_filters` vốn đã
+    bỏ giá trị `None`. Mặc định khác `None` thì `dict(model)` biến nó thành một
+    điều kiện lọc mà client không hề gửi, và câu lệnh khớp 0 dòng.
+    """
+
+    class BoLoc(BaseModel):
+        zone: str = ""
+        name: str = "KHÔNG-AI-TÊN-THẾ"
+
+    cameras, _, _ = kho
+
+    assert await cameras.update(BoLoc(zone="T1"), threshold=0.8) == 2
+
+
+async def test_DTO_rong_bi_chan_va_noi_ro_vi_sao(kho):
+    """PATCH với body rỗng: chặn, và nói rõ là `exclude_unset` bỏ hết."""
+    cameras, _, _ = kho
+    with pytest.raises(BadRequestError, match="exclude_unset"):
+        await cameras.update("c1", UpCameraUpdate())
+
+
+async def test_truyen_entity_thi_chi_sang_save(kho):
+    """Đã có sẵn cả bản ghi thì `save(obj)` mới là đường đúng."""
+    cameras, _, _ = kho
+    row = await cameras.get("c1")
+    with pytest.raises(BadRequestError, match="save"):
+        await cameras.update("c1", row)
 
 
 # ------------------------------------------------------------------ updated_at

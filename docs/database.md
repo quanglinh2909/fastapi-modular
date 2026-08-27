@@ -19,6 +19,7 @@ builder, không có transaction, không có migration.
 | "Đọc/ghi dữ liệu trong service" | [Dùng Repository trong code](#dùng-repository-trong-code) |
 | "**Sửa một dòng mà không phải đọc nó về trước**" | [`update`](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
 | "**Sửa hàng loạt: mọi camera Tầng 1 thành offline**" | [`update`](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
+| "**Truyền thẳng DTO của PATCH vào để sửa**" | [`update`](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
 | "**Ghi 2 bảng, hỏng thì huỷ cả hai**" | [Transaction](#transaction--ghi-nhiều-bảng-thì-cùng-thành-công-hoặc-cùng-không) |
 | "Lọc lớn hơn, nhỏ hơn, NULL, nối bảng" | [Truy vấn phức tạp](#truy-vấn-phức-tạp--join-lớnbé-null) |
 | "**Điều kiện này HOẶC điều kiện kia**" | [`or_where`](#or-or_where-mở-nhánh-mới) |
@@ -971,7 +972,7 @@ class CameraService:
 | `count(**equals, match=)` | Đếm |
 | `exists(**equals, match=)` | Có hay không |
 | `save(obj)` | Upsert, tự sinh id nếu chưa có |
-| `update(where, changes, **set)` | **Sửa thẳng dưới database**, trả số dòng khớp — [xem dưới](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
+| `update(where, changes, **set)` | **Sửa thẳng dưới database** (nhận cả DTO), trả số dòng khớp — [xem dưới](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
 | `delete(id)` | Xoá một, trả `True/False` |
 | `delete_where(**equals, match=)` | Xoá nhiều, trả số bản ghi |
 | `query()` | Builder cho JOIN, lớn/bé, NULL — xem [mục dưới](#truy-vấn-phức-tạp--join-lớnbé-null) |
@@ -1008,6 +1009,31 @@ await cameras.update({"zone": "T1", "status": "online"}, threshold=0.9)
 
 Trả về **số dòng khớp** (`0` nghĩa là không có dòng nào thoả điều kiện).
 `updated_at` tự đóng dấu, y như `save()`.
+
+**DTO truyền thẳng vào được**, không phải `model_dump()` nữa — cả handler còn
+một dòng:
+
+```python
+@patch("/{camera_id}")
+async def update(self, camera_id: CameraId, payload: CameraUpdate) -> int:
+    return await self._service.update(camera_id, payload)
+
+# service:
+async def update(self, camera_id: str, payload: CameraUpdate) -> int:
+    return await self._repo.update(camera_id, payload)
+```
+
+DTO được đọc bằng `exclude_unset=True`, y như [`apply_changes`](#hai-quy-ước-dễ-vấp):
+**chỉ field client thực sự gửi lên mới được ghi**. Đây là chỗ đắt nhất của
+PATCH — `model_dump()` trần trả về cả field không gửi (giá trị `None` mặc định
+của `partial_of`), nên đổi mỗi `name` sẽ ghi `None` đè lên mọi cột còn lại. Gửi
+`null` tường minh thì vẫn xoá được cột, vì `null` đã gửi là đã "set".
+
+Trộn được cả ba cách trong một lời gọi: `update(id, dto, status="off")`.
+`where` cũng nhận DTO — hợp với bộ lọc sinh bằng `partial_of(...)`.
+
+Truyền **entity** vào thì bị từ chối, kèm lời chỉ đường: đã có sẵn cả bản ghi
+thì `save(obj)` mới đúng.
 
 Thứ tự tham số lấy đúng của TypeORM — `repo.update(criteria, partialEntity)` —
 nên người từ NestJS sang không phải nhớ thêm gì.

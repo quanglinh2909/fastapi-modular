@@ -34,7 +34,7 @@ public API, and this README, are in English. Start with
 | `@InjectRepository(X) repo: Repository<X>` | `repo: Repository[X]` |
 | `@Transaction()` / `queryRunner.startTransaction()` | `async with db.transaction():` — nested blocks become SAVEPOINTs |
 | `queryRunner.rollbackTransaction()` | automatic on exception; `await tx.rollback()` to bail out without raising |
-| `repo.update(criteria, partialEntity)` (TypeORM) | `repo.update("cam-01", status="off")` · `repo.update({"zone": "T1"}, status="off")` — writes straight to the database, no read first |
+| `repo.update(criteria, partialEntity)` (TypeORM) | `repo.update("cam-01", payload)` — takes the DTO directly, or `repo.update({"zone": "T1"}, status="off")` for many rows |
 | `repo.createQueryBuilder()` (TypeORM) | `repo.query().join(X).where(Event.score >= …)` — real SQL, `.sql()` to see it |
 | `Repository.find({where: {score: MoreThan(…)}})` (TypeORM) | `class Event(Entity)` then `.where(Event.score >= …)`, or `.where(score__gte=…)` |
 | `.groupBy().having()` (TypeORM) | `.group_by(Event.camera_id).select(n=count()).having(count() > 5)` |
@@ -442,7 +442,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              1122 tests that need no infrastructure, 335 more with real drivers/servers
+tests/              1130 tests that need no infrastructure, 351 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 
