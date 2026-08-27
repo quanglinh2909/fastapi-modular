@@ -124,7 +124,7 @@ class MemoryBackend(DatabaseBackend):
             raise
 
     def _select(self, entity: type, filters: Filters, match: Match) -> list[Any]:
-        active = active_filters(filters)
+        active = active_filters(filters, entity)
         return [o for o in self._table(entity).values() if matches(o, active, match)]
 
     async def get(self, entity: type[E], id_: str) -> E | None:

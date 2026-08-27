@@ -118,8 +118,8 @@ class MongoBackend(DatabaseBackend):
         assert self._client is not None, "backend chưa startup()"
         return self._client[self._database_name][mapping_for(entity).storage]
 
-    def _query(self, filters: Filters) -> dict[str, Any]:
-        query = active_filters(filters)
+    def _query(self, entity: type, filters: Filters) -> dict[str, Any]:
+        query = active_filters(filters, entity)
         if "id" in query:
             query["_id"] = query.pop("id")
         return query
@@ -138,7 +138,7 @@ class MongoBackend(DatabaseBackend):
         limit: int | None = None,
         offset: int = 0,
     ) -> list[E]:
-        cursor = self._collection(entity).find(self._query(filters))
+        cursor = self._collection(entity).find(self._query(entity, filters))
         if order_by:
             cursor = cursor.sort(order_by, 1)
 
@@ -168,7 +168,7 @@ class MongoBackend(DatabaseBackend):
     ) -> int:
         if match is not None:
             return len(await self.find(entity, filters=filters, match=match))
-        return await self._collection(entity).count_documents(self._query(filters))
+        return await self._collection(entity).count_documents(self._query(entity, filters))
 
     # -------------------------------------------------------------- builder
     def _check_supported(self, spec: Any) -> None:
@@ -328,7 +328,7 @@ class MongoBackend(DatabaseBackend):
                 removed += int(await self.delete(entity, obj.id))  # type: ignore[attr-defined]
             return removed
 
-        query = self._query(filters)
+        query = self._query(entity, filters)
         if mapping_for(entity).references or _co_con(entity):
             ids = [doc["_id"] async for doc in self._collection(entity).find(query, {"_id": 1})]
             await self._cascade(entity, ids)

@@ -429,6 +429,40 @@ nên chỉ dùng cho truy vấn đọc.
 
 ---
 
+## Injection: chỗ Mongo nguy hiểm hơn SQL
+
+Mongo không ghép câu lệnh bằng chuỗi nên không có "SQL injection" theo nghĩa
+quen thuộc. Nhưng nó có một cửa mà SQL không có: **một giá trị dạng dict được
+hiểu là TOÁN TỬ**.
+
+Đo trên MongoDB 7 thật, trước khi khung chặn:
+
+```python
+await repo.find(name="an", token={"$ne": ""})    # -> trả về bản ghi của người khác
+```
+
+Kẻ tấn công gửi JSON `{"name": "an", "token": {"$ne": ""}}` là qua được cửa
+đăng nhập, vì điều kiện `token` không còn là so bằng nữa. Cửa thứ hai còn nặng
+hơn: một **khoá** tên `$where` khiến Mongo chạy JavaScript ngay trên server.
+
+Cả hai giờ bị chặn ở tầng dùng chung, và ba backend từ chối giống hệt nhau:
+
+```
+Điều kiện 'token': giá trị chứa toán tử của database ($ne). Gần như luôn là dữ
+liệu người dùng gửi lên thẳng vào truy vấn — ép kiểu nó về str/int/bool trước.
+
+Camera không có trường '$where'. Có: created_at, fps, id, name, owner_id, …
+```
+
+**Cách chắc chắn nhất vẫn là ép kiểu ở cửa vào**: khai DTO bằng pydantic
+(`token: str`) thì một dict không bao giờ tới được truy vấn.
+
+`like`/`ilike` dịch sang `$regex` và **escape mọi ký tự đặc biệt của regex**,
+nên mẫu người dùng nhập không thành biểu thức. Riêng `%` vẫn là ký tự đại diện
+của LIKE — người dùng gõ `%` sẽ quét cả collection.
+
+---
+
 ## Lưu ý
 
 **`datetime` đọc ra luôn có `tzinfo` UTC.** Mongo lưu datetime không kèm múi

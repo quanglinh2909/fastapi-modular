@@ -557,8 +557,8 @@ class SqlBackend(DatabaseBackend):
             _open_transaction.reset(token)
             await conn.close()
 
-    def _where(self, table: Table, filters: Filters) -> list[Any]:
-        return [table.c[k] == v for k, v in active_filters(filters).items() if k in table.c]
+    def _where(self, entity: type, table: Table, filters: Filters) -> list[Any]:
+        return [table.c[k] == v for k, v in active_filters(filters, entity).items()]
 
     def _row_to_entity(self, entity: type[E], row: Any) -> E:
         return from_document(entity, dict(row._mapping))
@@ -581,7 +581,7 @@ class SqlBackend(DatabaseBackend):
         offset: int = 0,
     ) -> list[E]:
         table = self._table(entity)
-        stmt = select(table).where(*self._where(table, filters))
+        stmt = select(table).where(*self._where(entity, table, filters))
         if order_by and order_by in table.c:
             stmt = stmt.order_by(table.c[order_by])
 
@@ -615,7 +615,7 @@ class SqlBackend(DatabaseBackend):
         if match is not None:
             return len(await self.find(entity, filters=filters, match=match))
         table = self._table(entity)
-        stmt = select(func.count()).select_from(table).where(*self._where(table, filters))
+        stmt = select(func.count()).select_from(table).where(*self._where(entity, table, filters))
         async with self._conn() as conn:
             return int((await conn.execute(stmt)).scalar_one())
 
@@ -836,5 +836,5 @@ class SqlBackend(DatabaseBackend):
 
         table = self._table(entity)
         async with self._conn() as conn:
-            result = await conn.execute(sql_delete(table).where(*self._where(table, filters)))
+            result = await conn.execute(sql_delete(table).where(*self._where(entity, table, filters)))
         return int(result.rowcount)

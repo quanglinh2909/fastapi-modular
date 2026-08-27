@@ -57,7 +57,7 @@ from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from fastapi_modular.core.exceptions import BadRequestError
-from fastapi_modular.infrastructure.database.base import mapping_for
+from fastapi_modular.infrastructure.database.base import check_value, mapping_for
 
 if TYPE_CHECKING:
     from fastapi_modular.infrastructure.database.repository import Database
@@ -335,6 +335,8 @@ class Compare(Condition):
             raise BadRequestError(
                 f"Toán tử {self.op!r} không có. Có: {', '.join(sorted(OPERATORS))}"
             )
+        if not isinstance(self.value, Column):
+            check_value(self.value, f"Điều kiện trên {self.column!r}")
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

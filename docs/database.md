@@ -32,6 +32,7 @@ builder, không có transaction, không có migration.
 | "**Giữ đủ cột, thêm một cột của bảng đã join**" | [`select(add=…)`](#chọn-cột-trả-về) |
 | "Chỉ lấy dòng có cột này để trống" | [`is_null`](#like-in-is-null-between--bảy-toán-tử-không-có-ký-hiệu) |
 | "Tìm theo tên gần đúng" | [`like` / `ilike`](#like-in-is-null-between--bảy-toán-tử-không-có-ký-hiệu) |
+| "**Có chống được SQL injection không**" | [Injection](#injection-cái-gì-được-chặn-chặn-ở-đâu) |
 | "Chọn database nào" | [Cách chọn driver](#cách-chọn-driver) |
 | "Tôi đang dùng MongoDB" | [mongodb.md](mongodb.md) |
 | "Thêm/xoá trường mà không mất dữ liệu" | [Tự chỉnh schema](#tự-chỉnh-schema-thêm--xoá-trường) |
@@ -957,6 +958,58 @@ if zone:
     query = query.where(camera__zone=zone)
 return await query.order_by_desc("created_at").limit(20).all()
 ```
+
+### Injection: cái gì được chặn, chặn ở đâu
+
+**Giá trị luôn là tham số buộc, không bao giờ nối chuỗi.** Kiểm được, không
+phải tin lời:
+
+```python
+spec = repo.query().where(Event.label == "'; DROP TABLE events; --")._spec
+print(backend._compile(spec).compile(backend._engine))
+# WHERE events.label = ?          <- placeholder
+# params: {"label_1": "'; DROP TABLE events; --"}
+```
+
+**Tên cột, tên bảng, toán tử không đến từ chuỗi tự do.** Cột phải có trong
+entity, toán tử phải nằm trong danh sách — sai thì báo lỗi kèm tên đúng:
+
+```python
+.select("name FROM events; DROP TABLE events; --")   # -> Event không có trường đó
+.where(**{"score__gte; DROP TABLE": 1})              # -> 'gte; DROP TABLE' không phải toán tử
+.order_by_asc("name; DROP TABLE events")             # -> Event không có trường đó
+```
+
+`alias=` đi vào câu lệnh dưới dạng định danh có đóng ngoặc kép, dấu nháy bên
+trong bị nhân đôi.
+
+**Điều kiện lọc mang toán tử của database bị từ chối.** Đây không phải chuyện
+lý thuyết — đo trên MongoDB thật, `find(name="an", token={"$ne": ""})` **qua
+được cửa đăng nhập** vì `{"$ne": ""}` không được so bằng mà thành toán tử. Kẻ
+tấn công chỉ cần gửi JSON `{"token": {"$ne": ""}}`. Giờ cả ba backend cùng từ
+chối:
+
+```
+Điều kiện 'token': giá trị chứa toán tử của database ($ne). Gần như luôn là dữ
+liệu người dùng gửi lên thẳng vào truy vấn — ép kiểu nó về str/int/bool trước
+(pydantic làm sẵn việc này).
+```
+
+**Tên cột lạ bị từ chối, không bị bỏ qua.** Bỏ qua nghe hiền nhưng nguy hiểm
+ngang injection: đo được `find(**{"$where": "1 == 1"})` trên SQL trả về **toàn
+bộ bảng** (bộ lọc biến mất), còn trên Mongo thì **chạy JavaScript** ngay trên
+server. Cả hai giờ đều báo lỗi.
+
+**Ba điều bạn vẫn phải tự làm:**
+
+- **`.sql()` là để ĐỌC, không phải để chạy.** Nó nhúng giá trị thẳng vào chuỗi
+  cho dễ nhìn. Đừng đem chuỗi đó đi `execute`.
+- **Mẫu `like` do người dùng nhập nên được rào.** Nó không thoát ra ngoài truy
+  vấn, nhưng `%` là ký tự đại diện: người dùng gõ `%` sẽ quét cả bảng. Muốn tìm
+  đúng chữ `%` thì `\%`.
+- **Đừng nhận tên cột từ client** (kiểu `?sort=<tên cột>`). Khung chặn tên
+  không có thật, nhưng cột có thật mà bạn không muốn lộ thì nó vẫn cho — hãy
+  ánh xạ qua một danh sách trắng.
 
 ### Xem câu SQL sinh ra
 

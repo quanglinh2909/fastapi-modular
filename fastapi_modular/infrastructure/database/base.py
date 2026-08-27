@@ -284,9 +284,52 @@ def matches(obj: Any, filters: Filters, match: Match) -> bool:
     return match is None or match(obj)
 
 
-def active_filters(filters: Filters) -> Filters:
-    """Bỏ mọi điều kiện có giá trị None (quy ước: None = không lọc)."""
-    return {k: v for k, v in filters.items() if v is not None}
+def check_value(value: Any, where: str = "điều kiện") -> Any:
+    """Chặn giá trị mang toán tử của MongoDB. Trả lại chính nó nếu sạch.
+
+    Ở MongoDB, một giá trị dạng `{"$ne": ""}` KHÔNG được so bằng — nó thành
+    toán tử, và điều kiện coi như bị bỏ. Đo được: `find(name="an",
+    token={"$ne": ""})` trả về bản ghi của người khác, tức là qua được cửa đăng
+    nhập. Kẻ tấn công chỉ cần gửi JSON `{"token": {"$ne": ""}}`.
+
+    Chặn ở tầng dùng chung để ba backend cùng từ chối một kiểu, thay vì
+    postgres ném lỗi driver khó hiểu còn mongo thì lặng lẽ cho qua.
+    """
+    if isinstance(value, dict):
+        toan_tu = [k for k in value if isinstance(k, str) and k.startswith("$")]
+        if toan_tu:
+            raise BadRequestError(
+                f"{where}: giá trị chứa toán tử của database ({', '.join(toan_tu)}). "
+                "Gần như luôn là dữ liệu người dùng gửi lên thẳng vào truy vấn — "
+                "ép kiểu nó về str/int/bool trước (pydantic làm sẵn việc này)."
+            )
+    elif isinstance(value, (list, tuple, set)):
+        for item in value:
+            check_value(item, where)
+    return value
+
+
+def active_filters(filters: Filters, entity: type | None = None) -> Filters:
+    """Bỏ điều kiện có giá trị None (quy ước: None = không lọc), và soi tên cột.
+
+    Tên cột lạ bị TỪ CHỐI chứ không bỏ qua. Bỏ qua nghe có vẻ hiền, nhưng đo
+    được: `find(**{"$where": "1 == 1"})` trên SQL trả về TOÀN BỘ bảng (bộ lọc
+    biến mất) còn trên Mongo thì chạy JavaScript ngay trên server. Cùng một
+    hàm mà một bên lộ dữ liệu, một bên chạy mã lạ.
+    """
+    sach = {k: v for k, v in filters.items() if v is not None}
+    if entity is None:
+        return sach
+
+    known = mapping_for(entity).fields
+    for name, value in sach.items():
+        if name not in known:
+            raise BadRequestError(
+                f"{entity.__name__} không có trường {name!r}. "
+                f"Có: {', '.join(sorted(known))}"
+            )
+        check_value(value, f"Điều kiện {name!r}")
+    return sach
 
 
 class RollbackRequested(Exception):
