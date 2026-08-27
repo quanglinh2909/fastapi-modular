@@ -350,6 +350,37 @@ class MongoBackend(DatabaseBackend):
         result = await self._collection(entity).delete_one({"_id": id_})
         return result.deleted_count > 0
 
+    async def update_where(
+        self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None
+    ) -> int:
+        """`update_many` với `$set`.
+
+        Đếm bằng `matched_count` chứ KHÔNG phải `modified_count`: ghi đúng giá
+        trị đang có thì Mongo coi là không sửa gì và trả 0, trong khi SQL vẫn
+        đếm dòng đã khớp. Lấy `matched_count` để ba backend cho cùng con số.
+        """
+        if match is not None:
+            ids = [obj.id for obj in await self.find(entity, filters=filters, match=match)]  # type: ignore[attr-defined]
+            if not ids:
+                return 0
+            query = {"_id": {"$in": ids}}
+        else:
+            query = self._query(entity, filters)
+
+        # Giá trị đã qua `bind_value` ở Repository (Enum -> .value), tức đúng
+        # thứ `to_document` làm lúc save. Không cần đổi gì thêm.
+        doc = dict(changes)
+        for column, ref in mapping_for(entity).references:
+            if doc.get(column) is not None:
+                cha = await self._collection(ref.target).find_one({"_id": doc[column]}, {"_id": 1})
+                if cha is None:
+                    raise ConflictError(
+                        f"{entity.__name__}.{column} = {doc[column]!r} nhưng không có "
+                        f"{ref.target.__name__} nào mang id đó."
+                    )
+        result = await self._collection(entity).update_many(query, {"$set": doc})
+        return int(result.matched_count)
+
     async def delete_where(
         self, entity: type[E], *, filters: Filters, match: Match = None
     ) -> int:

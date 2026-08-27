@@ -276,6 +276,38 @@ def from_document(entity: type[E], doc: dict[str, Any]) -> E:
     return entity(**kwargs)  # type: ignore[call-arg]
 
 
+def check_changes(entity: type, changes: Filters) -> dict[str, Any]:
+    """Soi bộ giá trị sắp ghi đè: cột phải có thật, và không được đụng `id`.
+
+    Cùng lý do với `active_filters`: gõ sai tên cột mà im lặng bỏ qua thì câu
+    lệnh chạy xong, trả về "đã sửa N dòng", và không sửa gì cả.
+
+    `id` bị chặn riêng: nó là danh tính của bản ghi và là thứ mọi khoá ngoại
+    đang trỏ tới. Đổi nó bằng một lệnh UPDATE hàng loạt là cách nhanh nhất để
+    có một đống bản ghi con mồ côi.
+    """
+    if not changes:
+        raise BadRequestError(
+            f"`update` trên {entity.__name__} không có giá trị nào để ghi. "
+            f"Truyền `{{'ten_cot': gia_tri}}` hoặc `ten_cot=gia_tri`."
+        )
+    known = mapping_for(entity).fields
+    for name, value in changes.items():
+        if name == "id":
+            raise BadRequestError(
+                f"Không đổi được `id` của {entity.__name__} bằng `update`: nó là "
+                f"danh tính của bản ghi, và khoá ngoại của bảng khác đang trỏ vào. "
+                f"Cần đổi thật thì tạo bản ghi mới rồi chuyển các bản ghi con sang."
+            )
+        if name not in known:
+            raise BadRequestError(
+                f"{entity.__name__} không có trường {name!r}. "
+                f"Có: {', '.join(sorted(known))}"
+            )
+        check_value(value, f"Giá trị của {name!r}")
+    return {name: bind_value(value) for name, value in changes.items()}
+
+
 def bind_value(value: Any) -> Any:
     """Giá trị đem đi so sánh — Enum quy về `.value`, danh sách quy từng phần tử.
 
@@ -466,4 +498,7 @@ class DatabaseBackend(Protocol):
     async def delete(self, entity: type[E], id_: str) -> bool: ...
     async def delete_where(
         self, entity: type[E], *, filters: Filters, match: Match = None
+    ) -> int: ...
+    async def update_where(
+        self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None
     ) -> int: ...

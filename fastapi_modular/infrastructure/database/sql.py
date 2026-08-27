@@ -927,3 +927,29 @@ class SqlBackend(DatabaseBackend):
         async with self._conn() as conn:
             result = await conn.execute(sql_delete(table).where(*self._where(entity, table, filters)))
         return int(result.rowcount)
+
+    async def update_where(
+        self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None
+    ) -> int:
+        """MỘT câu `UPDATE ... WHERE`, không đọc dòng nào về trước.
+
+        Đây là điểm khác biệt với vòng `get` -> sửa -> `save`: sửa 10.000 dòng
+        chỉ tốn một lượt đi database, và không có khe hở giữa lúc đọc và lúc
+        ghi để ai đó chen vào.
+
+        `match=` là hàm Python nên không dịch được sang SQL: khi có nó thì phải
+        đọc về, lọc, rồi sửa theo danh sách id — chậm hơn, nhưng vẫn là một câu
+        UPDATE chứ không phải mỗi dòng một câu.
+        """
+        table = self._table(entity)
+        if match is not None:
+            ids = [obj.id for obj in await self.find(entity, filters=filters, match=match)]  # type: ignore[attr-defined]
+            if not ids:
+                return 0
+            where = [table.c.id.in_(ids)]
+        else:
+            where = self._where(entity, table, filters)
+
+        async with self._conn() as conn:
+            result = await conn.execute(sql_update(table).where(*where).values(**changes))
+        return int(result.rowcount)

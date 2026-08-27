@@ -17,6 +17,8 @@ builder, không có transaction, không có migration.
 | "Còn hoá đơn thì KHÔNG cho xoá khách hàng" | [`RESTRICT`](#restrict--chặn-không-cho-xoá) |
 | "**Xoá cha mà cháu vẫn còn**" | [Cascade dừng giữa chừng](#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại) |
 | "Đọc/ghi dữ liệu trong service" | [Dùng Repository trong code](#dùng-repository-trong-code) |
+| "**Sửa một dòng mà không phải đọc nó về trước**" | [`update`](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
+| "**Sửa hàng loạt: mọi camera Tầng 1 thành offline**" | [`update`](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
 | "**Ghi 2 bảng, hỏng thì huỷ cả hai**" | [Transaction](#transaction--ghi-nhiều-bảng-thì-cùng-thành-công-hoặc-cùng-không) |
 | "Lọc lớn hơn, nhỏ hơn, NULL, nối bảng" | [Truy vấn phức tạp](#truy-vấn-phức-tạp--join-lớnbé-null) |
 | "**Điều kiện này HOẶC điều kiện kia**" | [`or_where`](#or-or_where-mở-nhánh-mới) |
@@ -969,9 +971,69 @@ class CameraService:
 | `count(**equals, match=)` | Đếm |
 | `exists(**equals, match=)` | Có hay không |
 | `save(obj)` | Upsert, tự sinh id nếu chưa có |
+| `update(where, changes, **set)` | **Sửa thẳng dưới database**, trả số dòng khớp — [xem dưới](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
 | `delete(id)` | Xoá một, trả `True/False` |
 | `delete_where(**equals, match=)` | Xoá nhiều, trả số bản ghi |
 | `query()` | Builder cho JOIN, lớn/bé, NULL — xem [mục dưới](#truy-vấn-phức-tạp--join-lớnbé-null) |
+
+### Sửa dữ liệu không cần đọc về trước
+
+Vòng ba bước quen thuộc — đọc, sửa, ghi — tốn **hai** lượt đi database:
+
+```python
+item = await self._repo.get(camera_id)
+item.status = "offline"
+await self._repo.save(item)
+```
+
+`update()` làm cùng việc đó bằng **một** câu lệnh:
+
+```python
+await self._repo.update(camera_id, status="offline")
+```
+
+Điều kiện là **id, hoặc bất kỳ trường nào khác** — và khi đó nó sửa **mọi dòng
+khớp**:
+
+```python
+# theo id
+await cameras.update("cam-01", {"name": "Cổng chính"})
+
+# theo cột khác: mọi camera ở Tầng 1 chuyển sang offline
+so_dong = await cameras.update({"zone": "Tầng 1"}, status="offline")
+
+# nhiều điều kiện = AND; giá trị viết bằng dict hay kwargs đều được
+await cameras.update({"zone": "T1", "status": "online"}, threshold=0.9)
+```
+
+Trả về **số dòng khớp** (`0` nghĩa là không có dòng nào thoả điều kiện).
+`updated_at` tự đóng dấu, y như `save()`.
+
+Thứ tự tham số lấy đúng của TypeORM — `repo.update(criteria, partialEntity)` —
+nên người từ NestJS sang không phải nhớ thêm gì.
+
+**Nó chỉ GHI ĐÈ, không đọc giá trị cũ.** Cần tính từ giá trị đang có
+(`so_lan = so_lan + 1`) thì đây không phải chỗ: đọc rồi ghi trong
+`async with db.transaction():`, hoặc dùng [`RedisClient.incr`](redis.md#khoá--giá-trị)
+nếu chỉ là bộ đếm.
+
+**`where` rỗng bị chặn.** `update({}, ...)` gần như luôn là biến rỗng do lỗi
+lập trình chứ không phải ý định sửa cả bảng — cố ý thì nói rõ:
+
+```python
+await cameras.update({}, zone="X", match=lambda _: True)
+```
+
+**Không đổi được `id`.** Nó là danh tính bản ghi và là thứ khoá ngoại của bảng
+khác đang trỏ tới; muốn đổi thật thì tạo bản ghi mới rồi chuyển các bản ghi con
+sang.
+
+**Ràng buộc vẫn được áp.** Sửa một cột khoá ngoại sang giá trị không tồn tại,
+hay làm trùng một cột `unique`, đều bị từ chối (409) — trên cả ba backend.
+
+**Điều kiện chỉ so BẰNG.** Cần `>=`, `LIKE`, `IN` thì lọc bằng
+[`query()`](#truy-vấn-phức-tạp--join-lớnbé-null) rồi `update` theo id, hoặc
+truyền `match=` (lọc bằng Python, phải đọc dòng về trước nên chậm hơn).
 
 ### Hai quy ước dễ vấp
 

@@ -20,12 +20,15 @@ from typing import Any, Generic, TypeVar
 from fastapi_modular.core.clock import utcnow
 from fastapi_modular.core.config import Settings
 from fastapi_modular.core.container import injectable
+from fastapi_modular.core.exceptions import BadRequestError
 from fastapi_modular.core.logging import get_logger
 from fastapi_modular.core.providers import CapabilityNotSupportedError
 from fastapi_modular.infrastructure.database.base import (
     DatabaseBackend,
     Transaction,
+    check_changes,
     is_transient_error,
+    mapping_for,
 )
 from fastapi_modular.infrastructure.database.factory import create_backend
 from fastapi_modular.infrastructure.database.query import Query
@@ -237,6 +240,82 @@ class Repository(Generic[E]):
             created = getattr(obj, "created_at", None)
             obj.updated_at = created if (is_new and created is not None) else utcnow()  # type: ignore[attr-defined]
         return await self._backend.save(self._entity, obj)
+
+    async def update(
+        self,
+        where: str | dict[str, Any],
+        changes: dict[str, Any] | None = None,
+        *,
+        match: Callable[[E], bool] | None = None,
+        **set_fields: Any,
+    ) -> int:
+        """Sửa thẳng dưới database, KHÔNG đọc bản ghi về trước. Trả về số dòng khớp.
+
+        Thay cho vòng ba bước quen thuộc:
+
+            item = await repo.get(camera_id)        # 1 lượt đi database
+            item.status = "offline"
+            await repo.save(item)                   # 1 lượt nữa
+
+        chỉ còn một dòng, và một lượt đi database:
+
+            await repo.update(camera_id, status="offline")
+
+        `where` nhận **id** (chuỗi) hoặc **dict điều kiện** — so bằng, trên bất
+        kỳ trường nào, và sửa MỌI dòng khớp:
+
+            await repo.update("cam-01", {"name": "Cổng chính"})   # theo id
+            await repo.update({"zone": "Tầng 1"}, status="off")   # theo cột khác
+            await repo.update({"zone": "T1", "status": "on"}, threshold=0.9)
+
+        Giá trị cần ghi truyền bằng dict (tham số thứ hai) hay bằng kwargs đều
+        được; hai cách gộp lại nếu dùng cả hai. Thứ tự tham số lấy đúng của
+        TypeORM (`repo.update(criteria, partialEntity)`) cho người từ NestJS
+        sang đỡ phải nhớ thêm.
+
+        `updated_at` tự đóng dấu, y như `save()` — trừ khi bạn tự đặt nó.
+
+        Ba điều phải biết:
+
+        - **Không đọc về nên không chạy được logic trong Python.** Cần đọc giá
+          trị cũ để tính giá trị mới (`so_lan += 1`) thì đây không phải chỗ:
+          `update` chỉ GHI ĐÈ. Tăng giảm nguyên tử chưa có, dùng `.query()` với
+          `db.transaction()`.
+        - **Không đổi được `id`** — nó là danh tính bản ghi và là thứ khoá ngoại
+          của bảng khác đang trỏ tới.
+        - **`where` rỗng bị chặn**, vì gần như luôn là lỗi lập trình chứ không
+          phải ý định sửa cả bảng. Thật sự muốn sửa hết thì nói rõ:
+          `match=lambda _: True`.
+
+        `match=` lọc bằng Python nên phải đọc dòng về trước — dùng khi điều kiện
+        không viết được bằng phép so bằng.
+        """
+        filters = {"id": where} if isinstance(where, str) else dict(where)
+        values: dict[str, Any] = {**(changes or {}), **set_fields}
+
+        if not filters and match is None:
+            raise BadRequestError(
+                f"`update` trên {self._entity.__name__} không có điều kiện nào — "
+                f"câu lệnh này sẽ sửa MỌI dòng. Truyền id, hoặc "
+                f"`{{'ten_cot': gia_tri}}`. Cố ý sửa cả bảng thì nói rõ bằng "
+                f"`match=lambda _: True`."
+            )
+        if not values:
+            raise BadRequestError(
+                f"`update` trên {self._entity.__name__} không có giá trị nào để ghi. "
+                f"Truyền `{{'ten_cot': gia_tri}}` hoặc `ten_cot=gia_tri`."
+            )
+        if "updated_at" not in values and "updated_at" in mapping_for(self._entity).fields:
+            # Đóng dấu ở đây chứ không ở service, cùng lý do với `save()`: mọi
+            # đường ghi đều đi qua repository nên không có chỗ nào quên.
+            values["updated_at"] = utcnow()
+
+        return await self._backend.update_where(
+            self._entity,
+            filters=filters,
+            changes=check_changes(self._entity, values),
+            match=match,
+        )
 
     async def delete(self, id_: str) -> bool:
         return await self._backend.delete(self._entity, id_)

@@ -5,6 +5,34 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 
 ## [Chưa phát hành]
 
+### Thêm
+
+- **`repo.update(where, changes)`** — sửa thẳng dưới database, không phải đọc
+  bản ghi về trước. Thay vòng ba bước `get` -> sửa -> `save` (hai lượt đi
+  database) bằng một câu lệnh:
+
+  ```python
+  await cameras.update("cam-01", status="offline")            # theo id
+  await cameras.update({"zone": "Tầng 1"}, status="offline")  # theo cột khác, NHIỀU dòng
+  ```
+
+  `where` nhận id (chuỗi) hoặc dict điều kiện so bằng trên bất kỳ trường nào;
+  giá trị truyền bằng dict hay kwargs đều được. Trả về **số dòng khớp**.
+  Thứ tự tham số lấy đúng của TypeORM (`repo.update(criteria, partialEntity)`).
+
+  `updated_at` tự đóng dấu như `save()`. Ràng buộc vẫn được áp trên cả ba
+  backend: khoá ngoại trỏ tới cha không tồn tại, hay làm trùng cột `unique`,
+  đều bị từ chối.
+
+  Ba thứ bị chặn có chủ đích: đổi `id` (khoá ngoại của bảng khác đang trỏ vào),
+  `where` rỗng (gần như luôn là biến rỗng do lỗi lập trình — cố ý sửa cả bảng
+  thì nói rõ bằng `match=lambda _: True`), và cột không có thật (gõ sai mà im
+  lặng bỏ qua thì câu lệnh báo "đã sửa N dòng" nhưng không sửa gì).
+
+  Trên MongoDB đếm bằng `matched_count` chứ không phải `modified_count`: ghi
+  đúng giá trị đang có thì Mongo coi là không sửa gì và trả 0, trong khi SQL vẫn
+  đếm dòng đã khớp. Đo trên Mongo thật để chắc: `matched=1, modified=0`.
+
 ## [0.3.1] — 2026-08-27
 
 ### Sửa
