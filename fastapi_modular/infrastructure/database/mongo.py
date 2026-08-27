@@ -266,11 +266,40 @@ class MongoBackend(DatabaseBackend):
         yield       # pragma: no cover - để hàm này vẫn là async generator
 
     async def save(self, entity: type[E], obj: E) -> E:
+        await self._check_references(entity, obj)
         if not getattr(obj, "id", None):
             obj.id = uuid.uuid4().hex  # type: ignore[attr-defined]
         doc = _to_mongo(to_document(obj))
         await self._collection(entity).replace_one({"_id": doc["_id"]}, doc, upsert=True)
         return obj
+
+    async def _check_references(self, entity: type, obj: Any) -> None:
+        """Cha phải có thật — MongoDB không tự kiểm, nên khung kiểm.
+
+        Cùng lý do với `_cascade`: nếu ở đây cho ghi thoải mái thì `fam test`
+        (chạy trên memory, có kiểm) xanh, còn Mongo lặng lẽ nhận một
+        `camera_id` không trỏ tới đâu — và chỗ dữ liệu rác đó chỉ lộ ra khi có
+        người join.
+
+        Giá phải trả: mỗi khoá ngoại KHÁC NULL tốn thêm một lượt tìm theo
+        `_id`. Đo ba lần trên container local, 400 lượt ghi mỗi lần: không khoá
+        ngoại 0,21-0,46 ms/ghi, một khoá ngoại 0,61-0,75 ms/ghi — tức là xấp xỉ
+        gấp đôi. Cần tốc độ hơn ràng buộc thì bỏ `reference(...)` khỏi cột đó,
+        khi ấy khung cũng thôi cascade luôn.
+
+        Đây KHÔNG phải ràng buộc thật: giữa lúc kiểm và lúc ghi vẫn có kẽ hở,
+        và cha có thể bị xoá ngay sau đó. Cần bảo đảm thật thì dùng SQL.
+        """
+        for column, ref in mapping_for(entity).references:
+            value = getattr(obj, column, None)
+            if value is None:                      # NULL nghĩa là "chưa gắn", hợp lệ
+                continue
+            cha = await self._collection(ref.target).find_one({"_id": value}, {"_id": 1})
+            if cha is None:
+                raise ConflictError(
+                    f"{entity.__name__}.{column} = {value!r} nhưng không có "
+                    f"{ref.target.__name__} nào mang id đó."
+                )
 
     # ------------------------------------------------------------ khoá ngoại
     async def _cascade(self, parent: type, ids: list[str]) -> None:

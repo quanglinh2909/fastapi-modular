@@ -363,13 +363,18 @@ Xoá camera thì mọi `Event` của nó biến mất theo, đúng như bên SQL
 `on_delete` (`CASCADE`, `SET NULL`, `SET DEFAULT`, `RESTRICT`) đều có — chi tiết
 từng cái ở [database.md](database.md#khoá-ngoại-nối-hai-bảng-với-nhau).
 
+Chuỗi đi **hết bao nhiêu tầng cũng được**: camera → camera_log → item_log, tầng
+nào cũng khai `CASCADE` thì xoá camera là cả ba tầng sạch. Ở đây khung không
+phụ thuộc vào schema trong database, nên nó không dính cái bẫy "bảng cũ chưa
+biết khoá ngoại" của [bên SQL](database.md#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại).
+
 **Nhưng ai áp ràng buộc mới là chỗ khác nhau:**
 
 | | postgres / sqlite | mongodb |
 |---|---|---|
 | Ai áp | chính database | **khung, bằng nhiều lệnh nối nhau** |
 | Nguyên tử | có, trong cùng transaction | **không** |
-| Ghi con trỏ tới cha không tồn tại | database chặn | **không chặn** |
+| Ghi con trỏ tới cha không tồn tại | database chặn | khung chặn, **nhưng có kẽ hở** |
 
 Hai hệ quả phải biết trước:
 
@@ -377,10 +382,16 @@ Hai hệ quả phải biết trước:
 xoá sự kiện trước rồi mới xoá camera. Tiến trình chết giữa chừng thì sự kiện đã
 mất mà camera vẫn còn.
 
-**Ghi rác không bị chặn.** `Event(camera_id="khong-co-that")` ghi được bình
-thường trên Mongo, trong khi SQL và backend `memory` đều từ chối bằng lỗi 409.
-Tức `fam test` xanh không có nghĩa là dữ liệu sạch trên Mongo — muốn chắc thì
-tự kiểm trong service trước khi ghi.
+**Phép kiểm lúc ghi không phải ràng buộc thật.** `Event(camera_id="khong-co-that")`
+bị từ chối bằng lỗi 409, giống SQL và backend `memory` — khung tìm cha trước khi
+ghi. Nhưng giữa lúc tìm và lúc ghi vẫn có kẽ hở: cha bị xoá đúng khoảnh khắc đó
+thì con vẫn lọt. SQL không có kẽ hở này vì database áp trong cùng transaction.
+
+Giá phải trả: **mỗi khoá ngoại khác `None` tốn thêm một lượt tìm theo `_id`**.
+Đo ba lần trên container local, 400 lượt ghi mỗi lần: không khoá ngoại
+0,21–0,46 ms/ghi, một khoá ngoại 0,61–0,75 ms/ghi — xấp xỉ gấp đôi. Cần tốc độ
+hơn ràng buộc thì bỏ `reference(...)` khỏi cột đó, nhưng khi ấy khung cũng thôi
+cascade luôn.
 
 ---
 
@@ -490,7 +501,7 @@ primary mới cần chừng đó thời gian.
 | `CapabilityNotSupportedError` khi vào `db.transaction()` | Mongo một node không có transaction đa-document |
 | `db.index_failed` lúc khởi động | dữ liệu cũ đã trùng, `unique` không tạo được — dọn document trùng rồi khởi động lại |
 | Không thấy `db.indexes_ready` | file entity chưa nằm trong `src/api/<module>/entities/` |
-| Ghi được bản ghi con trỏ tới cha không tồn tại | Mongo không có khoá ngoại thật; khung chỉ dọn lúc XOÁ |
+| `409` khi ghi con: "không có Camera nào mang id đó" | đúng như SQL — ghi cha trước, hoặc để cột đó `None` |
 | `/health/ready` trả `database: false` | sai DSN, hoặc server chưa lên — xem log `db.unreachable_at_startup` |
 | Xoá cha xong con vẫn còn | tiến trình chết giữa chừng lúc dọn; chạy lại lệnh xoá |
 | `ServerSelectionTimeoutError` | không tới được server: sai host/cổng, hoặc firewall |

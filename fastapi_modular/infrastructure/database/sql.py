@@ -97,6 +97,17 @@ _open_transaction: ContextVar[AsyncConnection | None] = ContextVar(
 )
 
 
+def _on_delete_group(action: str | None) -> str:
+    """Gom `on_delete` theo HÀNH VI, để so sánh không báo động giả.
+
+    Database ghi "NO ACTION" khi câu CREATE TABLE không nói gì, còn khung mặc
+    định khai "RESTRICT". Hai cái này chỉ khác nhau ở ràng buộc DEFERRABLE —
+    thứ khung không dùng — nên coi là một, nếu không mọi bảng cũ đều bị kêu.
+    """
+    name = (action or "NO ACTION").upper()
+    return "NO ACTION" if name in ("NO ACTION", "RESTRICT") else name
+
+
 @injectable(scope=Scope.REQUEST)
 class SqlUnitOfWork:
     """Một connection + một transaction cho mỗi request.
@@ -328,12 +339,14 @@ class SqlBackend(DatabaseBackend):
             # ràng buộc duy nhất không tồn tại, và hai request đồng thời sẽ
             # cùng ghi được bản trùng.
             await self._audit_indexes(*entities)
+            await self._audit_foreign_keys(*entities)
             return
 
         async with self._engine.begin() as conn:
             await conn.run_sync(self._metadata.create_all)
 
         await self._ensure_indexes(*entities)
+        await self._audit_foreign_keys(*entities)
 
         if self._schema_mode != "sync":
             log.info("db.schema_ready", mode=self._schema_mode, tables=sorted(self._tables))
@@ -361,6 +374,77 @@ class SqlBackend(DatabaseBackend):
         for column in kept:
             log.warning("db.extra_column_kept", column=column,
                         hint="đặt APP_DB__DROP_COLUMNS=true nếu muốn xoá (mất dữ liệu)")
+
+    def _actual_foreign_keys(self, conn: Any, table: str) -> dict[str, str]:
+        """Khoá ngoại ĐANG CÓ TRONG DATABASE của một bảng: {cột: hành vi on_delete}.
+
+        Phải tách theo dialect vì inspector của SQLAlchemy KHÔNG trả `ondelete`
+        cho SQLite — đo được: `options` rỗng kể cả với `ON DELETE CASCADE`.
+        Với SQLite phải đọc `PRAGMA foreign_key_list`, chỗ đó mới có.
+        """
+        from sqlalchemy import inspect as sa_inspect
+
+        if conn.dialect.name == "sqlite":
+            rows = conn.exec_driver_sql(f'PRAGMA foreign_key_list("{table}")').mappings()
+            return {row["from"]: _on_delete_group(row["on_delete"]) for row in rows}
+
+        found = {}
+        for fk in sa_inspect(conn).get_foreign_keys(table):
+            columns = fk.get("constrained_columns") or []
+            if len(columns) == 1:                       # khung chỉ sinh khoá một cột
+                found[columns[0]] = _on_delete_group(fk.get("options", {}).get("ondelete"))
+        return found
+
+    async def _audit_foreign_keys(self, *entities: type) -> None:
+        """So khoá ngoại khai trong entity với khoá ngoại THẬT trong database.
+
+        Vì sao cần: `create_all` chỉ tạo bảng CÒN THIẾU, và mode "sync" chỉ
+        thêm/bớt CỘT — không cái nào đụng tới ràng buộc của bảng đã tồn tại.
+        Nên thêm `reference(...)` hoặc đổi `on_delete` vào một entity đã chạy
+        rồi thì khai báo đó nằm lại trong Python, database không hề biết.
+
+        Hậu quả đo được: xoá cha thì tầng con thứ nhất bị xoá (khoá ngoại của
+        nó có thật), tầng thứ hai ở lại thành mồ côi — không lỗi, không cảnh
+        báo, chỉ là dữ liệu rác lặng lẽ đọng lại. Đây là chỗ để kêu lên.
+        """
+        assert self._engine is not None
+        problems: list[str] = []
+
+        async with self._engine.connect() as conn:
+            for entity in entities:
+                mapping = mapping_for(entity)
+                if not mapping.references:
+                    continue
+                try:
+                    actual = await conn.run_sync(
+                        lambda c, name=mapping.storage: self._actual_foreign_keys(c, name)
+                    )
+                except Exception:  # noqa: BLE001 - bảng chưa tồn tại
+                    continue
+                for column, ref in mapping.references:
+                    want = _on_delete_group(ref.on_delete)
+                    have = actual.get(column)
+                    where = f"{mapping.storage}.{column}"
+                    if have is None:
+                        problems.append(
+                            f"{where} -> {mapping_for(ref.target).storage}: "
+                            f"database KHÔNG có khoá ngoại này"
+                        )
+                    elif have != want:
+                        problems.append(
+                            f"{where}: khai ON DELETE {ref.on_delete}, database đang {have}"
+                        )
+
+        if problems:
+            log.warning(
+                "db.foreign_keys_stale",
+                problems=problems,
+                hint="bảng đã tạo từ trước nên khoá ngoại giữ nguyên hình cũ — "
+                     "khung KHÔNG tự sửa ràng buộc. Hậu quả hay gặp nhất: xoá "
+                     "cha mà cháu ở lại thành mồ côi. Sửa bằng migration "
+                     "(ALTER TABLE ... ADD CONSTRAINT ... ON DELETE ...), hoặc "
+                     "ở môi trường dev thì xoá bảng cho khung tạo lại",
+            )
 
     async def _audit_indexes(self, *entities: type) -> None:
         """Chỉ kiểm tra, không tạo — dùng khi schema_mode="off"."""

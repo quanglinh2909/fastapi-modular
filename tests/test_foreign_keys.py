@@ -27,6 +27,8 @@ from fastapi_modular.infrastructure.database.factory import create_backend
 from fastapi_modular.infrastructure.database.repository import Repository
 
 CO_SQLITE = bool(os.getenv("TEST_SQLITE")) and importlib.util.find_spec("aiosqlite") is not None
+MONGO_DSN = os.getenv("TEST_MONGO_DSN", "")
+CO_MONGO = bool(MONGO_DSN) and importlib.util.find_spec("motor") is not None
 
 
 @entity()
@@ -81,25 +83,52 @@ class FkTag:
     updated_at: datetime = field(default_factory=utcnow)
 
 
+@entity()
+@dataclass(slots=True)
+class FkFrame:
+    """Tầng thứ BA: camera -> sự kiện -> khung hình.
+
+    Có để bắt lỗi cascade chỉ đi được một tầng: xoá camera thì khung hình của
+    sự kiện cũng phải đi theo, chứ không ở lại thành mồ côi.
+    """
+
+    id: str
+    event_id: str = field(default="", metadata=reference(FkEvent, on_delete="CASCADE"))
+    created_at: datetime = field(default_factory=utcnow)
+    updated_at: datetime = field(default_factory=utcnow)
+
+
 class _Db:
     def __init__(self, backend) -> None:
         self.backend = backend
         self.driver = backend.name
 
 
-@pytest.fixture(params=["memory", pytest.param("sqlite", marks=pytest.mark.skipif(
-    not CO_SQLITE, reason="đặt TEST_SQLITE=1 và cài aiosqlite"))])
+@pytest.fixture(params=[
+    "memory",
+    pytest.param("sqlite", marks=pytest.mark.skipif(
+        not CO_SQLITE, reason="đặt TEST_SQLITE=1 và cài aiosqlite")),
+    pytest.param("mongodb", marks=pytest.mark.skipif(
+        not CO_MONGO, reason="đặt TEST_MONGO_DSN và cài motor")),
+])
 async def kho(request, tmp_path):
     if request.param == "memory":
         settings = DatabaseSettings(driver="memory")
-    else:
+    elif request.param == "sqlite":
         settings = DatabaseSettings(
             driver="sqlite", dsn=f"sqlite+aiosqlite:///{tmp_path}/{uuid.uuid4().hex}.db"
+        )
+    else:
+        # MongoDB không có khoá ngoại — chính khung áp `on_delete`. Vì vậy nó
+        # phải nằm trong CÙNG bộ test này, không thì chỗ khác biệt duy nhất lại
+        # là chỗ không ai soi.
+        settings = DatabaseSettings(
+            driver="mongodb", dsn=MONGO_DSN, name=f"fam_fk_{uuid.uuid4().hex[:8]}"
         )
     backend = create_backend(settings)
     await backend.startup()
     if hasattr(backend, "create_schema"):
-        await backend.create_schema(FkZone, FkCamera, FkEvent, FkInvoice, FkTag)
+        await backend.create_schema(FkZone, FkCamera, FkEvent, FkInvoice, FkTag, FkFrame)
 
     db = _Db(backend)
     yield {
@@ -108,9 +137,44 @@ async def kho(request, tmp_path):
         "events": Repository(FkEvent, db),
         "invoices": Repository(FkInvoice, db),
         "tags": Repository(FkTag, db),
+        "frames": Repository(FkFrame, db),
         "backend": backend,
     }
+    if request.param == "mongodb":
+        await backend._client.drop_database(backend._database_name)
     await backend.shutdown()
+
+
+class _BatLog:
+    """Bắt log của một module bằng cách thay thẳng đối tượng `log`.
+
+    Không dùng `caplog`: structlog ở đây in thẳng ra stdout, không đi qua
+    `logging`. Cũng không dùng bộ bắt log của structlog: logger được nhớ ngay
+    lần dùng đầu, nên khi chạy CẢ BỘ test thì nó đã bị test khác làm cho nhớ và
+    phép bắt đó không chặn được nữa — đã thấy đúng ca này, xanh khi chạy một
+    file và đỏ khi chạy cả bộ.
+    """
+
+    def __init__(self) -> None:
+        self.records: list[tuple[str, dict]] = []
+
+    def __getattr__(self, level: str):
+        def ghi(event: str, **kw) -> None:
+            self.records.append((event, kw))
+        return ghi
+
+    def of(self, event: str) -> list[dict]:
+        return [kw for name, kw in self.records if name == event]
+
+
+@pytest.fixture
+def bat_log(monkeypatch):
+    """Thay `log` của backend SQL, trả về chỗ chứa các dòng đã ghi."""
+    from fastapi_modular.infrastructure.database import sql as sql_module
+
+    bat = _BatLog()
+    monkeypatch.setattr(sql_module, "log", bat)
+    return bat
 
 
 # ------------------------------------------------------------------ khai báo
@@ -168,6 +232,41 @@ async def test_cascade_qua_delete_where(kho):
 
     assert await kho["cameras"].delete_where(name="bỏ") == 3
     assert await kho["events"].count() == 0
+
+
+async def test_cascade_ba_tang_CASCADE_suot_chuoi(kho):
+    """camera -> sự kiện -> khung hình, cả chuỗi khai CASCADE thì đi hết cả chuỗi.
+
+    Đây là ca đã hỏng ngoài thật: tầng con thứ nhất bị xoá, tầng thứ hai ở lại.
+    """
+    await kho["cameras"].save(FkCamera(id="c1"))
+    await kho["events"].save(FkEvent(id="e1", camera_id="c1"))
+    await kho["events"].save(FkEvent(id="e2", camera_id="c1"))
+    await kho["frames"].save(FkFrame(id="f1", event_id="e1"))
+    await kho["frames"].save(FkFrame(id="f2", event_id="e1"))
+    await kho["frames"].save(FkFrame(id="f3", event_id="e2"))
+    # camera khác, không được đụng tới
+    await kho["cameras"].save(FkCamera(id="c9"))
+    await kho["events"].save(FkEvent(id="e9", camera_id="c9"))
+    await kho["frames"].save(FkFrame(id="f9", event_id="e9"))
+
+    await kho["cameras"].delete("c1")
+
+    assert await kho["events"].count() == 1, "sự kiện của c1 phải đi theo"
+    assert await kho["frames"].count() == 1, "khung hình của các sự kiện đó cũng vậy"
+    assert (await kho["frames"].get("f9")).event_id == "e9", "nhánh c9 còn nguyên"
+
+
+async def test_cascade_ba_tang_qua_delete_where(kho):
+    """Xoá hàng loạt cũng phải đi hết ba tầng, không chỉ `delete(id)`."""
+    for i in range(3):
+        await kho["cameras"].save(FkCamera(id=f"c{i}", name="bỏ"))
+        await kho["events"].save(FkEvent(id=f"e{i}", camera_id=f"c{i}"))
+        await kho["frames"].save(FkFrame(id=f"f{i}", event_id=f"e{i}"))
+
+    assert await kho["cameras"].delete_where(name="bỏ") == 3
+    assert await kho["events"].count() == 0
+    assert await kho["frames"].count() == 0
 
 
 # ----------------------------------------------------------------- SET NULL
@@ -275,6 +374,102 @@ async def test_moi_connection_trong_pool_deu_bat_foreign_keys(tmp_path):
             return (await conn.execute(text("PRAGMA foreign_keys"))).scalar()
 
     assert await asyncio.gather(*(doc() for _ in range(5))) == [1] * 5
+    await backend.shutdown()
+
+
+# ------------------------------- bảng cũ: khoá ngoại trong database đã lạc hậu
+@pytest.mark.skipif(not CO_SQLITE, reason="đặt TEST_SQLITE=1 và cài aiosqlite")
+async def test_bang_tao_tu_truoc_thieu_khoa_ngoai_thi_phai_keu_len(tmp_path, bat_log):
+    """Thêm `reference(...)` vào entity đã chạy rồi thì database KHÔNG biết.
+
+    `create_all` chỉ tạo bảng còn thiếu, mode "sync" chỉ thêm/bớt CỘT — không
+    cái nào đụng ràng buộc. Đo được hậu quả: xoá cha thì con tầng một đi theo,
+    tầng hai ở lại thành mồ côi, lặng lẽ. Nên lúc khởi động phải kêu.
+    """
+    from sqlalchemy import text
+
+    dsn = f"sqlite+aiosqlite:///{tmp_path}/cu.db"
+    backend = create_backend(DatabaseSettings(driver="sqlite", dsn=dsn))
+    await backend.startup()
+    async with backend._engine.begin() as conn:
+        # bảng cũ: cột có, khoá ngoại KHÔNG
+        await conn.execute(text("CREATE TABLE fkframes (id VARCHAR PRIMARY KEY, "
+                                "event_id VARCHAR, created_at DATETIME, updated_at DATETIME)"))
+
+    await backend.create_schema(FkZone, FkCamera, FkEvent, FkFrame)
+
+    keu = bat_log.of("db.foreign_keys_stale")
+    assert keu, "phải có cảnh báo, không thì lỗi này lại lặng lẽ"
+    assert keu[0]["problems"] == ["fkframes.event_id -> fkevents: database KHÔNG có khoá ngoại này"]
+    await backend.shutdown()
+
+
+@pytest.mark.skipif(not CO_SQLITE, reason="đặt TEST_SQLITE=1 và cài aiosqlite")
+async def test_on_delete_trong_database_khac_voi_khai_bao_thi_phai_keu_len(tmp_path, bat_log):
+    """Đổi `on_delete` của entity cũng không tới được database. Cũng phải kêu."""
+    from sqlalchemy import text
+
+    backend = create_backend(DatabaseSettings(
+        driver="sqlite", dsn=f"sqlite+aiosqlite:///{tmp_path}/lech.db"))
+    await backend.startup()
+    async with backend._engine.begin() as conn:
+        await conn.execute(text("CREATE TABLE fkcameras (id VARCHAR PRIMARY KEY, "
+                                "name VARCHAR, zone_id VARCHAR, "
+                                "created_at DATETIME, updated_at DATETIME)"))
+        await conn.execute(text(
+            "CREATE TABLE fkevents (id VARCHAR PRIMARY KEY, camera_id VARCHAR "
+            "REFERENCES fkcameras(id) ON DELETE SET NULL, "     # khai là CASCADE
+            "created_at DATETIME, updated_at DATETIME)"))
+
+    await backend.create_schema(FkCamera, FkEvent)
+
+    keu = bat_log.of("db.foreign_keys_stale")
+    assert keu
+    assert "fkevents.camera_id: khai ON DELETE CASCADE, database đang SET NULL" \
+        in keu[0]["problems"]
+    await backend.shutdown()
+
+
+@pytest.mark.skipif(not CO_SQLITE, reason="đặt TEST_SQLITE=1 và cài aiosqlite")
+async def test_schema_dung_khop_thi_khong_keu_gi_ca(tmp_path, bat_log):
+    """Không được báo động giả: bảng do chính khung tạo thì phải im lặng.
+
+    Chỗ dễ báo giả nhất là RESTRICT: khung ghi `ON DELETE RESTRICT` vào DDL,
+    còn bảng nào không nói gì thì database đọc ra "NO ACTION".
+    """
+    backend = create_backend(DatabaseSettings(
+        driver="sqlite", dsn=f"sqlite+aiosqlite:///{tmp_path}/sach.db"))
+    await backend.startup()
+    await backend.create_schema(FkZone, FkCamera, FkEvent, FkInvoice, FkTag, FkFrame)
+
+    assert bat_log.of("db.foreign_keys_stale") == []
+    await backend.shutdown()
+
+
+@pytest.mark.skipif(not CO_SQLITE, reason="đặt TEST_SQLITE=1 và cài aiosqlite")
+async def test_bang_khong_noi_gi_ve_on_delete_khop_voi_RESTRICT(tmp_path, bat_log):
+    """`REFERENCES x(id)` trần trong database = "NO ACTION"; entity mặc định RESTRICT.
+
+    Hai cái này chỉ khác nhau ở ràng buộc DEFERRABLE — thứ khung không dùng —
+    nên KHÔNG được kêu. Không có phép gom này thì mọi bảng viết tay đều bị báo
+    giả, và cảnh báo bị bỏ qua ngay lần thứ hai người ta nhìn thấy nó.
+    """
+    from sqlalchemy import text
+
+    backend = create_backend(DatabaseSettings(
+        driver="sqlite", dsn=f"sqlite+aiosqlite:///{tmp_path}/tran.db"))
+    await backend.startup()
+    async with backend._engine.begin() as conn:
+        await conn.execute(text("CREATE TABLE fkzones (id VARCHAR PRIMARY KEY, "
+                                "name VARCHAR, created_at DATETIME, updated_at DATETIME)"))
+        await conn.execute(text(
+            "CREATE TABLE fkinvoices (id VARCHAR PRIMARY KEY, "
+            "zone_id VARCHAR REFERENCES fkzones(id), "        # không nói ON DELETE
+            "created_at DATETIME, updated_at DATETIME)"))
+
+    await backend.create_schema(FkZone, FkInvoice)
+
+    assert bat_log.of("db.foreign_keys_stale") == []
     await backend.shutdown()
 
 

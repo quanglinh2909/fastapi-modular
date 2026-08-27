@@ -15,6 +15,7 @@ builder, không có transaction, không có migration.
 | "**Xoá khu vực thì camera ở lại, chỉ mất chỗ gắn**" | [`SET NULL`](#set-null--con-ở-lại-mất-chỗ-gắn) |
 | "**Xoá camera thì thẻ về giá trị mặc định**" | [`SET DEFAULT`](#set-default--về-giá-trị-bạn-đặt-sẵn) |
 | "Còn hoá đơn thì KHÔNG cho xoá khách hàng" | [`RESTRICT`](#restrict--chặn-không-cho-xoá) |
+| "**Xoá cha mà cháu vẫn còn**" | [Cascade dừng giữa chừng](#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại) |
 | "Đọc/ghi dữ liệu trong service" | [Dùng Repository trong code](#dùng-repository-trong-code) |
 | "**Ghi 2 bảng, hỏng thì huỷ cả hai**" | [Transaction](#transaction--ghi-nhiều-bảng-thì-cùng-thành-công-hoặc-cùng-không) |
 | "Lọc lớn hơn, nhỏ hơn, NULL, nối bảng" | [Truy vấn phức tạp](#truy-vấn-phức-tạp--join-lớnbé-null) |
@@ -764,6 +765,94 @@ chi tiết của một hoá đơn đã xoá, ảnh thu nhỏ của một bài vi
 > CASCADE) → xoá sự kiện. Một lệnh `delete()` có thể quét sạch một nhánh. Muốn
 > chuỗi dừng lại ở đâu thì khai `SET NULL` hoặc `RESTRICT` ở đúng bậc đó.
 
+Chuỗi đi **hết bao nhiêu tầng cũng được**, miễn tầng nào cũng khai `CASCADE`:
+
+```python
+@entity()
+@dataclass(slots=True)
+class Camera(Entity):
+    id: str
+    name: str = ""
+
+
+@entity()
+@dataclass(slots=True)
+class CameraLog(Entity):
+    id: str
+    camera_id: str = field(default="", metadata=reference(Camera, on_delete="CASCADE"))
+
+
+@entity()
+@dataclass(slots=True)
+class ItemLog(Entity):
+    id: str
+    camera_log_id: str = field(
+        default="", metadata=reference(CameraLog, on_delete="CASCADE")
+    )
+```
+
+```python
+await cameras.delete("cam-01")
+# camera_log của cam-01 đi theo, VÀ item_log của những camera_log đó cũng đi theo
+```
+
+#### Cascade dừng giữa chừng: database chưa biết khoá ngoại
+
+Triệu chứng rất riêng: xoá camera thì `camera_log` biến mất, còn `item_log`
+**ở lại** — không lỗi, không cảnh báo. Ba tầng đều khai `CASCADE` mà chỉ chạy
+được hai.
+
+Nguyên nhân gần như luôn là: **bảng `item_logs` đã tồn tại từ trước khi bạn khai
+`reference(...)`**. Khung chỉ `CREATE TABLE` cho bảng **còn thiếu**, còn
+`schema_mode="sync"` chỉ thêm/bớt **cột** — không chế độ nào sửa ràng buộc của
+bảng đã có. Khai báo nằm lại trong Python, database không hề biết.
+
+Kiểm bằng log lúc khởi động — khung soi và kêu:
+
+```
+[warning] db.foreign_keys_stale
+    problems=['item_logs.camera_log_id -> camera_logs: database KHÔNG có khoá ngoại này']
+```
+
+hoặc, khi khoá ngoại có nhưng hành vi khác:
+
+```
+    problems=['item_logs.camera_log_id: khai ON DELETE CASCADE, database đang NO ACTION']
+```
+
+Không thấy dòng này nghĩa là database khớp với khai báo — lỗi nằm chỗ khác.
+
+Xem thẳng trong database cũng được:
+
+```bash
+sqlite3 app.db "PRAGMA foreign_key_list(item_logs)"     # cột on_delete
+psql -c "\d item_logs"                                  # dòng 'Foreign-key constraints'
+```
+
+**Sửa thế nào** — khung không tự sửa, vì thêm khoá ngoại vào bảng đang có dữ
+liệu có thể hỏng giữa chừng (còn dòng mồ côi) và có thể khoá bảng rất lâu:
+
+```sql
+-- PostgreSQL: dọn mồ côi trước, rồi thêm ràng buộc
+DELETE FROM item_logs WHERE camera_log_id NOT IN (SELECT id FROM camera_logs);
+ALTER TABLE item_logs
+    ADD CONSTRAINT item_logs_camera_log_id_fkey
+    FOREIGN KEY (camera_log_id) REFERENCES camera_logs (id) ON DELETE CASCADE;
+```
+
+SQLite **không** có `ALTER TABLE ... ADD CONSTRAINT`; phải tạo bảng mới rồi
+chép dữ liệu sang, hoặc ở môi trường dev thì `DROP TABLE item_logs` cho khung
+tạo lại.
+
+Còn hai nguyên nhân nữa, hiếm hơn nhưng kiểm nhanh:
+
+- **Khoá ngoại trỏ nhầm bảng.** `reference(ItemLog)` thay vì
+  `reference(CameraLog)` vẫn chạy, chỉ là chuỗi không nối tới đâu. Đọc lại
+  đúng dòng `metadata=reference(...)` của tầng bị bỏ sót.
+- **Entity chưa được import.** Với `memory` và `mongodb`, khung tự cascade dựa
+  trên danh sách entity đã đăng ký; module chưa được nạp thì bảng đó vô hình.
+  SQL không dính vì database giữ danh sách này.
+
 #### `SET NULL` — con ở lại, mất chỗ gắn
 
 ```python
@@ -827,6 +916,11 @@ connection** trong pool — kiểm bằng `PRAGMA foreign_keys` phải trả v�
 
 **Xoá nhiều cha một lúc cũng áp ràng buộc.** `delete_where(...)` chạy đúng luật
 như `delete(id)`, không phải đường tắt bỏ qua khoá ngoại.
+
+**Đổi khai báo khoá ngoại KHÔNG tự tới được database.** Thêm `reference(...)`
+hay đổi `on_delete` cho một bảng đã tạo thì phải viết migration — khung chỉ soi
+rồi cảnh báo `db.foreign_keys_stale` lúc khởi động. Xem [Cascade dừng giữa
+chừng](#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại).
 
 ---
 

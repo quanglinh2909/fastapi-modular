@@ -423,7 +423,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              1046 test chạy không cần hạ tầng, 260 test nữa cần driver/server thật
+tests/              1048 test chạy không cần hạ tầng, 277 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 
