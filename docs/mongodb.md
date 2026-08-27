@@ -481,7 +481,8 @@ giờ; khung gắn lại UTC lúc đọc để ba driver cho cùng một dạng,
 response không lẫn lộn `"...Z"` với `"..."` không hậu tố.
 
 **`Enum` lưu bằng `.value`** (chuỗi) cho dễ đọc bằng `mongosh` và dễ đổi về sau.
-Đọc ra vẫn là Enum.
+Đọc ra vẫn là Enum. Lọc bằng thành viên Enum hay bằng chuỗi `.value` đều khớp —
+giống hệt bên SQL và backend memory.
 
 **Mất kết nối thì motor tự dò lại server.** Template chỉ siết
 `serverSelectionTimeoutMS` để request không treo 30 giây khi Mongo chết — request

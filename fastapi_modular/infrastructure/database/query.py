@@ -57,7 +57,7 @@ from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from fastapi_modular.core.exceptions import BadRequestError
-from fastapi_modular.infrastructure.database.base import check_value, mapping_for
+from fastapi_modular.infrastructure.database.base import bind_value, check_value, mapping_for
 
 if TYPE_CHECKING:
     from fastapi_modular.infrastructure.database.repository import Database
@@ -497,13 +497,17 @@ class Include:
     """Một bảng được lấy kèm và gắn vào kết quả dưới dạng trường lồng nhau."""
 
     entity: type
-    name: str                        # tên trường trong kết quả
+    name: str                        # tên trường trong kết quả; "" = chưa đặt
     root_field: str                  # cột bên bảng gốc dùng để ghép
     other_field: str                 # cột bên bảng kia
     to_list: bool                    # một-nhiều -> list, nhiều-một -> một object
     fields: tuple[tuple[str, str], ...] = ()      # (tên kết quả, tên cột)
     conditions: tuple[Condition, ...] = ()
     orders: tuple[Order, ...] = ()
+    # Khác rỗng = bảng này KHÔNG có khoá ngoại trực tiếp với bảng gốc. Chưa
+    # phải lỗi ngay: nếu nó nằm trong chuỗi `nest_under(...)` thì mắt xích của
+    # chuỗi lo việc ghép. Chỉ khi đứng một mình mới ném thông điệp này ra.
+    defer_error: str = ""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -585,23 +589,23 @@ def _fields_of(
     """
     known = mapping_for(entity).fields
     if isinstance(fields, dict):
-        chosen = [(ten, _field_name(entity, cot)) for ten, cot in fields.items()]
+        chosen = [(out_name, _field_name(entity, column_name)) for out_name, column_name in fields.items()]
     else:
         chosen = [(_field_name(entity, f),) * 2 for f in fields] or [(f, f) for f in known]
 
-    bo = {_field_name(entity, f) for f in exclude}
-    giu = [(ten, cot) for ten, cot in chosen if cot not in bo]
+    dropped = {_field_name(entity, f) for f in exclude}
+    chosen_kept = [(out_name, column_name) for out_name, column_name in chosen if column_name not in dropped]
 
     # Đổi tên TẠI CHỖ, không xoá rồi thêm vào cuối: thứ tự khoá trong dict trả
     # về chính là thứ tự trường trong response JSON, đổi vị trí là người ta thấy.
-    ten_moi_cua = {_field_name(entity, cot): ten for ten, cot in (rename or {}).items()}
-    ket: dict[str, str] = {}
-    for ten, cot in giu:
-        ket[ten_moi_cua.get(cot, ten)] = cot
-    for cot, ten in ten_moi_cua.items():
-        if cot not in ket.values():
-            ket[ten] = cot
-    return tuple(ket.items())
+    renamed_by_column = {_field_name(entity, column_name): out_name for out_name, column_name in (rename or {}).items()}
+    kept_columns: dict[str, str] = {}
+    for out_name, column_name in chosen_kept:
+        kept_columns[renamed_by_column.get(column_name, out_name)] = column_name
+    for column_name, out_name in renamed_by_column.items():
+        if column_name not in kept_columns.values():
+            kept_columns[out_name] = column_name
+    return tuple(kept_columns.items())
 
 
 # ------------------------------------------------------------------- spec
@@ -977,13 +981,22 @@ class Query(Generic[E]):
         Mỗi `include` là MỘT câu lệnh nữa (`WHERE khoá IN (...)`), không phải
         một câu cho mỗi dòng. Mười camera thì hai câu, không phải mười một.
         """
-        root_field, other_field, to_list = self._relation(entity, on)
+        try:
+            root_field, other_field, to_list = self._relation(entity, on)
+            defer_error = ""
+        except BadRequestError as exc:
+            # Chưa chắc là lỗi: `cmts.include(User).nest_under(User, Post, Cmt)`
+            # thì User ghép qua Post chứ không qua bảng gốc. Ghi lại thông điệp,
+            # đến `.all()` mà nó vẫn đứng ngoài chuỗi thì mới ném.
+            root_field, other_field, to_list = "", "", True
+            defer_error = str(exc)
         self._spec.includes.append(Include(
             entity=entity,
-            name=name or (f"{entity.__name__.lower()}s" if to_list else entity.__name__.lower()),
+            name=name,
             root_field=root_field,
             other_field=other_field,
             to_list=to_list,
+            defer_error=defer_error,
             fields=_fields_of(entity, fields, exclude, rename),
             conditions=tuple(as_condition(c) for c in (
                 where if isinstance(where, (list, tuple)) else [where] if where is not None else []
@@ -1184,21 +1197,21 @@ class Query(Generic[E]):
         """
         if exclude or rename or add or isinstance(fields, dict):
             # `rename`/`add` không kèm `fields` nghĩa là "giữ đủ cột bảng gốc".
-            for ten, cot in _fields_of(self._spec.entity, fields, exclude, rename):
-                self._spec.selects[ten] = Column(self._spec.entity, cot)
+            for out_name, column_name in _fields_of(self._spec.entity, fields, exclude, rename):
+                self._spec.selects[out_name] = Column(self._spec.entity, column_name)
             fields = ()
 
-        for ten, item in (add or {}).items():
+        for out_name, item in (add or {}).items():
             if isinstance(item, Aggregate):
                 raise BadRequestError(
-                    f"`add={{{ten!r}: {item!r}}}` không được: hàm gộp làm câu lệnh "
+                    f"`add={{{out_name!r}: {item!r}}}` không được: hàm gộp làm câu lệnh "
                     f"thành câu GỘP, mà đã gộp thì không còn 'mọi cột' nào để giữ "
                     f"— `SELECT *, {item!r}` là câu lỗi ở PostgreSQL. Viết "
-                    f"`.group_by(cot).select('cot', {ten}={item!r})` để đếm theo "
-                    f"nhóm, hoặc `.select({ten}={item!r})` để gộp cả bảng thành "
+                    f"`.group_by(cot).select('cot', {out_name}={item!r})` để đếm theo "
+                    f"nhóm, hoặc `.select({out_name}={item!r})` để gộp cả bảng thành "
                     f"một dòng."
                 )
-            self._spec.selects[ten] = column_of(item, fallback=self._spec.entity)
+            self._spec.selects[out_name] = column_of(item, fallback=self._spec.entity)
 
         for item in (*columns, *fields):
             if isinstance(item, Aggregate):
@@ -1227,14 +1240,14 @@ class Query(Generic[E]):
                 f"{self._spec.entity.__name__} lúc này chỉ là bịa. Ví dụ: "
                 ".select('camera_id', so_luong=count())"
             )
-        thieu = [j for j in self._spec.joins if j.keeps_right]
-        if thieu:
-            ten = "right_join" if thieu[0].kind == "right" else "outer_join"
+        missing = [j for j in self._spec.joins if j.keeps_right]
+        if missing:
+            out_name = "right_join" if missing[0].kind == "right" else "outer_join"
             raise BadRequestError(
-                f"`{ten}` phải đi với `.select(...)`: nó sinh cả những dòng KHÔNG "
+                f"`{out_name}` phải đi với `.select(...)`: nó sinh cả những dòng KHÔNG "
                 f"có bản ghi {self._spec.entity.__name__} nào, mà mặc định truy vấn "
                 f"trả về {self._spec.entity.__name__}. Hoặc đảo lại: lấy "
-                f"{thieu[0].entity.__name__} làm bảng gốc rồi `left_join`."
+                f"{missing[0].entity.__name__} làm bảng gốc rồi `left_join`."
             )
 
     def _check_grouped(self) -> None:
@@ -1281,31 +1294,31 @@ class Query(Generic[E]):
         if not self._spec.nest:
             return [], [], includes, -1
 
-        goc = self._spec.entity
-        chuoi = list(self._spec.nest)
-        if self._spec.nest_link is not None or goc not in chuoi:
+        root = self._spec.entity
+        chain = list(self._spec.nest)
+        if self._spec.nest_link is not None or root not in chain:
             # Bảng tự trỏ về chính nó thì bảng gốc vẫn là một lớp RIÊNG, dù trùng
             # tên với lớp ngoài — nên nhớ VỊ TRÍ chứ không tìm lại bằng tên.
-            chuoi.append(goc)
-            goc_idx = len(chuoi) - 1
+            chain.append(root)
+            root_idx = len(chain) - 1
         else:
-            goc_idx = chuoi.index(goc)
+            root_idx = chain.index(root)
 
         if self._spec.nest_link is not None:
             links = [self._spec.nest_link]
         else:
-            links = [_link_between(chuoi[i], chuoi[i + 1]) for i in range(len(chuoi) - 1)]
+            links = [_link_between(chain[i], chain[i + 1]) for i in range(len(chain) - 1)]
 
         levels: list[NestLevel] = []
-        for i, entity in enumerate(chuoi):
-            cua_no = [x for x in includes if x.entity is entity]
-            tu_nest = self._spec.nest_cols.get(entity)
-            if len(cua_no) > 1 or (cua_no and tu_nest is not None):
+        for i, entity in enumerate(chain):
+            own = [x for x in includes if x.entity is entity]
+            from_nest = self._spec.nest_cols.get(entity)
+            if len(own) > 1 or (own and from_nest is not None):
                 raise BadRequestError(
                     f"Cột của {entity.__name__} đang khai ở HAI chỗ — `include(...)` và "
                     f"`nest_under(...)`. Bỏ một trong hai."
                 )
-            inc = cua_no[0] if cua_no else None
+            inc = own[0] if own else None
             if inc is not None:
                 if inc.conditions or inc.orders:
                     raise BadRequestError(
@@ -1315,34 +1328,64 @@ class Query(Generic[E]):
                         f"hay sắp được ở lớp NGOÀI. Bỏ `where=`/`order_by_*=` đi."
                     )
                 includes.remove(inc)
-            mac_dinh = _ten_mac_dinh(entity, i == 0 or links[i - 1].inner_is_list)
-            cot = tu_nest if tu_nest is not None else (
+            default_name = _default_field_name(entity, i == 0 or links[i - 1].inner_is_list)
+            column_name = from_nest if from_nest is not None else (
                 inc.fields if inc is not None else _fields_of(entity, (), ())
             )
             levels.append(NestLevel(
                 entity=entity,
-                name=self._spec.nest_names.get(entity, mac_dinh),
-                fields=cot,
+                name=self._spec.nest_names.get(entity)
+                     or (inc.name if inc is not None else "")
+                     or default_name,
+                fields=column_name,
             ))
-        return levels, links, includes, goc_idx
+        return levels, links, includes, root_idx
 
     async def all(self) -> list[Any]:
         """Chạy và trả về mọi dòng khớp."""
         self._need_select()
         self._check_grouped()
-        levels, links, includes, goc_idx = self._resolve_nest()
+        levels, links, includes, root_idx = self._resolve_nest()
+        for inc in includes:
+            if inc.defer_error:
+                # Đứng ngoài chuỗi `nest_under` mà không có khoá ngoại trực
+                # tiếp — giờ mới chắc chắn là lỗi.
+                raise BadRequestError(inc.defer_error)
         if not includes and not levels:
             return await self._backend().run_query(self._spec)
 
+        # `order_by_*(Cam.name)` khi Cam là MỘT LỚP của chuỗi lồng nhau: cột đó
+        # không nằm trong câu lệnh của bảng gốc (trừ khi đã `join`), nên phải
+        # tách ra và xếp ở đúng lớp — để nguyên thì sqlite ném lỗi "bảng chưa
+        # có trong truy vấn" còn memory lặng lẽ bỏ qua, tệ cả hai.
+        level_orders: dict[int, list[Order]] = {}
+        if levels:
+            known = {_alias_of(self._spec.entity), *(j.alias for j in self._spec.joins)}
+            kept: list[Order] = []
+            for order in self._spec.orders:
+                alias = order.column if isinstance(order.column, Aggregate) else None
+                if alias is not None or table_of(order.column) in known                         or isinstance(order.column, str):
+                    kept.append(order)
+                    continue
+                idx = next((i for i, lv in enumerate(levels)
+                            if _alias_of(lv.entity) == table_of(order.column)), None)
+                if idx is None:
+                    raise BadRequestError(
+                        f"Cột {order.column!r} không thuộc bảng gốc, bảng đã "
+                        f"`join`, hay lớp nào trong `nest_under(...)`."
+                    )
+                level_orders.setdefault(idx, []).append(order)
+            self._spec.orders = kept
+
         # Cột dùng để ghép phải có trong kết quả mới ghép được. Người dùng
         # không xin thì tự thêm rồi bỏ đi lúc trả về.
-        can = [inc.root_field for inc in includes]
-        if goc_idx > 0:
-            can.append(links[goc_idx - 1].inner_field)
-        if 0 <= goc_idx < len(levels) - 1:
-            can.append(links[goc_idx].outer_field)
-        them = {f for f in can if self._spec.selects and f not in self._spec.selects}
-        for name in them:
+        needed = [inc.root_field for inc in includes]
+        if root_idx > 0:
+            needed.append(links[root_idx - 1].inner_field)
+        if 0 <= root_idx < len(levels) - 1:
+            needed.append(links[root_idx].outer_field)
+        added = {f for f in needed if self._spec.selects and f not in self._spec.selects}
+        for name in added:
             self._spec.selects[name] = Column(self._spec.entity, name)
         try:
             rows = await self._backend().run_query(self._spec)
@@ -1350,18 +1393,18 @@ class Query(Generic[E]):
             for inc in includes:
                 await self._attach(inc, rows)
         finally:
-            for name in them:
+            for name in added:
                 del self._spec.selects[name]
         # Dựng cây TRƯỚC rồi mới bỏ cột ghép: chính nó là cột dùng để ghép.
         if levels:
-            cay = await self._nest(levels, links, goc_idx, rows)
+            tree = await self._nest(levels, links, root_idx, rows, level_orders)
             for row in rows:
-                for name in them:
+                for name in added:
                     row.pop(name, None)
-            return cay
+            return tree
 
         for row in rows:
-            for name in them:
+            for name in added:
                 row.pop(name, None)
         return rows
 
@@ -1369,8 +1412,9 @@ class Query(Generic[E]):
         self,
         levels: list[NestLevel],
         links: list[NestLink],
-        goc_idx: int,
+        root_idx: int,
         rows: list[dict[str, Any]],
+        level_orders: dict[int, list[Order]] | None = None,
     ) -> list[dict[str, Any]]:
         """Lấy về từng lớp rồi ghép thành cây.
 
@@ -1378,42 +1422,55 @@ class Query(Generic[E]):
         phía. Không có câu nào chạy cho mỗi dòng.
         """
         # (giá trị các cột dùng để ghép, dict sẽ trả về)
-        du_lieu: list[list[tuple[dict[str, Any], dict[str, Any]]]] = [[] for _ in levels]
-        du_lieu[goc_idx] = [(row, row) for row in rows]
+        level_rows: list[list[tuple[dict[str, Any], dict[str, Any]]]] = [[] for _ in levels]
+        level_rows[root_idx] = [(row, row) for row in rows]
 
-        can = _cot_can_ghep(levels, links)
+        needed = _link_columns(levels, links)
 
-        async def lay(i: int, field: str, keys: list[Any]) -> None:
+        level_orders = level_orders or {}
+
+        async def fetch_level(i: int, field: str, keys: list[Any]) -> None:
             objs = await self._fetch_in(levels[i].entity, field, keys)
-            du_lieu[i] = [
-                ({c: getattr(o, c, None) for c in can[i]},
-                 {ten: getattr(o, cot, None) for ten, cot in levels[i].fields})
+            # Sắp nhiều khoá bằng nhiều lượt sort ổn định, khoá phụ trước:
+            # cùng cách backend memory làm, để None đứng cùng một chỗ.
+            for order in reversed(level_orders.get(i, [])):
+                objs.sort(
+                    key=lambda o, c=order.column.field: (
+                        (v := bind_value(getattr(o, c, None))) is not None,
+                        v if v is not None else 0),
+                    reverse=order.descending,
+                )
+            level_rows[i] = [
+                ({c: getattr(o, c, None) for c in needed[i]},
+                 {out_name: getattr(o, column_name, None) for out_name, column_name in levels[i].fields})
                 for o in objs
             ]
 
-        for i in range(goc_idx + 1, len(levels)):           # đi vào TRONG
+        for i in range(root_idx + 1, len(levels)):           # đi vào TRONG
             link = links[i - 1]
-            khoa = _khoa_theo_thu_tu(du_lieu[i - 1], link.outer_field)
-            await lay(i, link.inner_field, khoa)
-        for i in range(goc_idx - 1, -1, -1):                # đi ra NGOÀI
+            link_keys = _keys_in_order(level_rows[i - 1], link.outer_field)
+            await fetch_level(i, link.inner_field, link_keys)
+        for i in range(root_idx - 1, -1, -1):                # đi ra NGOÀI
             link = links[i]
-            khoa = _khoa_theo_thu_tu(du_lieu[i + 1], link.inner_field)
-            await lay(i, link.outer_field, khoa)
+            link_keys = _keys_in_order(level_rows[i + 1], link.inner_field)
+            await fetch_level(i, link.outer_field, link_keys)
+            if i in level_orders:
+                continue        # người dùng đã sắp lớp này tường minh — tôn trọng
             # Lớp ngoài xếp theo thứ tự xuất hiện của lớp trong, không theo
             # thứ tự database trả về — nhờ vậy `order_by_*` vẫn còn tác dụng.
-            thu_tu = {k: n for n, k in enumerate(khoa)}
-            du_lieu[i].sort(key=lambda x, f=link.outer_field: thu_tu.get(x[0].get(f), 0))
+            position = {k: n for n, k in enumerate(link_keys)}
+            level_rows[i].sort(key=lambda x, f=link.outer_field: position.get(x[0].get(f), 0))
 
         for i in range(len(levels) - 1, 0, -1):             # ghép từ TRONG ra
             link = links[i - 1]
-            theo: dict[Any, list[dict[str, Any]]] = {}
-            for khoa, ra in du_lieu[i]:
-                theo.setdefault(khoa.get(link.inner_field), []).append(ra)
-            for khoa, ra in du_lieu[i - 1]:
-                con = theo.get(khoa.get(link.outer_field), [])
-                ra[levels[i].name] = con if link.inner_is_list else (con[0] if con else None)
+            grouped: dict[Any, list[dict[str, Any]]] = {}
+            for link_keys, out in level_rows[i]:
+                grouped.setdefault(link_keys.get(link.inner_field), []).append(out)
+            for link_keys, out in level_rows[i - 1]:
+                children = grouped.get(link_keys.get(link.outer_field), [])
+                out[levels[i].name] = children if link.inner_is_list else (children[0] if children else None)
 
-        return [ra for _, ra in du_lieu[0]]
+        return [out for _, out in level_rows[0]]
 
     async def _fetch_in(self, entity: type, field: str, keys: list[Any]) -> list[Any]:
         """`SELECT ... WHERE field IN (keys)`, chia mẻ để không vượt giới hạn tham số."""
@@ -1441,18 +1498,19 @@ class Query(Generic[E]):
             child._spec.orders = list(inc.orders)
             found.extend(await child._backend().run_query(child._spec))
 
-        theo_khoa: dict[Any, Any] = {}
+        by_key: dict[Any, Any] = {}
         for obj in found:
             key = getattr(obj, inc.other_field, None)
-            shaped = {ten: getattr(obj, cot, None) for ten, cot in inc.fields}
+            shaped = {out_name: getattr(obj, column_name, None) for out_name, column_name in inc.fields}
             if inc.to_list:
-                theo_khoa.setdefault(key, []).append(shaped)
+                by_key.setdefault(key, []).append(shaped)
             else:
-                theo_khoa.setdefault(key, shaped)
+                by_key.setdefault(key, shaped)
 
+        field_name = inc.name or _default_field_name(inc.entity, inc.to_list)
         for row in rows:
             key = row.get(inc.root_field)
-            row[inc.name] = theo_khoa.get(key, [] if inc.to_list else None)
+            row[field_name] = by_key.get(key, [] if inc.to_list else None)
 
     async def first(self) -> Any | None:
         """Dòng đầu tiên, hoặc None. Tự đặt `LIMIT 1`."""
@@ -1512,10 +1570,10 @@ class Query(Generic[E]):
         )
 
 
-def _ten_mac_dinh(entity: type, la_danh_sach: bool) -> str:
+def _default_field_name(entity: type, is_list: bool) -> str:
     """Tên trường mặc định: `events` cho danh sách, `camera` cho một object."""
-    ten = entity.__name__.lower()
-    return f"{ten}s" if la_danh_sach else ten
+    out_name = entity.__name__.lower()
+    return f"{out_name}s" if is_list else out_name
 
 
 def _link_between(outer: type, inner: type) -> NestLink:
@@ -1523,20 +1581,20 @@ def _link_between(outer: type, inner: type) -> NestLink:
     if outer is inner:
         raise BadRequestError(f"`nest_under(...)` có {outer.__name__} hai lần.")
 
-    ngoai = [(f, r) for f, r in mapping_for(outer).references if r.target is inner]
-    trong = [(f, r) for f, r in mapping_for(inner).references if r.target is outer]
+    outer_refs = [(f, r) for f, r in mapping_for(outer).references if r.target is inner]
+    inner_refs = [(f, r) for f, r in mapping_for(inner).references if r.target is outer]
 
-    if len(trong) == 1 and not ngoai:
-        field, ref = trong[0]
+    if len(inner_refs) == 1 and not outer_refs:
+        field, ref = inner_refs[0]
         return NestLink(outer, inner, ref.column, field, True)
-    if len(ngoai) == 1 and not trong:
-        field, ref = ngoai[0]
+    if len(outer_refs) == 1 and not inner_refs:
+        field, ref = outer_refs[0]
         return NestLink(outer, inner, field, ref.column, False)
-    if not ngoai and not trong:
+    if not outer_refs and not inner_refs:
         raise BadRequestError(
             f"`nest_under(..., {outer.__name__}, {inner.__name__}, ...)`: hai bảng này "
             f"không có khoá ngoại TRỰC TIẾP với nhau. Kể tên đủ các bảng trên đường "
-            f"đi ({_goi_y_duong_di(outer, inner)}), hoặc đổi thứ tự. Khung không tự "
+            f"đi ({_suggest_chain(outer, inner)}), hoặc đổi thứ tự. Khung không tự "
             f"sắp lại giúp: sắp sai thì dữ liệu sai mà không ai thấy."
         )
     raise BadRequestError(
@@ -1545,55 +1603,55 @@ def _link_between(outer: type, inner: type) -> NestLink:
     )
 
 
-def _goi_y_duong_di(a: type, b: type) -> str:
+def _suggest_chain(a: type, b: type) -> str:
     """Tìm đường đi ngắn nhất giữa hai bảng theo khoá ngoại, để mách trong lỗi."""
     from collections import deque
 
-    canh: dict[type, set[type]] = {}
-    for entity in list(_ENTITIES_CUA_KHUNG().values()):
+    edges: dict[type, set[type]] = {}
+    for entity in list(_registered_entities().values()):
         try:
             refs = mapping_for(entity).references
         except TypeError:
             continue
         for _, ref in refs:
-            canh.setdefault(entity, set()).add(ref.target)
-            canh.setdefault(ref.target, set()).add(entity)
+            edges.setdefault(entity, set()).add(ref.target)
+            edges.setdefault(ref.target, set()).add(entity)
 
-    hang, da_qua = deque([[a]]), {a}
-    while hang:
-        duong = hang.popleft()
-        if duong[-1] is b:
-            return " -> ".join(x.__name__ for x in duong)
-        for ke in canh.get(duong[-1], ()):
-            if ke not in da_qua:
-                da_qua.add(ke)
-                hang.append([*duong, ke])
+    queue, visited = deque([[a]]), {a}
+    while queue:
+        path = queue.popleft()
+        if path[-1] is b:
+            return " -> ".join(x.__name__ for x in path)
+        for neighbor in edges.get(path[-1], ()):
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append([*path, neighbor])
     return f"không có đường nào nối {a.__name__} với {b.__name__}"
 
 
-def _ENTITIES_CUA_KHUNG() -> dict[str, type]:
+def _registered_entities() -> dict[str, type]:
     from fastapi_modular.core.container import _ENTITIES
 
     return _ENTITIES
 
 
-def _cot_can_ghep(levels: list[NestLevel], links: list[NestLink]) -> list[set[str]]:
+def _link_columns(levels: list[NestLevel], links: list[NestLink]) -> list[set[str]]:
     """Mỗi lớp cần giữ lại những cột nào để ghép được với hai lớp cạnh nó."""
-    can: list[set[str]] = [set() for _ in levels]
+    needed: list[set[str]] = [set() for _ in levels]
     for i, link in enumerate(links):
-        can[i].add(link.outer_field)
-        can[i + 1].add(link.inner_field)
-    return can
+        needed[i].add(link.outer_field)
+        needed[i + 1].add(link.inner_field)
+    return needed
 
 
-def _khoa_theo_thu_tu(muc: list[tuple[dict[str, Any], dict[str, Any]]], field: str) -> list[Any]:
+def _keys_in_order(level_pairs: list[tuple[dict[str, Any], dict[str, Any]]], field: str) -> list[Any]:
     """Giá trị khoá theo thứ tự xuất hiện, bỏ trùng và bỏ None."""
-    ra: dict[Any, None] = {}
-    for khoa, _ in muc:
-        gia_tri = khoa.get(field)
+    out: dict[Any, None] = {}
+    for link_keys, _ in level_pairs:
+        gia_tri = link_keys.get(field)
         if gia_tri is not None:
-            ra[gia_tri] = None
-    return list(ra)
+            out[gia_tri] = None
+    return list(out)
 
 
 def _as_dict(entity: type, row: Any) -> dict[str, Any]:
@@ -1656,10 +1714,11 @@ def evaluate(condition: Condition, rows: dict[str, Any]) -> bool:
     if not isinstance(condition, Compare):
         raise BadRequestError(f"Điều kiện lạ: {condition!r}")
 
-    left = _value_of(condition.column, rows)
+    left = bind_value(_value_of(condition.column, rows))
     right = condition.value
     if isinstance(right, Column):
         right = _value_of(right, rows)
+    right = bind_value(right)
 
     op = condition.op
     if op == "isnull":
@@ -1743,7 +1802,7 @@ def sort_key(orders: Sequence[Order]) -> Any:
     def key(rows: dict[str, Any]) -> tuple:
         parts = []
         for order in orders:
-            value = _value_of(order.column, rows)
+            value = bind_value(_value_of(order.column, rows))
             # None xếp trước, giống NULLS FIRST mặc định của SQLite/Postgres ASC.
             parts.append((value is not None, value if value is not None else 0))
         return tuple(parts)

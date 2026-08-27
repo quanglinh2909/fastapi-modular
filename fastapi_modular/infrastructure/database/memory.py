@@ -6,9 +6,11 @@ một bản riêng nên KHÔNG được chạy nhiều worker với backend này
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import Any, TypeVar
 
 from fastapi_modular.core.container import _ENTITIES, Scope, injectable
@@ -61,6 +63,9 @@ class MemoryBackend(DatabaseBackend):
 
     def __init__(self) -> None:
         self._tables: dict[str, dict[str, Any]] = {}
+        self._tx_lock = asyncio.Lock()
+        # Độ sâu transaction CỦA TASK NÀY — để khối lồng nhau không tự khoá mình.
+        self._tx_depth: ContextVar[int] = ContextVar(f"memory_tx_depth_{id(self)}", default=0)
 
     async def startup(self) -> None:
         return None
@@ -80,8 +85,8 @@ class MemoryBackend(DatabaseBackend):
         import copy
 
         return {
-            ten: {khoa: copy.copy(obj) for khoa, obj in bang.items()}
-            for ten, bang in self._tables.items()
+            storage_name: {record_id: copy.copy(obj) for record_id, obj in records.items()}
+            for storage_name, records in self._tables.items()
         }
 
     def _restore_tables(self, snapshot: dict[str, dict[str, Any]]) -> None:
@@ -112,20 +117,38 @@ class MemoryBackend(DatabaseBackend):
 
         Lồng nhau thì khối trong tự chụp ảnh riêng, nên nó huỷ được phần của
         mình mà không đụng phần ngoài — giống SAVEPOINT của SQL.
+
+        Hai task ĐỒNG THỜI thì xếp hàng qua một khoá. Không có khoá thì ảnh
+        chụp là của CẢ kho: task A rollback sẽ trả kho về trước lúc A vào — xoá
+        luôn thứ task B đã commit trong lúc đó. Đo được: hai task ghi song
+        song, một task rollback, bản ghi ĐÃ COMMIT của task kia biến mất trên
+        memory trong khi sqlite giữ nguyên. Giá phải trả là transaction memory
+        chạy tuần tự — chấp nhận được cho backend dùng để test. Lưu ý một kẽ
+        hở nhỏ: task SINH RA bên trong một transaction thừa hưởng độ sâu qua
+        ContextVar nên không xếp hàng — đừng spawn task ghi dữ liệu từ trong
+        transaction.
         """
-        anh = self._copy_tables()
+        depth = self._tx_depth.get()
+        if depth == 0:
+            await self._tx_lock.acquire()
+        token = self._tx_depth.set(depth + 1)
+        snapshot = self._copy_tables()
         tx = Transaction()
         try:
             yield tx
         except RollbackRequested:
-            self._restore_tables(anh)        # tx.rollback(): huỷ, không ném tiếp
+            self._restore_tables(snapshot)        # tx.rollback(): huỷ, không ném tiếp
         except BaseException:
-            self._restore_tables(anh)
+            self._restore_tables(snapshot)
             raise
+        finally:
+            self._tx_depth.reset(token)
+            if depth == 0:
+                self._tx_lock.release()
 
     def _select(self, entity: type, filters: Filters, match: Match) -> list[Any]:
         active = active_filters(filters, entity)
-        return [o for o in self._table(entity).values() if matches(o, active, match)]
+        return [obj for obj in self._table(entity).values() if matches(obj, active, match)]
 
     async def get(self, entity: type[E], id_: str) -> E | None:
         return self._table(entity).get(id_)
@@ -142,7 +165,7 @@ class MemoryBackend(DatabaseBackend):
     ) -> list[E]:
         rows = self._select(entity, filters, match)
         if order_by:
-            rows.sort(key=lambda o: getattr(o, order_by, 0))
+            rows.sort(key=lambda obj: getattr(obj, order_by, 0))
         rows = rows[offset:]
         return rows[:limit] if limit is not None else rows
 
@@ -177,35 +200,35 @@ class MemoryBackend(DatabaseBackend):
 
         for join in spec.joins:
             others = list(self._table(join.entity).values())
-            da_khop: set[int] = set()
-            ghep: list[dict[str, Any]] = []
+            was_matched: set[int] = set()
+            merged: list[dict[str, Any]] = []
             for row in rows:
-                khop = [
-                    (i, o) for i, o in enumerate(others)
-                    if evaluate(join.on, {**row, join.alias: o})
+                matched = [
+                    (i, obj) for i, obj in enumerate(others)
+                    if evaluate(join.on, {**row, join.alias: obj})
                 ]
-                if khop:
-                    da_khop.update(i for i, _ in khop)
-                    ghep.extend({**row, join.alias: o} for _, o in khop)
+                if matched:
+                    was_matched.update(i for i, _ in matched)
+                    merged.extend({**row, join.alias: obj} for _, obj in matched)
                 elif join.keeps_left:
-                    ghep.append({**row, join.alias: None})
+                    merged.append({**row, join.alias: None})
             if join.keeps_right:
                 # RIGHT/FULL: thêm nốt những dòng bên PHẢI không khớp ai, với
                 # toàn bộ bên trái để trống.
-                trong = dict.fromkeys(aliases)
-                ghep.extend(
-                    {**trong, join.alias: o}
-                    for i, o in enumerate(others) if i not in da_khop
+                empty_row = dict.fromkeys(aliases)
+                merged.extend(
+                    {**empty_row, join.alias: obj}
+                    for i, obj in enumerate(others) if i not in was_matched
                 )
             aliases.append(join.alias)
-            rows = ghep
+            rows = merged
 
         for condition in spec.conditions:
             rows = [row for row in rows if evaluate(condition, row)]
 
         if spec.groups:
             rows = _group(spec, rows)
-        elif _co_ham_gop(spec):
+        elif _has_aggregate(spec):
             # `select(so=count())` không kèm `group_by` = gộp CẢ BẢNG thành một
             # nhóm, y như SQL. Bảng rỗng vẫn ra một dòng (`count` = 0).
             rows = [{**(rows[0] if rows else {}), _BUCKET: rows}]
@@ -319,22 +342,22 @@ class MemoryBackend(DatabaseBackend):
             return
         for child, column, ref in self._children_of(parent):
             table = self._table(child)
-            con = [o for o in table.values() if getattr(o, column, None) in ids]
-            if not con:
+            children = [obj for obj in table.values() if getattr(obj, column, None) in ids]
+            if not children:
                 continue
 
             if ref.on_delete == "CASCADE":
-                await self.delete_where_ids(child, [o.id for o in con])
+                await self.delete_where_ids(child, [obj.id for obj in children])
             elif ref.on_delete == "SET NULL":
-                for obj in con:
+                for obj in children:
                     setattr(obj, column, None)
             elif ref.on_delete == "SET DEFAULT":
                 value = default_of(child, column)
-                for obj in con:
+                for obj in children:
                     setattr(obj, column, value)
             else:                                   # RESTRICT / NO ACTION
                 raise ConflictError(
-                    f"Không xoá được {parent.__name__} vì còn {len(con)} "
+                    f"Không xoá được {parent.__name__} vì còn {len(children)} "
                     f"{child.__name__} trỏ tới nó ({column}). Xoá chúng trước, "
                     f'hoặc khai on_delete="CASCADE"/"SET NULL".'
                 )
@@ -360,7 +383,7 @@ class MemoryBackend(DatabaseBackend):
     async def delete_where(
         self, entity: type[E], *, filters: Filters, match: Match = None
     ) -> int:
-        ids = [o.id for o in self._select(entity, filters, match)]
+        ids = [obj.id for obj in self._select(entity, filters, match)]
         return await self.delete_where_ids(entity, ids)
 
 
@@ -370,7 +393,7 @@ def _read(row: dict[str, Any], column: Any) -> Any:
     return _value_of(column, row)
 
 
-def _co_ham_gop(spec: Any) -> bool:
+def _has_aggregate(spec: Any) -> bool:
     from fastapi_modular.infrastructure.database.query import Aggregate
 
     return any(isinstance(x, Aggregate) for x in spec.selects.values()) or bool(spec.havings)
@@ -386,8 +409,8 @@ def _group(spec: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     from fastapi_modular.infrastructure.database.query import BUCKET_KEY, _value_of
 
-    nhom: dict[tuple, list[dict[str, Any]]] = {}
+    buckets: dict[tuple, list[dict[str, Any]]] = {}
     for row in rows:
         key = tuple(_value_of(column, row) for column in spec.groups)
-        nhom.setdefault(key, []).append(row)
-    return [{**bucket[0], BUCKET_KEY: bucket} for bucket in nhom.values()]
+        buckets.setdefault(key, []).append(row)
+    return [{**bucket[0], BUCKET_KEY: bucket} for bucket in buckets.values()]

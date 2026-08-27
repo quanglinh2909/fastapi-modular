@@ -665,6 +665,27 @@ bằng `@entity(name="camera_list")`.
 | `Enum` | `VARCHAR(64)`, lưu bằng `.value` cho dễ đọc và dễ migrate |
 | *(kiểu khác)* | `VARCHAR` |
 
+Cột `Enum` **lọc bằng gì cũng được** — thành viên Enum hay chuỗi `.value` đều
+khớp, trên cả ba backend:
+
+```python
+class DeviceKind(Enum):
+    NORMAL = "thuong"
+    SPECIAL = "dac_biet"
+
+
+@entity()
+@dataclass(slots=True)
+class Device(Entity):
+    id: str
+    kind: DeviceKind = DeviceKind.NORMAL
+```
+
+```python
+await devices.find(kind=DeviceKind.SPECIAL)   # thành viên Enum
+await devices.find(kind="dac_biet")           # chuỗi từ JSON của client — cũng khớp
+```
+
 Trường cho phép trống thì khai `| None` và cho mặc định `None`:
 
 ```python
@@ -1731,6 +1752,29 @@ await (logs.query()
 Không kể bảng gốc thì nó nằm trong cùng: `nest_under(Camera)` chính là
 `nest_under(Camera, CameraLog)`.
 
+Repo là bảng **trong cùng** (`ItemLog`) cũng lồng ra được y như vậy — kể cả
+`include(Camera)` khi Camera KHÔNG có khoá ngoại trực tiếp với ItemLog, miễn là
+chuỗi `nest_under` nối được tới nó:
+
+```python
+await (item_logs.query()
+       .select("id", "note")
+       .include(CameraLog, fields=["id", "label"])
+       .include(Camera, fields=["id", "name"])
+       .nest_under(Camera, CameraLog, ItemLog)
+       .all())
+```
+
+Bảng nào không có khoá ngoại trực tiếp với bảng gốc mà cũng **không** nằm trong
+chuỗi thì lỗi vẫn ném — nhưng ném lúc `.all()`, không phải lúc `include(...)`.
+
+Tên trường của từng lớp lấy từ `include(X, name=…)`:
+
+```python
+.include(CameraLog, name="log_cua_no")
+# [{"id": "c1", "log_cua_no": [{…, "itemlogs": [...]}]}]
+```
+
 **Chiều khoá ngoại quyết định lớp trong là danh sách hay một object.** Khoá
 ngoại nằm bên lớp trong → một dòng ngoài có nhiều dòng trong (`list`); nằm bên
 lớp ngoài → ngược lại, lớp trong là **một object**:
@@ -1780,6 +1824,19 @@ Ba điều dễ vấp:
 - **Dòng có khoá ngoại NULL bị bỏ** — nó không thuộc cha nào để gom vào.
 - Thứ tự camera theo sự kiện đầu tiên của nó, nên `.order_by_desc(...)` của bảng gốc
   vẫn có tác dụng.
+
+Muốn sắp **theo cột của một lớp** thì cứ nêu thẳng cột của lớp đó — khung tự
+xếp ở đúng lớp, không cần `join`:
+
+```python
+await (events.query().select("id")
+       .nest_under(Camera, fields=["id", "name"])
+       .order_by_desc(Camera.name)          # sắp DANH SÁCH camera lớp ngoài
+       .all())
+```
+
+Cột không thuộc bảng gốc, bảng đã `join`, hay lớp nào trong chuỗi thì báo lỗi
+thẳng — cả ba backend cùng một kiểu.
 
 Cũng đúng một câu lệnh nữa, y như `include`.
 
@@ -2197,7 +2254,9 @@ assert await cameras.query().count() == 0     # còn 1 là transaction chưa ăn
 **Backend `memory` cũng rollback**, cả trong `transaction()` lẫn khi handler ném
 lỗi — nó chụp ảnh dữ liệu rồi trả lại. Không có phần này thì test kiểu "hỏng
 giữa chừng thì không được ghi gì" sẽ đỏ ở `fam test` trong khi production chạy
-đúng.
+đúng. Hai transaction **đồng thời** trên memory thì xếp hàng chạy lần lượt
+(SQL thật cho chạy song song) — kết quả giống nhau, chỉ khác tốc độ, và test
+thì không đo tốc độ transaction trên memory.
 
 **MongoDB một node thì `transaction()` ném lỗi**, không giả vờ — xem
 [mongodb.md](mongodb.md#không-có-transaction-và-làm-gì-thay-thế) để biết dùng gì

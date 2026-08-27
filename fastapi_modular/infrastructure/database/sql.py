@@ -55,6 +55,7 @@ from fastapi_modular.infrastructure.database.base import (
     RollbackRequested,
     Transaction,
     active_filters,
+    bind_value,
     coerce_value,
     from_document,
     mapping_for,
@@ -642,7 +643,7 @@ class SqlBackend(DatabaseBackend):
             await conn.close()
 
     def _where(self, entity: type, table: Table, filters: Filters) -> list[Any]:
-        return [table.c[k] == v for k, v in active_filters(filters, entity).items()]
+        return [table.c[k] == bind_value(v) for k, v in active_filters(filters, entity).items()]
 
     def _row_to_entity(self, entity: type[E], row: Any) -> E:
         return from_document(entity, dict(row._mapping))
@@ -750,7 +751,7 @@ class SqlBackend(DatabaseBackend):
                 )
             return table.c[column.field]
 
-        def gop(item: Aggregate) -> Any:
+        def agg(item: Aggregate) -> Any:
             if item.column is None:
                 return func.count()
             inner = col(item.column)
@@ -759,7 +760,7 @@ class SqlBackend(DatabaseBackend):
             return getattr(func, item.func)(inner)
 
         def value_of(item: Any) -> Any:
-            return gop(item) if isinstance(item, Aggregate) else col(item)
+            return agg(item) if isinstance(item, Aggregate) else col(item)
 
         def build(condition: Any) -> Any:
             if isinstance(condition, Group):
@@ -774,6 +775,10 @@ class SqlBackend(DatabaseBackend):
             value = condition.value
             if isinstance(value, (QColumn, Aggregate)):
                 value = value_of(value)
+            else:
+                # Enum quy về `.value` trước khi bind — driver không tự mã hoá
+                # Enum thường, và cột đằng nào cũng lưu bằng `.value`.
+                value = bind_value(value)
             op = condition.op
             if op == "isnull":
                 return left.is_(None) if value else left.isnot(None)

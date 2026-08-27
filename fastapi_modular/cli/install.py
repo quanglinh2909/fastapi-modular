@@ -77,7 +77,7 @@ def install(name: str, *, write_env: bool = True, env_file: object = None) -> in
             print(f"\n'{name}' không có biến cấu hình riêng — không ghi .env.")
         return 0
 
-    from fastapi_modular.cli.configure_env import main as ghi
+    from fastapi_modular.cli.configure_env import main as written
 
     print()
-    return ghi(block, Path(env_file) if env_file else Path(".env"))
+    return written(block, Path(env_file) if env_file else Path(".env"))

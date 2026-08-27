@@ -276,10 +276,29 @@ def from_document(entity: type[E], doc: dict[str, Any]) -> E:
     return entity(**kwargs)  # type: ignore[call-arg]
 
 
+def bind_value(value: Any) -> Any:
+    """Giá trị đem đi so sánh — Enum quy về `.value`, danh sách quy từng phần tử.
+
+    Vì sao phải có: cột Enum được LƯU bằng `.value` (SQL lưu chuỗi, Mongo cũng
+    vậy), nên mọi phép so phải so trên `.value`. Thiếu chỗ này thì ba backend
+    lệch nhau theo đúng kiểu tệ nhất — đo được với Enum THƯỜNG (không phải
+    StrEnum): `find(kind=Kind.B)` chạy trên memory nhưng NỔ trên sqlite
+    ("type 'Kind' is not supported") lẫn mongo ("cannot encode object"), tức
+    `fam test` xanh mà production đổ. Chiều ngược lại cũng lệch: lọc bằng chuỗi
+    `"dac_biet"` thì SQL khớp (so chuỗi với chuỗi) còn memory trượt (so chuỗi
+    với Enum).
+    """
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, (list, tuple, set)):
+        return [bind_value(v) for v in value]
+    return value
+
+
 def matches(obj: Any, filters: Filters, match: Match) -> bool:
     """Lọc trong Python — dùng cho backend memory và cho tham số `match=`."""
     for key, value in filters.items():
-        if getattr(obj, key, None) != value:
+        if bind_value(getattr(obj, key, None)) != bind_value(value):
             return False
     return match is None or match(obj)
 
@@ -296,10 +315,10 @@ def check_value(value: Any, where: str = "điều kiện") -> Any:
     postgres ném lỗi driver khó hiểu còn mongo thì lặng lẽ cho qua.
     """
     if isinstance(value, dict):
-        toan_tu = [k for k in value if isinstance(k, str) and k.startswith("$")]
-        if toan_tu:
+        operators = [k for k in value if isinstance(k, str) and k.startswith("$")]
+        if operators:
             raise BadRequestError(
-                f"{where}: giá trị chứa toán tử của database ({', '.join(toan_tu)}). "
+                f"{where}: giá trị chứa toán tử của database ({', '.join(operators)}). "
                 "Gần như luôn là dữ liệu người dùng gửi lên thẳng vào truy vấn — "
                 "ép kiểu nó về str/int/bool trước (pydantic làm sẵn việc này)."
             )
@@ -317,19 +336,19 @@ def active_filters(filters: Filters, entity: type | None = None) -> Filters:
     biến mất) còn trên Mongo thì chạy JavaScript ngay trên server. Cùng một
     hàm mà một bên lộ dữ liệu, một bên chạy mã lạ.
     """
-    sach = {k: v for k, v in filters.items() if v is not None}
+    cleaned = {k: v for k, v in filters.items() if v is not None}
     if entity is None:
-        return sach
+        return cleaned
 
     known = mapping_for(entity).fields
-    for name, value in sach.items():
+    for name, value in cleaned.items():
         if name not in known:
             raise BadRequestError(
                 f"{entity.__name__} không có trường {name!r}. "
                 f"Có: {', '.join(sorted(known))}"
             )
         check_value(value, f"Điều kiện {name!r}")
-    return sach
+    return cleaned
 
 
 class RollbackRequested(Exception):

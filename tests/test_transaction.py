@@ -182,6 +182,31 @@ async def test_loi_khong_bi_nuot(kho):
     assert await ids(cameras) == []
 
 
+async def test_hai_task_dong_thoi_khong_nuot_du_lieu_cua_nhau(kho):
+    """Task A rollback thì KHÔNG được xoá thứ task B đã commit song song.
+
+    Chỗ này backend memory từng hỏng: ảnh chụp là của CẢ kho, A rollback trả
+    kho về trước lúc A vào — cuốn theo luôn bản ghi B vừa commit. Đo được:
+    memory mất "t1" trong khi sqlite giữ. Giờ transaction memory xếp hàng qua
+    một khoá nên hai backend cho cùng kết quả.
+    """
+    import asyncio
+
+    db, cameras, _ = kho
+
+    async def ghi(i: int) -> None:
+        async with db.transaction() as tx:
+            await cameras.save(TxCamera(id=f"t{i}", name=f"task {i}"))
+            await asyncio.sleep(0.02)      # đủ để hai task gối lên nhau nếu không có khoá
+            if i == 0:
+                await tx.rollback()
+
+    await asyncio.gather(ghi(0), ghi(1))
+
+    assert await cameras.get("t0") is None, "task 0 đã rollback"
+    assert await cameras.get("t1") is not None, "commit của task 1 phải còn"
+
+
 # ------------------------------------------------ transaction của cả request
 @injectable
 class TxService:

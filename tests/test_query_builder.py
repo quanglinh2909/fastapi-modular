@@ -652,8 +652,11 @@ async def test_include_khong_co_khoa_ngoai_thi_bao_ro(kho):
     class QRoi:
         id: str
 
+    # Lỗi ném lúc `.all()`, không phải lúc `include()`: bảng không có khoá
+    # ngoại trực tiếp vẫn hợp lệ NẾU nó nằm trong chuỗi `nest_under(...)` —
+    # phải đợi đến lúc chạy mới biết nó có đứng trong chuỗi hay không.
     with pytest.raises(BadRequestError) as loi:
-        events.query().include(QRoi)
+        await events.query().include(QRoi).all()
     assert "reference" in str(loi.value)
 
 
@@ -1036,6 +1039,81 @@ async def test_chuoi_ba_muc_ngoai_vao_trong(kho):
         {"id": "c2", "name": "Kho hàng",
          "qevents": [{"id": "e3", "qitems": [{"id": "i3"}]}]},
     ]
+
+
+async def test_chuoi_ba_tang_tu_repo_SAU_NHAT(kho):
+    """Repo là bảng TRONG CÙNG (QItem) vẫn lồng ra được ba tầng.
+
+    Chỗ này từng hỏng: `include(QCamera)` ném lỗi ngay vì QCamera không có
+    khoá ngoại trực tiếp với QItem — dù chuỗi `nest_under` nối được qua QEvent.
+    Giờ lỗi đó chỉ ném khi bảng thật sự đứng NGOÀI chuỗi.
+    """
+    events, _ = kho
+    items = Repository(QItem, events._db)
+
+    rows = await (
+        items.query()
+        .select("id")
+        .include(QEvent, fields=["id"])
+        .include(QCamera, fields=["id", "name"])
+        .nest_under(QCamera, QEvent, QItem)
+        .all()
+    )
+    assert rows == [
+        {"id": "c1", "name": "Cổng chính",
+         "qevents": [{"id": "e0", "qitems": [{"id": "i1"}, {"id": "i2"}]}]},
+        {"id": "c2", "name": "Kho hàng",
+         "qevents": [{"id": "e3", "qitems": [{"id": "i3"}]}]},
+    ]
+
+
+async def test_include_name_duoc_ton_trong_trong_chuoi(kho):
+    """`include(X, name="...")` đặt tên trường cho lớp X ở trong chuỗi.
+
+    Từng bị bỏ qua: tên lớp chỉ lấy từ `nest_under(name=)`, còn `name=` của
+    `include` biến mất không lỗi — docs hứa một đằng, code làm một nẻo.
+    """
+    events, _ = kho
+    items = Repository(QItem, events._db)
+
+    rows = await (
+        items.query()
+        .select("id")
+        .include(QEvent, name="su_kien", fields=["id"])
+        .include(QCamera, fields=["id"])
+        .nest_under(QCamera, QEvent, QItem)
+        .all()
+    )
+    assert [sorted(r) for r in rows] == [["id", "su_kien"], ["id", "su_kien"]]
+
+
+async def test_order_theo_cot_cua_LOP_trong_chuoi(kho):
+    """`order_by_*(QCamera.name)` khi QCamera là một lớp: xếp đúng lớp đó.
+
+    Từng lệch ba kiểu: sqlite ném "bảng chưa có trong truy vấn", memory lặng
+    lẽ bỏ qua, mongo cũng lặng lẽ — giờ cả ba cùng xếp lớp ngoài theo cột đó.
+    """
+    events, _ = kho
+
+    rows = await (events.query().select("id")
+                  .nest_under(QCamera, fields=["id", "name"])
+                  .order_by_desc(QCamera.name).all())
+    assert [r["name"] for r in rows] == ["Kho hàng", "Cổng chính"]
+
+    rows = await (events.query().select("id")
+                  .nest_under(QCamera, fields=["id", "name"])
+                  .order_by_asc(QCamera.name).limit(2).offset(1).all())
+    # limit/offset vẫn đếm theo bảng GỐC (sự kiện), như docs nói
+    assert all("name" in r for r in rows)
+
+
+async def test_order_theo_cot_khong_thuoc_dau_bi_chan(kho):
+    """Cột không thuộc bảng gốc, bảng join, hay lớp nào — chặn rõ, cả ba backend."""
+    events, _ = kho
+
+    with pytest.raises(BadRequestError, match="không thuộc"):
+        await (events.query().select("id").nest_under(QCamera)
+               .order_by_asc(QItem.note).all())
 
 
 async def test_chuoi_chi_them_MOT_cau_lenh_cho_MOI_muc(kho):

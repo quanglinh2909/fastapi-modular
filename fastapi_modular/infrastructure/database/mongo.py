@@ -11,7 +11,6 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from enum import Enum
 from typing import Any, TypeVar
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
@@ -25,6 +24,7 @@ from fastapi_modular.infrastructure.database.base import (
     Filters,
     Match,
     active_filters,
+    bind_value,
     coerce_value,
     default_of,
     from_document,
@@ -119,7 +119,10 @@ class MongoBackend(DatabaseBackend):
         return self._client[self._database_name][mapping_for(entity).storage]
 
     def _query(self, entity: type, filters: Filters) -> dict[str, Any]:
-        query = active_filters(filters, entity)
+        # `bind_value`: Enum thường mà để nguyên thì pymongo ném
+        # InvalidDocument, trong khi backend memory chạy — lệch đúng kiểu
+        # `fam test` xanh, production đổ.
+        query = {k: bind_value(v) for k, v in active_filters(filters, entity).items()}
         if "id" in query:
             query["_id"] = query.pop("id")
         return query
@@ -152,7 +155,7 @@ class MongoBackend(DatabaseBackend):
 
         items = [from_document(entity, _from_mongo(d)) async for d in cursor]
         if match is not None:
-            items = [o for o in items if match(o)][offset:]
+            items = [obj for obj in items if match(obj)][offset:]
             if limit is not None:
                 items = items[:limit]
         return items
@@ -182,12 +185,12 @@ class MongoBackend(DatabaseBackend):
         from fastapi_modular.infrastructure.database.query import Aggregate
 
         if spec.joins:
-            ten = spec.joins[0].entity.__name__
+            joined_name = spec.joins[0].entity.__name__
             raise BadRequestError(
-                f"MongoDB không có JOIN. Cần dữ liệu của {ten} thì dùng "
-                f"`.include({ten})` (gắn vào kết quả) hoặc `.nest_under({ten})` "
+                f"MongoDB không có JOIN. Cần dữ liệu của {joined_name} thì dùng "
+                f"`.include({joined_name})` (gắn vào kết quả) hoặc `.nest_under({joined_name})` "
                 f"(đảo chiều) — cả hai chạy được trên Mongo. Cần LỌC theo cột của "
-                f"{ten} thì phải đổi APP_DB__DRIVER sang postgres/sqlite."
+                f"{joined_name} thì phải đổi APP_DB__DRIVER sang postgres/sqlite."
             )
         if spec.groups or spec.havings or any(
             isinstance(x, Aggregate) for x in spec.selects.values()
@@ -205,9 +208,9 @@ class MongoBackend(DatabaseBackend):
 
     def _find_args(self, spec: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """(điều kiện, projection) cho `find()`."""
-        loc = _and([_condition_to_filter(spec.entity, c) for c in spec.conditions])
+        criteria = _and([_condition_to_filter(spec.entity, c) for c in spec.conditions])
         if not spec.selects:
-            return loc, None
+            return criteria, None
 
         # Projection: xin đúng cột cần. `_id` thì Mongo luôn trả về nên tắt tay
         # nếu không ai xin — không đổi kết quả, chỉ bớt dữ liệu truyền về.
@@ -216,16 +219,16 @@ class MongoBackend(DatabaseBackend):
             chieu[_field(column.field)] = 1
         if "_id" not in chieu:
             chieu["_id"] = 0
-        return loc, chieu
+        return criteria, chieu
 
     async def run_query(self, spec: Any) -> list[Any]:
         self._check_supported(spec)
-        loc, chieu = self._find_args(spec)
+        criteria, chieu = self._find_args(spec)
 
-        cursor = self._collection(spec.entity).find(loc, chieu)
+        cursor = self._collection(spec.entity).find(criteria, chieu)
         if spec.orders:
             cursor = cursor.sort([
-                (_field(o.column.field), -1 if o.descending else 1) for o in spec.orders
+                (_field(obj.column.field), -1 if obj.descending else 1) for obj in spec.orders
             ])
         if spec.offset:
             cursor = cursor.skip(spec.offset)
@@ -239,16 +242,16 @@ class MongoBackend(DatabaseBackend):
         fields = mapping_for(spec.entity).fields
         return [
             {
-                ten: coerce_value(fields[c.field], d.get(_field(c.field)))
-                for ten, c in spec.selects.items()
+                joined_name: coerce_value(fields[c.field], d.get(_field(c.field)))
+                for joined_name, c in spec.selects.items()
             }
             for d in docs
         ]
 
     async def count_query(self, spec: Any) -> int:
         self._check_supported(spec)
-        loc, _ = self._find_args(spec)
-        return int(await self._collection(spec.entity).count_documents(loc))
+        criteria, _ = self._find_args(spec)
+        return int(await self._collection(spec.entity).count_documents(criteria))
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
@@ -294,8 +297,8 @@ class MongoBackend(DatabaseBackend):
             value = getattr(obj, column, None)
             if value is None:                      # NULL nghĩa là "chưa gắn", hợp lệ
                 continue
-            cha = await self._collection(ref.target).find_one({"_id": value}, {"_id": 1})
-            if cha is None:
+            parent_doc = await self._collection(ref.target).find_one({"_id": value}, {"_id": 1})
+            if parent_doc is None:
                 raise ConflictError(
                     f"{entity.__name__}.{column} = {value!r} nhưng không có "
                     f"{ref.target.__name__} nào mang id đó."
@@ -321,23 +324,23 @@ class MongoBackend(DatabaseBackend):
                 if ref.target is not parent:
                     continue
                 collection = self._collection(child)
-                loc = {column: {"$in": ids}}
+                criteria = {column: {"$in": ids}}
                 if ref.on_delete == "CASCADE":
-                    con = [doc["_id"] async for doc in collection.find(loc, {"_id": 1})]
-                    if con:
-                        await self._cascade(child, con)
-                        await collection.delete_many(loc)
+                    children = [doc["_id"] async for doc in collection.find(criteria, {"_id": 1})]
+                    if children:
+                        await self._cascade(child, children)
+                        await collection.delete_many(criteria)
                 elif ref.on_delete == "SET NULL":
-                    await collection.update_many(loc, {"$set": {column: None}})
+                    await collection.update_many(criteria, {"$set": {column: None}})
                 elif ref.on_delete == "SET DEFAULT":
                     await collection.update_many(
-                        loc, {"$set": {column: default_of(child, column)}}
+                        criteria, {"$set": {column: default_of(child, column)}}
                     )
                 else:                                # RESTRICT / NO ACTION
-                    con = await collection.count_documents(loc)
-                    if con:
+                    children = await collection.count_documents(criteria)
+                    if children:
                         raise ConflictError(
-                            f"Không xoá được {parent.__name__} vì còn {con} "
+                            f"Không xoá được {parent.__name__} vì còn {children} "
                             f"{child.__name__} trỏ tới nó ({column}). Xoá chúng "
                             'trước, hoặc khai on_delete="CASCADE"/"SET NULL".'
                         )
@@ -358,7 +361,7 @@ class MongoBackend(DatabaseBackend):
             return removed
 
         query = self._query(entity, filters)
-        if mapping_for(entity).references or _co_con(entity):
+        if mapping_for(entity).references or _has_children(entity):
             ids = [doc["_id"] async for doc in self._collection(entity).find(query, {"_id": 1})]
             await self._cascade(entity, ids)
         result = await self._collection(entity).delete_many(query)
@@ -373,11 +376,7 @@ def _field(name: str) -> str:
 
 def _value(value: Any) -> Any:
     """Giá trị đem đi so sánh — Enum lưu bằng `.value` nên phải so bằng `.value`."""
-    if isinstance(value, Enum):
-        return value.value
-    if isinstance(value, (list, tuple)):
-        return [_value(v) for v in value]
-    return value
+    return bind_value(value)
 
 
 def _like_to_regex(pattern: str) -> str:
@@ -431,11 +430,11 @@ def _condition_to_filter(entity: type, condition: Any) -> dict[str, Any]:
     name, op, value = _field(column.field), condition.op, condition.value
     if isinstance(value, Column):
         # So cột với cột trong CÙNG một document: phải dùng $expr.
-        toan_tu = {"eq": "$eq", "ne": "$ne", "gt": "$gt", "gte": "$gte",
+        operators = {"eq": "$eq", "ne": "$ne", "gt": "$gt", "gte": "$gte",
                    "lt": "$lt", "lte": "$lte"}.get(op)
-        if toan_tu is None:
+        if operators is None:
             raise BadRequestError(f"MongoDB chưa hỗ trợ `{op}` giữa hai cột.")
-        return {"$expr": {toan_tu: [f"${name}", f"${_field(value.field)}"]}}
+        return {"$expr": {operators: [f"${name}", f"${_field(value.field)}"]}}
 
     value = _value(value)
     if op == "isnull":
@@ -453,14 +452,14 @@ def _condition_to_filter(entity: type, condition: Any) -> dict[str, Any]:
     if op == "between":
         return {name: {"$gte": value[0], "$lte": value[1]}}
     if op in ("like", "ilike"):
-        loc = {"$regex": _like_to_regex(value)}
+        criteria = {"$regex": _like_to_regex(value)}
         if op == "ilike":
-            loc["$options"] = "i"
-        return {name: loc}
+            criteria["$options"] = "i"
+        return {name: criteria}
     raise BadRequestError(f"Toán tử {op!r} chưa cài cho MongoDB")
 
 
-def _co_con(parent: type) -> bool:
+def _has_children(parent: type) -> bool:
     """Có entity nào trỏ tới `parent` không — để khỏi truy vấn id thừa."""
     return any(
         ref.target is parent
