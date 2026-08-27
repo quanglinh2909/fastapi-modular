@@ -535,6 +535,26 @@ def strip_managed_block(text: str, section: str = "database") -> str:
     return (head.rstrip("\n") + "\n" + tail.lstrip("\n")).rstrip("\n")
 
 
+def _ensure_base(body: str, env_path: Path) -> str:
+    """Khối biến gốc (APP_NAME, APP_ENV, APP_HOST...) — thêm nếu .env chưa có.
+
+    Vì sao cần: `fam install sqlite` chạy trong thư mục chưa `fam init` chỉ ghi
+    khối database, nên .env có APP_DB__* mà không có APP_NAME/APP_ENV/APP_HOST/
+    APP_PORT nào. App vẫn chạy — bằng toàn giá trị mặc định, im lặng — và người
+    ta chỉ phát hiện khi thấy tên service sai trong log hoặc cổng không như mong
+    đợi. Đây là lúc rẻ nhất để thêm.
+
+    Chỉ xét APP_NAME: có nó nghĩa là .env đã qua tay `fam init` hoặc người dùng
+    tự viết, và khi ấy đừng chèn gì thêm.
+    """
+    from fastapi_modular.cli.new_project import BASE_ENV, clean_name
+
+    if any(line.strip().startswith("APP_NAME=") for line in body.splitlines()):
+        return ""
+    root = env_path.parent.resolve()
+    return BASE_ENV.format(name=clean_name(root.name))
+
+
 def main(driver: str, env_path: Path) -> int:
     block = BLOCKS.get(driver)
     if block is None:
@@ -545,6 +565,9 @@ def main(driver: str, env_path: Path) -> int:
     existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
     had_block = begin in existing
     body = strip_managed_block(existing, block.section)
+    base = _ensure_base(body, env_path)
+    if base:
+        body = (base + "\n" + body).rstrip("\n") if body else base.rstrip("\n")
 
     # SQLite ghi thẳng ra file: thiếu thư mục là lần chạy đầu tiên chết ngay,
     # với một lỗi nói về "unable to open database file" chứ không nói thiếu gì.

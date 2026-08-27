@@ -23,6 +23,8 @@ import re
 import unicodedata
 from pathlib import Path
 
+from fastapi_modular import __version__
+
 VALID_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 REPO = "https://github.com/quanglinh2909/fastapi-modular"
@@ -187,12 +189,17 @@ class HealthController:
         return {"status": "ok", "service": self._settings.name}
 '''
 
-ENV = """APP_NAME={name}
+# Năm biến gốc, tách riêng vì `fam install` cũng cần: chạy `fam install sqlite`
+# trong một thư mục chưa `fam init` thì .env chỉ có khối database, thiếu sạch
+# APP_NAME/APP_ENV/APP_HOST — app chạy với toàn giá trị mặc định mà không ai báo.
+BASE_ENV = """APP_NAME={name}
 APP_ENV=local
 APP_DEBUG=true
 APP_HOST=0.0.0.0
 APP_PORT=8000
+"""
 
+ENV = BASE_ENV + """
 # Chưa chọn database thì app chạy bằng bộ nhớ tạm (mất dữ liệu khi restart).
 # Thêm database:  fam install sqlite     (hoặc postgres, mongodb)
 # Thêm hàng đợi:  fam install rabbitmq   (hoặc redis, mqtt, kafka)
@@ -200,6 +207,16 @@ APP_PORT=8000
 #
 # Biến của RIÊNG bạn: thêm thẳng vào đây, rồi khai trong src/core/config.py.
 # APP_TEAM_NAME=to-backend
+"""
+
+REQUIREMENTS = """\
+# Thư viện của dự án. Người khác clone về chỉ cần:
+#     pip install -r requirements.txt
+#
+# `fam install <thành-phần>` tự cập nhật dòng dưới — cài thêm redis thì nó thành
+# fastapi-modular[redis,sqlite]>=... Đừng liệt kê tay sqlalchemy hay motor:
+# khoảng phiên bản của chúng do fastapi-modular giữ.
+fastapi-modular>={version}
 """
 
 GITIGNORE = """# ---------------------------------------------------------------- Python
@@ -289,9 +306,13 @@ Dựng bằng [fastapi-modular]({repo}) — FastAPI theo kiến trúc module ki�
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install fastapi-modular
+pip install -r requirements.txt
 fam dev                      # http://localhost:8000/docs
 ```
+
+`requirements.txt` là chỗ ghi nhớ thư viện của dự án. `fam install sqlite` (hay
+redis, rabbitmq...) vừa cài vừa cập nhật file này, nên người tiếp theo clone về
+chỉ cần đúng lệnh trên — không phải đoán xem dự án cần driver nào.
 
 ## Cấu trúc
 
@@ -303,6 +324,9 @@ src/
 │   └── lifespan.py    việc lúc khởi động / lúc tắt của riêng bạn
 └── api/               mỗi thư mục con là một module; thêm module KHÔNG phải sửa main.py
     └── health/
+
+.env                   cấu hình — KHÔNG commit
+requirements.txt       thư viện của dự án, `fam install` tự cập nhật
 ```
 
 ## Lệnh
@@ -453,6 +477,7 @@ def _content(name: str) -> dict[str, str]:
         "src/api/health/__init__.py": '"""Module health."""\n',
         "src/api/health/health_controller.py": HEALTH,
         ".env": ENV.format(name=name),
+        "requirements.txt": REQUIREMENTS.format(version=__version__),
         ".gitignore": GITIGNORE,
         "README.md": README.format(name=name, vi_du="alerts", repo=REPO),
     }

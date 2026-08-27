@@ -81,8 +81,23 @@ fam install rabbitmq    # hoặc redis, mqtt, kafka
 fam install all         # tất cả
 ```
 
-`fam install` vừa cài thư viện vừa ghi biến vào `.env`. Muốn tự cài bằng pip
-cũng được: `pip install "fastapi-modular[sqlite,rabbitmq]"`.
+`fam install` làm ba việc: cài thư viện, ghi biến vào `.env`, và **ghi nhớ thành
+phần vào `requirements.txt`** để đồng nghiệp clone repo về chỉ cần
+`pip install -r requirements.txt` — đúng việc `package.json` làm cho `npm i`.
+
+```
+# requirements.txt, sau khi `fam install sqlite` rồi `fam install redis`
+fastapi-modular[redis,sqlite]>=0.2.1
+```
+
+Nó ghi extras chứ không liệt kê từng gói con: khoảng phiên bản của
+`sqlalchemy`, `motor`... là chuyện của fastapi-modular và đổi theo từng bản, nên
+chép phẳng ra là đóng băng một bản chụp sẽ lạc hậu trong im lặng. Dự án dùng
+`pyproject.toml` mà đã khai fastapi-modular trong đó thì lệnh sửa ngay dòng ấy,
+không đẻ thêm `requirements.txt`. `fam install dev` đi vào `requirements-dev.txt`
+— production không việc gì phải cài pytest.
+
+Muốn tự cài bằng pip cũng được: `pip install "fastapi-modular[sqlite,rabbitmq]"`.
 
 ## Lệnh
 
@@ -424,7 +439,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              1070 test chạy không cần hạ tầng, 292 test nữa cần driver/server thật
+tests/              1090 test chạy không cần hạ tầng, 292 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 

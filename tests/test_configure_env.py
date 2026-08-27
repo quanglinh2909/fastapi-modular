@@ -193,3 +193,49 @@ def test_thay_duoc_khoi_sinh_boi_moc_cu(tmp_path: Path):
     # Dòng ngoài khối vẫn nguyên vẹn.
     assert "APP_PORT=8002" in content
     assert "CUA_TOI=1" in content
+
+
+def test_env_chua_co_thi_them_luon_khoi_bien_goc(tmp_path: Path):
+    """`fam install sqlite` trong thư mục chưa `fam init` vẫn phải ra .env đủ dùng.
+
+    Trước đây chỉ ghi khối database, nên .env có APP_DB__* mà không có
+    APP_NAME/APP_ENV/APP_HOST/APP_PORT nào. App vẫn chạy — bằng toàn giá trị
+    mặc định, im lặng — rồi người ta ngồi tìm vì sao tên service trong log không
+    phải tên dự án của mình.
+    """
+    duan = tmp_path / "pythonproject"
+    duan.mkdir()
+    env = duan / ".env"
+
+    assert main("sqlite", env) == 0
+
+    content = env.read_text(encoding="utf-8")
+    assert "APP_NAME=pythonproject" in content, "tên lấy theo thư mục, như `fam init`"
+    for key in ("APP_ENV=local", "APP_DEBUG=true", "APP_HOST=0.0.0.0", "APP_PORT=8000"):
+        assert key in content
+    # Khối gốc đứng TRƯỚC khối được quản lý, để đọc từ trên xuống là thấy ngay.
+    assert content.index("APP_NAME=") < content.index(begin_marker("database"))
+    assert "APP_DB__DRIVER=sqlite" in content
+
+
+def test_env_da_co_APP_NAME_thi_khong_chen_them(tmp_path: Path):
+    """Đã `fam init` rồi (hoặc người dùng tự viết) thì đừng đụng vào."""
+    env = tmp_path / ".env"
+    env.write_text("APP_NAME=ten-rieng-cua-toi\nAPP_PORT=9000\n", encoding="utf-8")
+
+    assert main("redis", env) == 0
+
+    content = env.read_text(encoding="utf-8")
+    assert content.count("APP_NAME=") == 1
+    assert "APP_NAME=ten-rieng-cua-toi" in content
+    assert "APP_PORT=9000" in content, "cổng người dùng chọn không bị ghi đè"
+    assert "APP_HOST=" not in content, "không tự thêm biến vào .env người ta đang giữ"
+
+
+def test_ten_thu_muc_co_dau_duoc_lam_sach(tmp_path: Path):
+    duan = tmp_path / "Dự Án Mới"
+    duan.mkdir()
+
+    assert main("mongodb", duan / ".env") == 0
+
+    assert "APP_NAME=du-an-moi" in (duan / ".env").read_text(encoding="utf-8")

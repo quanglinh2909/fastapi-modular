@@ -120,6 +120,22 @@ def test_trung_ten_bi_chan(monkeypatch):
         discover_scheduled()
 
 
+async def cho_den_khi(dieu_kien, han: float = 5.0) -> None:
+    """Chờ tới khi điều kiện đúng, tối đa `han` giây.
+
+    Thay cho `asyncio.sleep(0.32)` rồi khẳng định "chắc chạy đủ 3 lượt rồi":
+    phép đó đúng trên máy rảnh và ĐỎ khi máy bận (chạy cả bộ test, thread pool
+    đầy, GC chen vào) — đã bắt được nó đỏ 1 trên 3 lần chạy cả bộ. Ở đây máy
+    nhanh thì xong sau ~0,15s, máy chậm thì đợi thêm, và ý nghĩa phép kiểm
+    không đổi.
+    """
+    moc = asyncio.get_running_loop().time()
+    while not dieu_kien():
+        if asyncio.get_running_loop().time() - moc > han:
+            return
+        await asyncio.sleep(0.01)
+
+
 # ------------------------------------------------------------------ chạy thật
 async def test_interval_chay_lap_va_timeout_chay_dung_mot_lan():
     DA_CHAY.clear()
@@ -127,7 +143,7 @@ async def test_interval_chay_lap_va_timeout_chay_dung_mot_lan():
     container.override("Settings", settings)
     runner = SchedulerRunner(settings)
     await runner.startup()
-    await asyncio.sleep(0.32)
+    await cho_den_khi(lambda: DA_CHAY.count("nhip") >= 3)
     await runner.shutdown()
 
     assert DA_CHAY.count("nhip") >= 3, "interval phải lặp"
@@ -141,7 +157,7 @@ async def test_handler_hong_khong_lam_chet_vong_lap():
     container.override("Settings", settings)
     runner = SchedulerRunner(settings)
     await runner.startup()
-    await asyncio.sleep(0.32)
+    await cho_den_khi(lambda: DA_CHAY.count("hong") >= 3)
     await runner.shutdown()
 
     assert DA_CHAY.count("hong") >= 3, "vẫn phải chạy lại sau khi ném lỗi"
@@ -161,7 +177,7 @@ async def test_max_seconds_huy_luot_treo_chu_khong_treo_mai():
     container.override("Settings", settings)
     runner = SchedulerRunner(settings)
     await runner.startup()
-    await asyncio.sleep(0.4)
+    await cho_den_khi(lambda: len(treo) >= 2)
     await runner.shutdown()
 
     assert len(treo) >= 2, "lượt treo bị huỷ, lượt sau vẫn chạy"

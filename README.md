@@ -88,8 +88,24 @@ fam install rabbitmq    # or redis, mqtt, kafka
 fam install all         # everything above
 ```
 
-`fam install` both installs the libraries and writes the matching variables into
-`.env`. Plain pip works too: `pip install "fastapi-modular[sqlite,rabbitmq]"`.
+`fam install` does three things: installs the libraries, writes the matching
+variables into `.env`, and **records the component in `requirements.txt`** so a
+teammate who clones the repo only needs `pip install -r requirements.txt` — the
+same job `package.json` does for `npm i`.
+
+```
+# requirements.txt, after `fam install sqlite` and `fam install redis`
+fastapi-modular[redis,sqlite]>=0.2.1
+```
+
+It records the extras, not the individual packages: the version ranges of
+`sqlalchemy`, `motor` and friends belong to fastapi-modular and change per
+release, so a flattened snapshot would go stale silently. If the project uses
+`pyproject.toml` and already lists fastapi-modular there, that line is updated
+instead and no `requirements.txt` is created. `fam install dev` goes to
+`requirements-dev.txt` — production should not have to install pytest.
+
+Plain pip works too: `pip install "fastapi-modular[sqlite,rabbitmq]"`.
 
 ## Commands
 
@@ -425,7 +441,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              1070 tests that need no infrastructure, 292 more with real drivers/servers
+tests/              1090 tests that need no infrastructure, 292 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 

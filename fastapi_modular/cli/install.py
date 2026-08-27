@@ -1,8 +1,11 @@
-"""`fam install <thành-phần>` — cài thư viện của một thành phần rồi ghi .env.
+"""`fam install <thành-phần>` — cài thư viện, ghi .env, và ghi nhớ vào requirements.
 
-Hai việc luôn đi cùng nhau nên gộp làm một: cài `aio-pika` mà quên ghi
-`APP_RABBITMQ__*` thì lớp đó vẫn nằm im, còn ghi biến mà chưa cài thư viện thì
-app báo `ComponentNotEnabledError` lúc khởi động.
+Ba việc luôn đi cùng nhau nên gộp làm một:
+
+- cài `aio-pika` mà quên ghi `APP_RABBITMQ__*` thì lớp đó vẫn nằm im;
+- ghi biến mà chưa cài thư viện thì app báo `ComponentNotEnabledError` lúc khởi động;
+- cài xong mà không ghi nhớ ở đâu thì đồng nghiệp clone repo về sẽ thiếu đúng
+  thư viện đó — `requirements.txt` giữ việc này, xem `requirements.py`.
 
 Cài THẲNG các gói phụ thuộc chứ không chạy `pip install "fastapi-modular[x]"`. Lý do
 rất thực tế: cách sau bắt pip đi tìm chính fastapi-modular trên PyPI, nên hỏng ngay
@@ -71,13 +74,37 @@ def install(name: str, *, write_env: bool = True, env_file: object = None) -> in
         )
         return exit_code
 
+    root = Path(env_file).parent if env_file else Path(".")
+    note = _remember(name, root)
+
     block = ENV_BLOCK.get(name)
     if not write_env or block is None:
         if block is None and write_env:
             print(f"\n'{name}' không có biến cấu hình riêng — không ghi .env.")
+        if note:
+            print(f"\n{note}")
         return 0
 
     from fastapi_modular.cli.configure_env import main as written
 
     print()
-    return written(block, Path(env_file) if env_file else Path(".env"))
+    code = written(block, Path(env_file) if env_file else Path(".env"))
+    if note:
+        print(note)
+    return code
+
+
+def _remember(name: str, root) -> str:
+    """Ghi thành phần vào requirements.txt. Hỏng thì nói ra, đừng làm chết lệnh cài.
+
+    Gói đã cài xong rồi mới tới bước này, nên một file requirements chỉ-đọc
+    không đáng để `fam install` trả về mã lỗi — nhưng cũng không được im lặng,
+    vì im lặng ở đây nghĩa là đồng nghiệp thiếu thư viện mà không ai biết vì sao.
+    """
+    from fastapi_modular import __version__
+    from fastapi_modular.cli.requirements import extras_of, record
+
+    try:
+        return record(name, root, extras_of(name, _ALIAS, PACKAGE), __version__)
+    except OSError as exc:
+        return f"Không ghi được requirements.txt ({exc}). Thêm tay: fastapi-modular[{name}]"
