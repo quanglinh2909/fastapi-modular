@@ -433,7 +433,7 @@ def create_project(name: str, root: Path) -> int:
     count = _write(target, name, overwrite=True)
     print(f"Đã tạo {target}/ với {count} file:")
     _print_tree(target, name)
-    print(f"\nChạy thử:\n    cd {name}\n    pip install fastapi-modular\n    fam dev")
+    print(f"\nChạy thử:\n    cd {name}\n    pip install -r requirements.txt\n    fam dev")
     print("\nRồi mở http://localhost:8000/docs")
     return 0
 
@@ -462,7 +462,7 @@ def init_project(root: Path, name: str | None = None) -> int:
         print("\nGiữ nguyên file đã có, KHÔNG ghi đè:")
         for d in existing:
             print(f"    {d}")
-    print("\nChạy thử:\n    pip install fastapi-modular\n    fam dev")
+    print("\nChạy thử:\n    pip install -r requirements.txt\n    fam dev")
     return 0
 
 
