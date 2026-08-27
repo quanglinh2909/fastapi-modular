@@ -22,6 +22,7 @@ fam init && fam dev
 | `@Module()` + module scanning | một thư mục dưới `src/api/`, tự quét |
 | `@Controller('users')` | `@controller(prefix="/users", tags=["users"])` |
 | `@Get()` `@Post()` `@Patch()` `@Delete()` | `@get()` `@post()` `@patch()` `@delete()` |
+| handler đồng bộ chạy ngay luồng chính (Nest) | `def` thường chạy ở thread pool, `async def` chạy trên vòng lặp — đúng luật FastAPI |
 | `@Injectable()` | `@injectable` |
 | `@Injectable({scope: Scope.REQUEST})` | `@injectable(scope=Scope.REQUEST)` |
 | `forwardRef(() => X)` | `Lazy[X]` |
@@ -423,7 +424,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              1058 test chạy không cần hạ tầng, 292 test nữa cần driver/server thật
+tests/              1070 test chạy không cần hạ tầng, 292 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 

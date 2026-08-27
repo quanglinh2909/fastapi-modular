@@ -227,6 +227,33 @@ Hai lỗi hay gặp, cả hai đều được log cảnh báo lúc boot:
 - `api.module_without_controller` — thư mục không có `@controller` nào.
 - `controller.no_routes` — có controller nhưng chưa method nào mang `@get`/`@post`.
 
+### `def` thường hay `async def`?
+
+Đúng luật của FastAPI, khung không đổi gì:
+
+| Viết | Chạy ở đâu | Dùng khi |
+|---|---|---|
+| `async def` | trên vòng lặp sự kiện | bên trong toàn `await` — repository, HTTP client async |
+| `def` thường | **thread pool** (40 thread) | bên trong có thứ **chặn**: `requests`, `cv2`, pandas, driver đồng bộ |
+
+```python
+@get("/anh/{ma}")
+def doc_anh(self, ma: str) -> dict:        # def thường: cv2 chặn
+    import cv2
+    frame = cv2.imread(f"/data/{ma}.jpg")   # chặn ~50ms
+    return {"cao": frame.shape[0], "rong": frame.shape[1]}
+```
+
+**Đừng gọi hàm chặn trong `async def`.** Một request chặn 50ms là cả tiến trình
+đứng 50ms, mọi request khác xếp hàng. Lỡ đang ở trong `async def` mà cần gọi
+hàm chặn thì `await asyncio.to_thread(ham_chan, ...)`.
+
+**Trong `def` thường thì không `await` được**, nên repository (vốn async) không
+dùng được ở đó. Cần cả hai thì để handler `async def` rồi đẩy riêng phần chặn
+sang `asyncio.to_thread`.
+
+Guard cũng theo đúng luật này: `check` viết `async def` hay `def` thường đều được.
+
 ## Thứ tự route
 
 Route khớp theo thứ tự đăng ký, mà thứ tự đó là thứ tự khai báo method trong class.
@@ -261,7 +288,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 1058 test trên backend memory (292 test nữa cần hạ tầng hoặc driver thật)
+fam test       # 1070 test trên backend memory (292 test nữa cần hạ tầng hoặc driver thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

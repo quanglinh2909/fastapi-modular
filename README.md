@@ -27,6 +27,7 @@ public API, and this README, are in English. Start with
 | `@Module()` + module scanning | a directory under `src/api/`, auto-scanned |
 | `@Controller('users')` | `@controller(prefix="/users", tags=["users"])` |
 | `@Get()` `@Post()` `@Patch()` `@Delete()` | `@get()` `@post()` `@patch()` `@delete()` |
+| sync handler runs on the main thread (Nest) | `def` handler runs in a thread pool, `async def` on the event loop — FastAPI's own rule |
 | `@Injectable()` | `@injectable` |
 | `@Injectable({scope: Scope.REQUEST})` | `@injectable(scope=Scope.REQUEST)` |
 | `forwardRef(() => X)` | `Lazy[X]` |
@@ -424,7 +425,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              1058 tests that need no infrastructure, 292 more with real drivers/servers
+tests/              1070 tests that need no infrastructure, 292 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 

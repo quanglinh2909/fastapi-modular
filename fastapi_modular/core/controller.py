@@ -30,6 +30,7 @@ from collections.abc import Callable, Sequence
 from typing import Any, TypeVar, get_type_hints
 
 from fastapi import APIRouter
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
 from fastapi_modular.core.container import container, injectable, request_scope
@@ -113,6 +114,30 @@ def delete(path: str = "", **kwargs: Any):
     return route("DELETE", path, **kwargs)
 
 
+async def _call(fn: Callable, *args: Any, **kwargs: Any) -> Any:
+    """Gọi handler: `async def` chạy trên vòng lặp, `def` thường chạy ở thread pool.
+
+    Đây chính là luật của FastAPI, và phải giữ: người ta khai `def` thường khi
+    bên trong có thứ CHẶN (`requests`, `cv2`, pandas, driver đồng bộ). Gọi thẳng
+    trên vòng lặp thì một request chặn đứng cả tiến trình; `await` nó thì nổ
+    `TypeError: object dict can't be used in 'await' expression` — chính là lỗi
+    khung này từng mắc.
+
+    Dùng `run_in_threadpool` của Starlette chứ không phải `asyncio.to_thread`,
+    để giống hệt FastAPI: cùng bộ giới hạn thread của anyio, và context (nên cả
+    request-id, request scope) được sao sang thread.
+
+    Đường `def` thường vẫn xét lại kết quả: một decorator của người dùng bọc
+    `async def` bằng wrapper `def` (rất hay gặp với `functools.wraps`) sẽ bị
+    `iscoroutinefunction` nhìn thành đồng bộ, và khi ấy nó trả về coroutine —
+    await nốt còn hơn để người ta nhận "coroutine was never awaited".
+    """
+    if inspect.iscoroutinefunction(fn):
+        return await fn(*args, **kwargs)
+    result = await run_in_threadpool(fn, *args, **kwargs)
+    return await result if inspect.isawaitable(result) else result
+
+
 def _make_endpoint(cls: type, fn: Callable, guards: Sequence[type] = ()) -> Callable:
     """Bọc method thành endpoint FastAPI, bỏ `self` khỏi chữ ký."""
     # Giải annotation NGAY tại đây, bằng globals của module chứa controller.
@@ -148,8 +173,8 @@ def _make_endpoint(cls: type, fn: Callable, guards: Sequence[type] = ()) -> Call
             # Guard chạy TRONG request scope để chúng dùng được provider
             # request-scoped (ví dụ điền Principal cho request này).
             for guard_cls in guards:
-                await container.resolve(guard_cls).check(request)
-            return await fn(container.resolve(cls), *args, **kwargs)
+                await _call(container.resolve(guard_cls).check, request)
+            return await _call(fn, container.resolve(cls), *args, **kwargs)
 
     # get_type_hints đổi `-> None` thành NoneType; FastAPI cần đúng None, nếu
     # không nó coi NoneType là response_model và chặn các route 204.
