@@ -91,17 +91,21 @@ def test_dev_di_file_rieng(tmp_path: Path):
 
 
 # --------------------------------------------------- không phá file đang có
-def test_giu_nguyen_cac_dong_khac_va_rang_buoc_phien_ban(tmp_path: Path):
-    """File của người dùng: chỉ đụng đúng dòng fastapi-modular, giữ nguyên `>=0.2.0`."""
+def test_giu_nguyen_cac_dong_khac_cua_nguoi_dung(tmp_path: Path):
+    """File của người dùng: chỉ đụng đúng dòng fastapi-modular, không dòng nào khác.
+
+    Riêng sàn `>=` thì được nâng lên bản đang dùng — xem
+    `test_nang_san_len_ban_dang_dung`.
+    """
     req = tmp_path / "requirements.txt"
-    req.write_text("# của tôi\nrequests==2.31.0\nfastapi-modular>=0.2.0\npandas\n", encoding="utf-8")
+    req.write_text("# của tôi\nrequests==2.31.0\nfastapi-modular>=0.1.0\npandas\n", encoding="utf-8")
 
     ghi(tmp_path, "sqlite")
 
     assert req.read_text(encoding="utf-8").splitlines() == [
         "# của tôi",
         "requests==2.31.0",
-        "fastapi-modular[sqlite]>=0.2.0",
+        f"fastapi-modular[sqlite]>={__version__}",
         "pandas",
     ]
 
@@ -137,6 +141,65 @@ def test_dong_bi_chu_thich_khong_bi_tinh_la_khai_bao(tmp_path: Path):
     assert dong_thuc(req) == ["httpx", f"fastapi-modular[sqlite]>={__version__}"]
 
 
+# ------------------------------------------------------- nâng sàn phiên bản
+def test_nang_san_len_ban_dang_dung(tmp_path: Path):
+    """Sàn phải nói đúng bản THẬT SỰ đang chạy.
+
+    Cài thêm redis bằng fastapi-modular 0.3.0 nhưng requirements vẫn ghi
+    `>=0.2.1` thì đồng nghiệp được phép cài 0.2.1 — bản có thể chưa có extra đó,
+    hoặc chưa có API bạn vừa dùng.
+    """
+    req = tmp_path / "requirements.txt"
+    req.write_text("fastapi-modular[sqlite]>=0.2.1\n", encoding="utf-8")
+
+    record("redis", tmp_path, {"redis"}, "0.3.0")
+
+    assert dong_thuc(req) == ["fastapi-modular[redis,sqlite]>=0.3.0"]
+
+
+def test_khong_ha_san_dang_cao_hon(tmp_path: Path):
+    """Chỉ NÂNG. Người dùng đòi bản mới hơn bản đang cài là chuyện của họ."""
+    req = tmp_path / "requirements.txt"
+    req.write_text("fastapi-modular>=0.9.0\n", encoding="utf-8")
+
+    record("redis", tmp_path, {"redis"}, "0.3.0")
+
+    assert dong_thuc(req) == ["fastapi-modular[redis]>=0.9.0"]
+
+
+@pytest.mark.parametrize(
+    "rang_buoc",
+    ["==0.2.1", "~=0.2", ""],
+)
+def test_chi_dung_toi_dau_bang_lon_hon(tmp_path: Path, rang_buoc: str):
+    """`==` và `~=` là quyết định của người dùng — tự nâng là ghi đè ý định họ."""
+    req = tmp_path / "requirements.txt"
+    req.write_text(f"fastapi-modular{rang_buoc}\n", encoding="utf-8")
+
+    record("redis", tmp_path, {"redis"}, "0.3.0")
+
+    assert dong_thuc(req) == [f"fastapi-modular[redis]{rang_buoc}"]
+
+
+def test_co_tran_thi_chi_nang_san(tmp_path: Path):
+    req = tmp_path / "requirements.txt"
+    req.write_text("fastapi-modular>=0.2.1,<1.0\n", encoding="utf-8")
+
+    record("redis", tmp_path, {"redis"}, "0.3.0")
+
+    assert dong_thuc(req) == ["fastapi-modular[redis]>=0.3.0,<1.0"]
+
+
+def test_so_sanh_bang_SO_chu_khong_phai_chuoi(tmp_path: Path):
+    """So chuỗi thì `"0.10.0" < "0.9.0"` — và sàn bị HẠ xuống trong im lặng."""
+    req = tmp_path / "requirements.txt"
+    req.write_text("fastapi-modular>=0.10.0\n", encoding="utf-8")
+
+    record("redis", tmp_path, {"redis"}, "0.9.0")
+
+    assert dong_thuc(req) == ["fastapi-modular[redis]>=0.10.0"]
+
+
 # ------------------------------------------------------------- pyproject.toml
 def test_pyproject_co_nhac_thi_sua_ngay_trong_do(tmp_path: Path):
     """Dự án dùng pyproject thì đừng đẻ thêm requirements.txt bên cạnh."""
@@ -148,7 +211,10 @@ def test_pyproject_co_nhac_thi_sua_ngay_trong_do(tmp_path: Path):
 
     ghi(tmp_path, "postgres")
 
-    assert '    "fastapi-modular[postgres]>=0.2.1",' in pyproject.read_text(encoding="utf-8")
+    assert (
+        f'    "fastapi-modular[postgres]>={__version__}",'
+        in pyproject.read_text(encoding="utf-8")
+    ), "giữ nguyên thụt lề, nháy và dấu phẩy; sàn nâng theo bản đang dùng"
     assert not (tmp_path / "requirements.txt").exists()
 
 

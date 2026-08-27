@@ -87,7 +87,7 @@ phần vào `requirements.txt`** để đồng nghiệp clone repo về chỉ c�
 
 ```
 # requirements.txt, sau khi `fam install sqlite` rồi `fam install redis`
-fastapi-modular[redis,sqlite]>=0.2.1
+fastapi-modular[redis,sqlite]>=0.3.0
 ```
 
 Nó ghi extras chứ không liệt kê từng gói con: khoảng phiên bản của
@@ -439,7 +439,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              1090 test chạy không cần hạ tầng, 292 test nữa cần driver/server thật
+tests/              1097 test chạy không cần hạ tầng, 292 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 

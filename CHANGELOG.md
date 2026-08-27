@@ -5,6 +5,14 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 
 ## [Chưa phát hành]
 
+## [0.3.0] — 2026-08-27
+
+Bản này thêm **query builder** (JOIN, khoá ngoại, transaction, dữ liệu lồng
+nhau), **việc chạy nền** (`@worker`, `@interval`, `@cron`, `@job`, `@on_event`),
+**RPC gửi-rồi-chờ-trả-lời** cho cả bốn hạ tầng, và **provider cắm được**.
+
+Nâng cấp từ 0.2.x cần sửa ba chỗ, xem mục "Thay đổi phá vỡ" ở cuối.
+
 ### Thêm
 
 - **Provider cắm được** — chọn bản hiện thực bằng TÊN lúc chạy, thứ mà container
@@ -41,6 +49,97 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
   tắt mới: `fam pu` cho publish, `fam pr` cho provider.
 - `create_app()` và `src/main.py` sinh sẵn gọi `register_providers()` trước khi
   dựng route. Không có `src/providers/` thì bỏ qua, không lỗi.
+
+### Thêm — query builder
+
+- **`repo.query()`** sinh SQL thật: `join` / `left_join` / `right_join` /
+  `outer_join`, `where` nối tiếp là AND còn `or_where` mở nhánh OR, `group_by` +
+  `having`, `limit` / `offset` / `distinct`. Xem câu sinh ra bằng `.sql()`.
+- **Toán tử thường trên cột**: `Camera.score >= 0.9` thay cho `score__gte=0.9`,
+  nhờ `class Camera(Entity)`. Bảy toán tử không có ký hiệu (`like`, `ilike`,
+  `in_`, `not_in`, `is_null`, `is_not_null`, `between`) có cả ở dạng method của
+  builder — `query().like(...)` — để IDE gợi ý được.
+- **Khoá ngoại**: `field(metadata=reference(Camera, on_delete="CASCADE"))`, đủ
+  bốn hành vi `CASCADE` / `SET NULL` / `SET DEFAULT` / `RESTRICT`. Áp bởi chính
+  database với SQL; khung tự áp cho `memory` và `mongodb` để ba backend cùng
+  kết quả.
+- **Transaction**: `async with db.transaction() as tx:` — khối lồng nhau thành
+  SAVEPOINT, `await tx.rollback()` huỷ mà không phải ném lỗi. HTTP handler đã
+  nằm sẵn trong một transaction của cả request.
+- **Dữ liệu lồng nhau**: `include(X)` khai X trả về những cột nào,
+  `nest_under(A, B, C)` khai thứ tự lồng từ NGOÀI vào TRONG. Mỗi mức đúng một
+  câu lệnh, không phải một câu cho mỗi dòng.
+- **`select(...)`** gộp cả `fields=` / `exclude=` / `rename=` / `add=`.
+- **MongoDB** chạy được phần lớn builder (`docs/mongodb.md` liệt kê cái không có:
+  JOIN, `group_by`, `distinct`, transaction).
+- **Chặn injection ở tầng dùng chung**: giá trị mang toán tử (`{"$ne": ""}` —
+  qua được cửa đăng nhập trên Mongo), khoá `$where` chạy JavaScript, và tên cột
+  không có thật (SQL trước đây âm thầm bỏ điều kiện, trả về cả bảng).
+- **Soi khoá ngoại lúc khởi động** (`db.foreign_keys_stale`): thêm
+  `reference(...)` vào entity đã chạy rồi thì database không biết — cascade
+  dừng giữa chừng, cháu ở lại thành mồ côi, không lỗi không cảnh báo.
+
+### Thêm — việc chạy nền
+
+- `@worker` (vòng lặp sống mãi, N bản, mỗi bản một tham số), `@interval` /
+  `@cron` / `@timeout` (theo lịch), `@job` (hàng đợi trong tiến trình),
+  `@on_event` + `EventBus` (fanout trong tiến trình). Cả bốn nhận `thread=True`
+  cho hàm chặn, và `ctx: WorkerContext` để dừng đúng cách.
+- Khoá `flock` / Redis để nhiều worker không cùng chạy một việc định kỳ.
+
+### Thêm — RPC và hạ tầng
+
+- **`emit` / `send` + `@*_responder`** cho RabbitMQ, Redis, MQTT, Kafka — khuôn
+  tin tương thích `@nestjs/microservices`, đã chạy đối chứng hai chiều với
+  NestJS 11.2.1.
+- RabbitMQ: đủ 5 kiểu exchange, 3 dạng hạn dùng (TTL), `emit_many`.
+- SQLite: mặc định WAL + `synchronous=NORMAL` — đo được nhanh gấp 20 lần
+  (68 → 1.269 ghi/s) mà vẫn không hỏng file khi mất điện.
+
+### Thêm — CLI
+
+- **`fam install` ghi nhớ thành phần vào `requirements.txt`**
+  (`fastapi-modular[redis,sqlite]>=0.3.0`), để người clone repo về chỉ cần
+  `pip install -r requirements.txt`. `fam init` sinh sẵn file này. Dự án dùng
+  `pyproject.toml` đã khai fastapi-modular thì sửa ngay dòng đó. `fam install
+  dev` đi vào `requirements-dev.txt`.
+- `fam module` sinh entity kế thừa `Entity`.
+
+### Sửa
+
+- **Controller viết `def` thường** nổ `TypeError: object dict can't be used in
+  'await' expression`. Khung bọc mọi method thành endpoint async rồi await
+  thẳng, nên mất luôn luật của FastAPI: `def` phải chạy ở thread pool. Guard
+  đồng bộ cũng nổ y hệt. Đo lại sau khi sửa: 4 request chặn 0,3s xong trong
+  0,31s.
+- **`fam install` chạy trước `fam init`** chỉ ghi khối database vào `.env`,
+  thiếu sạch `APP_NAME` / `APP_ENV` / `APP_DEBUG` / `APP_HOST` / `APP_PORT` —
+  app chạy bằng toàn giá trị mặc định, im lặng.
+- **Lọc bằng `Enum` thường** (không phải `StrEnum`) chạy trên `memory` nhưng nổ
+  trên sqlite lẫn mongo. Chiều ngược lại cũng lệch: lọc bằng chuỗi `.value` thì
+  SQL khớp còn memory trượt.
+- **`nest_under` + sắp theo cột của một lớp**: sqlite ném lỗi, memory và mongo
+  lặng lẽ bỏ qua.
+- **Lồng ba tầng từ repo trong cùng**: `include(Camera)` ném lỗi dù chuỗi
+  `nest_under` nối được qua bảng giữa.
+- **`include(X, name=...)`** bị bỏ qua khi X nằm trong chuỗi `nest_under`.
+- **Hai transaction `memory` đồng thời**: task rollback cuốn luôn bản ghi task
+  khác vừa commit.
+- **MongoDB cho ghi con trỏ tới cha không tồn tại**, trong khi SQL và memory từ
+  chối 409.
+- `Ctrl+C` không thoát được khi có worker đang chạy; `@worker(thread=True)` mượn
+  pool dùng chung của event loop nên làm treo cả tiến trình.
+
+### Thay đổi phá vỡ
+
+| 0.2.x | 0.3.0 |
+|---|---|
+| `.order_by("score")` | `.order_by_desc("score")` / `.order_by_asc("score")` — chiều nằm trong TÊN HÀM |
+| `.fields([...])` · `.exclude([...])` | `.select(fields=[...], exclude=[...])` |
+| `fam p` | nhập nhằng — `fam pu` (publish) hoặc `fam pr` (provider) |
+
+Định danh trong thư viện đổi hết sang tiếng Anh; nếu bạn import hàm `_private`
+nào của khung thì kiểm lại tên. API công khai không đổi.
 
 ## [0.2.1] — 2026-08-22
 

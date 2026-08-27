@@ -37,6 +37,9 @@ DIST = "fastapi-modular"
 # người ta hay gõ theo tên import.
 _LINE = re.compile(r"fastapi[-_]modular(?:\s*\[(?P<extras>[^\]]*)\])?", re.IGNORECASE)
 
+# Chỉ bắt `>=`. `==`, `~=`, `<` là ràng buộc người dùng cố ý đặt — đừng đụng.
+_FLOOR = re.compile(r">=\s*(?P<version>[0-9][0-9A-Za-z.+!-]*)")
+
 HEADER = """\
 # Thư viện của dự án. Người khác clone về chỉ cần:
 #     pip install -r {file}
@@ -58,15 +61,52 @@ def extras_of(component: str, alias: dict[str, str], packages: dict[str, list[st
     return {alias.get(component, component)}
 
 
-def _merge(line: str, extras: set[str]) -> str:
-    """Gộp extras vào đúng dòng, giữ nguyên mọi thứ khác (nháy, dấu phẩy, ==...)."""
+def _numbers(version: str) -> tuple[int, ...]:
+    """Phần số của một phiên bản, để so được `0.2.1` với `0.10.0`.
+
+    So chuỗi thì `"0.10.0" < "0.2.1"` — sai. Chỉ lấy phần số đầu mỗi đoạn nên
+    `1.0.0rc1` thành `(1, 0, 0)`, tức bản rc coi như ngang bản chính thức: chấp
+    nhận được ở đây, vì việc này chỉ NÂNG sàn chứ không hạ.
+    """
+    out = []
+    for chunk in version.split("."):
+        digits = ""
+        for ch in chunk:
+            if not ch.isdigit():
+                break
+            digits += ch
+        out.append(int(digits) if digits else 0)
+    return tuple(out)
+
+
+def _raise_floor(text: str, version: str) -> str:
+    """Nâng `>=` lên phiên bản đang dùng, nếu nó cao hơn.
+
+    Vì sao cần: cài `fam install redis` bằng fastapi-modular 0.3.0 nhưng
+    requirements.txt vẫn ghi `>=0.2.1` thì đồng nghiệp được phép cài 0.2.1 —
+    bản có thể chưa có extra đó, hoặc chưa có API bạn vừa dùng. Sàn phải nói
+    đúng bản THẬT SỰ đang chạy.
+
+    Chỉ đụng `>=`. `==0.2.1` hay `~=0.2` là quyết định của người dùng; tự nâng
+    những cái đó là ghi đè ý định của họ.
+    """
+    match = _FLOOR.search(text)
+    if match is None:
+        return text
+    if _numbers(version) <= _numbers(match.group("version")):
+        return text
+    return text[: match.start()] + f">={version}" + text[match.end() :]
+
+
+def _merge(line: str, extras: set[str], version: str) -> str:
+    """Gộp extras vào đúng dòng và nâng sàn `>=`, giữ nguyên mọi thứ khác."""
     match = _LINE.search(line)
     if match is None:
         return line
     current = {e.strip() for e in (match.group("extras") or "").split(",") if e.strip()}
     merged = sorted(current | extras)
     new = DIST + (f"[{','.join(merged)}]" if merged else "")
-    return line[: match.start()] + new + line[match.end() :]
+    return line[: match.start()] + new + _raise_floor(line[match.end() :], version)
 
 
 def _update(path: Path, extras: set[str], version: str) -> tuple[bool, bool]:
@@ -78,7 +118,7 @@ def _update(path: Path, extras: set[str], version: str) -> tuple[bool, bool]:
     for i, line in enumerate(lines):
         if line.lstrip().startswith("#") or not _LINE.search(line):
             continue
-        merged = _merge(line, extras)
+        merged = _merge(line, extras, version)
         if merged == line:
             return False, False
         lines[i] = merged
@@ -87,7 +127,7 @@ def _update(path: Path, extras: set[str], version: str) -> tuple[bool, bool]:
 
     # Chưa có dòng nào nhắc fastapi-modular: thêm mới.
     body = HEADER.format(file=path.name) if fresh else text.rstrip("\n") + "\n"
-    body += f"{_merge(DIST, extras)}>={version}\n"
+    body += f"{_merge(DIST, extras, version)}>={version}\n"
     path.write_text(body, encoding="utf-8")
     return True, fresh
 
