@@ -12,7 +12,7 @@
 | "**Trả về camera kèm danh sách sự kiện**" | [Dữ liệu lồng nhau](#dữ-liệu-lồng-nhau) |
 | "**Ghi 2 collection, hỏng thì huỷ cả hai**" | [Không có transaction](#không-có-transaction-và-làm-gì-thay-thế) |
 | "Xoá cha thì con thế nào" | [Khoá ngoại](#khoá-ngoại-khung-tự-làm-không-phải-database) |
-| "Sửa một bản ghi rồi lấy lại chính nó" | [database.md — `update`](database.md#sửa-dữ-liệu-không-cần-đọc-về-trước) — chạy được trên Mongo |
+| "Sửa một bản ghi rồi lấy lại chính nó" | [database.md — `update`](repository.md#sửa-dữ-liệu-không-cần-đọc-về-trước) — chạy được trên Mongo |
 | "Sao câu lệnh này báo lỗi?" | [Cái KHÔNG dùng được](#cái-không-dùng-được-trên-mongo) |
 | "Hỏng rồi, tra ở đâu" | [Hỏng thì tra ở đây](#hỏng-thì-tra-ở-đây) |
 
@@ -103,7 +103,7 @@ class Camera(Entity):
 
 Bảng ánh xạ kiểu và các quy ước (`id` tự sinh, `created_at`/`updated_at` khung
 tự đóng dấu, đổi tên collection bằng `@entity(name=...)`) y như bên SQL — xem
-[database.md](database.md#khai-báo-entity).
+[database.md](entity.md#khai-báo-entity).
 
 Ba điều **chỉ đúng với Mongo**:
 
@@ -235,7 +235,7 @@ mot = await (cameras.query()
 
 Cách viết điều kiện — `and_`/`or_`/`~`, so cột với cột, bảy toán tử không có ký
 hiệu — giống hệt bên SQL, xem
-[database.md](database.md#truy-vấn-phức-tạp--join-lớnbé-null).
+[database.md](query.md#truy-vấn-phức-tạp--join-lớnbé-null).
 
 **NULL cư xử đúng như SQL, không như Mongo.** Đây là chỗ dịch sang Mongo dễ sai
 nhất, nên nói rõ: `{n: {"$ne": 1}}` của Mongo **trả về cả document không có
@@ -288,7 +288,7 @@ await events.query().where(Event.score >= 0.9).nest_under(Camera).all()
 ```
 
 Đầy đủ tham số (`name=`, `fields=`, `exclude=`, `where=`, `order_by_*=`):
-[database.md](database.md#dữ-liệu-lồng-nhau-include).
+[database.md](query.md#dữ-liệu-lồng-nhau-include).
 
 ### Khi nào vẫn phải dùng `match=`
 
@@ -337,7 +337,7 @@ class Camera(Entity):
 log, thống kê, bản ghi phụ trợ. Đặt một job dọn định kỳ.
 
 **3. Đổi sang `postgres`** nếu nghiệp vụ thật sự cần "cùng thành công hoặc cùng
-không" — xem [database.md](database.md#transaction--ghi-nhiều-bảng-thì-cùng-thành-công-hoặc-cùng-không).
+không" — xem [database.md](transaction.md#transaction--ghi-nhiều-bảng-thì-cùng-thành-công-hoặc-cùng-không).
 
 Bật replica set thì Mongo có transaction, nhưng template chưa dùng tới nó.
 
@@ -362,12 +362,12 @@ class Event(Entity):
 
 Xoá camera thì mọi `Event` của nó biến mất theo, đúng như bên SQL. Bốn hành vi
 `on_delete` (`CASCADE`, `SET NULL`, `SET DEFAULT`, `RESTRICT`) đều có — chi tiết
-từng cái ở [database.md](database.md#khoá-ngoại-nối-hai-bảng-với-nhau).
+từng cái ở [database.md](entity.md#khoá-ngoại-nối-hai-bảng-với-nhau).
 
 Chuỗi đi **hết bao nhiêu tầng cũng được**: camera → camera_log → item_log, tầng
 nào cũng khai `CASCADE` thì xoá camera là cả ba tầng sạch. Ở đây khung không
 phụ thuộc vào schema trong database, nên nó không dính cái bẫy "bảng cũ chưa
-biết khoá ngoại" của [bên SQL](database.md#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại).
+biết khoá ngoại" của [bên SQL](entity.md#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại).
 
 **Nhưng ai áp ràng buộc mới là chỗ khác nhau:**
 

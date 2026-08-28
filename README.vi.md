@@ -173,7 +173,7 @@ thì dùng `fam env sqlite`.
 `fam env` ghi mỗi biến kèm giải thích, cho biết nó **bắt buộc hay tuỳ chọn** và
 **mặc định là gì** nếu xoá dòng đi. `fam info` cho biết hiện đang nối vào đâu.
 
-Chi tiết: [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) (SQL) · [docs/mongodb.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mongodb.md) (MongoDB).
+Chi tiết: [docs/entity.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/entity.md) · [docs/repository.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/repository.md) · [docs/query.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/query.md) · [docs/mongodb.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mongodb.md).
 
 ## Cấu hình của riêng bạn
 
@@ -475,7 +475,11 @@ MIT — xem [LICENSE](https://github.com/quanglinh2909/fastapi-modular/blob/main
 
 - [docs/architecture.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/architecture.md) — cấu trúc module, DI, đối chiếu NestJS
 - [docs/config.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/config.md) — Settings, thứ tự ưu tiên, thêm biến của riêng bạn
-- [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) — SQL: memory / SQLite / PostgreSQL — entity, khoá ngoại, query builder, transaction
+- [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) — SQL: chọn driver (memory / SQLite / PostgreSQL), kết nối, tự chỉnh schema
+- [docs/entity.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/entity.md) — khai bảng: `@entity`, khoá ngoại + `on_delete`, unique/index
+- [docs/repository.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/repository.md) — đọc/ghi trong service: `find`, `save`, `update`, `delete`
+- [docs/query.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/query.md) — query builder: JOIN, lớn/bé, NULL, gộp nhóm, dữ liệu lồng nhau
+- [docs/transaction.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/transaction.md) — ghi nhiều bảng: cùng thành công hoặc cùng không
 - [docs/mongodb.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mongodb.md) — MongoDB: truy vấn, dữ liệu lồng nhau, và những thứ bên đó không có (không JOIN, không transaction)
 - [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: sinh, chạy, lùi migration
 - [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — gateway WebSocket, phòng, Postman, Next.js

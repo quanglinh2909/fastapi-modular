@@ -11,7 +11,7 @@ cần migration — xem [mongodb.md](mongodb.md#khai-báo-entity).
 | "`sync` tự lo rồi mà, cần gì cái này?" | [Vì sao cần](#vì-sao-cần-khi-đã-có-schema_modesync) |
 | "Ba lệnh là những lệnh nào" | [Ba lệnh dùng hằng ngày](#ba-lệnh-dùng-hằng-ngày) |
 | "Database có dữ liệu SẴN rồi, bắt đầu sao" | [Bắt đầu với database đã có sẵn dữ liệu](#bắt-đầu-với-database-đã-có-sẵn-dữ-liệu) |
-| "Đổi khoá ngoại / on_delete cho bảng cũ" | [database.md — Cascade dừng giữa chừng](database.md#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại) |
+| "Đổi khoá ngoại / on_delete cho bảng cũ" | [database.md — Cascade dừng giữa chừng](entity.md#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại) |
 
 ---
 
@@ -122,7 +122,7 @@ sqlite, nên bạn không phải làm gì.
 | `autogenerate` đòi xoá sạch bảng | đang trỏ vào database TRỐNG — soi `APP_DB__DSN` trong `.env` |
 | Migration chạy được ở dev, hỏng ở SQLite | SQLite không `ALTER` được cột; cần [chế độ batch](#sqlite-cần-chế-độ-batch) |
 | Bảng đã có nhưng Alembic đòi tạo lại | database chưa được đóng dấu phiên bản — [bắt đầu với database có sẵn](#bắt-đầu-với-database-đã-có-sẵn-dữ-liệu) |
-| Đổi `on_delete` mà database không đổi theo | `create`/`sync` không đụng ràng buộc; xem [database.md](database.md#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại) |
+| Đổi `on_delete` mà database không đổi theo | `create`/`sync` không đụng ràng buộc; xem [database.md](entity.md#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại) |
 | Production tự đổi schema lúc khởi động | `APP_DB__SCHEMA_MODE` chưa đặt `off` — đó mới là lúc Alembic làm chủ |
 
 ---

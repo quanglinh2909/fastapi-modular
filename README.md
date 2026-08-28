@@ -181,7 +181,7 @@ fam env sqlite          # write .env only, install nothing
 fam info                # what it is connected to right now
 ```
 
-Details: [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) (SQL) · [docs/mongodb.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mongodb.md) (MongoDB).
+Details: [docs/entity.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/entity.md) · [docs/repository.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/repository.md) · [docs/query.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/query.md) · [docs/mongodb.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mongodb.md).
 
 ## Your own configuration
 
@@ -481,7 +481,11 @@ Written in Vietnamese, organised for reference rather than reading front to back
 
 - [docs/architecture.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/architecture.md) — module layout, DI, the NestJS comparison
 - [docs/config.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/config.md) — Settings, precedence, adding your own variables
-- [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) — SQL: memory / SQLite / PostgreSQL — entities, foreign keys, query builder, transactions
+- [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) — SQL: pick a driver (memory / SQLite / PostgreSQL), connections, schema sync
+- [docs/entity.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/entity.md) — declare tables: `@entity`, foreign keys + `on_delete`, unique/index
+- [docs/repository.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/repository.md) — read/write in a service: `find`, `save`, `update`, `delete`
+- [docs/query.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/query.md) — query builder: JOIN, comparisons, NULL, grouping, nested results
+- [docs/transaction.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/transaction.md) — write several tables: all or nothing, SAVEPOINT
 - [docs/mongodb.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/mongodb.md) — MongoDB: queries, nested data, and what is not there (no JOIN, no transactions)
 - [docs/migrations.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/migrations.md) — Alembic: generate, run, roll back
 - [docs/websocket.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/websocket.md) — WebSocket gateway, rooms, Postman, Next.js

@@ -83,10 +83,11 @@ Mỗi thay đổi code phải cập nhật tài liệu tương ứng **trong cù
 | tên file / lớp mà `cli/new_module.py` sinh ra | mục "Thêm module mới" ở `docs/architecture.md` |
 | `core/providers.py` hoặc `cli/new_provider.py` | `docs/providers.md` |
 | `core/rpc.py`, `*/responders.py`, `emit`/`send` | `docs/rpc.md`, và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
-| `infrastructure/database/base.py` (`@entity`, `reference`, khoá ngoại) | `docs/database.md` mục khai báo entity + khoá ngoại, **và `docs/mongodb.md`** (bên đó khung tự áp ràng buộc, khác hẳn), và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
-| `infrastructure/database/query.py` (builder) | `docs/database.md` mục truy vấn phức tạp, và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
+| `infrastructure/database/base.py` (`@entity`, `reference`, khoá ngoại) | `docs/entity.md`, **và `docs/mongodb.md`** (bên đó khung tự áp ràng buộc, khác hẳn), và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
+| `infrastructure/database/query.py` (builder) | `docs/query.md`, và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
 | `infrastructure/database/mongo.py` | `docs/mongodb.md` — **mọi** mục, nhất là bảng "cái KHÔNG dùng được" |
-| transaction (`repository.py`, `sql.py`, `memory.py`) | `docs/database.md` mục Transaction **và** `docs/mongodb.md` mục "Không có transaction" |
+| transaction (`repository.py`, `sql.py`, `memory.py`) | `docs/transaction.md` **và** `docs/mongodb.md` mục "Không có transaction" |
+| `repository.py` (CRUD: find/save/update/delete) | `docs/repository.md`, và bảng đối chiếu TypeORM ở **cả hai README** |
 | `core/scheduler.py`, `core/cron.py`, `core/jobs.py`, `core/workers.py`, `core/events.py`, `core/locks.py` | `docs/background.md`, bảng nhóm biến ở `docs/config.md`, bảng `groups` trong `tests/test_configure_env.py`, và bảng đối chiếu NestJS ở **cả hai README** |
 | API công khai (`fastapi_modular/__init__.py`, decorator, method) | doc của phần đó, và `docs/README.md` nếu đổi bảng đối chiếu |
 | thêm/bớt test | con số test ở **cả hai README** (cây thư mục) và `docs/architecture.md` (mục Chất lượng mã) |
@@ -161,7 +162,7 @@ gần hết lỗi và chạy trong vài giây — **viết script rồi chạy, 
 3. **Kwarg trong code block** — bắt mọi `ast.Call`, so tên tham số với
    `inspect.signature` thật. Đây là phép bắt được nhiều nhất khi vừa đổi API.
 4. **Chạy thật khối ví dụ** — dựng backend tạm rồi `exec` từng khối `.query()`
-   trong `database.md` (sqlite) và `mongodb.md` (Mongo thật). Phép này bắt được
+   trong `query.md` (sqlite) và `mongodb.md` (Mongo thật). Phép này bắt được
    thứ ba phép trên không thấy: ví dụ dùng cột mà entity trong CHÍNH trang đó
    không có. Bỏ qua khối chứa `self.` (đoạn trong service), `LỖI` (khối cố ý
    sai) và `assert` (khối "kiểm xem chạy chưa", nói về dữ liệu của người đọc).

@@ -73,9 +73,9 @@ quét nó đi". Xếp khác thì nói ra một lần trong `src/main.py`:
 | `@Injectable({scope: Scope.REQUEST})` | `@injectable(scope=Scope.REQUEST)` |
 | `forwardRef(() => X)` | `Lazy[X]` |
 | `@InjectRepository(X) repo: Repository<X>` | `repo: Repository[X]` |
-| `repo.createQueryBuilder()` (TypeORM) | `repo.query()` — `join`/`left_join`/`right_join`/`outer_join`, `where`/`or_where`, `group_by`/`having`; xem [database.md](database.md#truy-vấn-phức-tạp--join-lớnbé-null) |
+| `repo.createQueryBuilder()` (TypeORM) | `repo.query()` — `join`/`left_join`/`right_join`/`outer_join`, `where`/`or_where`, `group_by`/`having`; xem [database.md](query.md#truy-vấn-phức-tạp--join-lớnbé-null) |
 | `find({relations: …})` (TypeORM) | `.include(Event, fields=…, exclude=…)` · `.nest_under(Camera)` — dữ liệu lồng nhau, hai chiều |
-| `@ManyToOne(…, {onDelete})` (TypeORM) | `reference(X, on_delete=…)` — xem [database.md](database.md#khoá-ngoại-nối-hai-bảng-với-nhau) |
+| `@ManyToOne(…, {onDelete})` (TypeORM) | `reference(X, on_delete=…)` — xem [database.md](entity.md#khoá-ngoại-nối-hai-bảng-với-nhau) |
 | `@Entity()` | `@entity` |
 | `extends BaseEntity` | `class X(Entity)` — chỉ để lọc bằng toán tử: `.where(X.score >= 0.8)` |
 | `overrideProvider()` | `container.override()` |
@@ -197,7 +197,7 @@ Ba việc còn lại của bạn:
 2. Khai `unique=` / `indexes=` trong `@entity` nếu cần
 3. Viết thân hàm trong `<tên>_service.py` — mỗi hàm có sẵn gợi ý dạng chú thích,
    bỏ chú thích ra là chạy được (có test chép-dán-chạy-thật canh điều đó). Gợi ý
-   của `update_<tên>` dùng [`repo.update(id, payload)`](database.md#sửa-dữ-liệu-không-cần-đọc-về-trước)
+   của `update_<tên>` dùng [`repo.update(id, payload)`](repository.md#sửa-dữ-liệu-không-cần-đọc-về-trước)
    — nhận thẳng DTO, một lượt đi database. Cần đọc bản ghi cũ trước khi ghi
    (kiểm trùng, so giá trị cũ) thì dùng `apply_changes` + `save` như
    `src/api/users/user_service.py`.
