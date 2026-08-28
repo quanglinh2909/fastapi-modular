@@ -151,6 +151,111 @@ def references_of(entity: type) -> dict[str, Reference]:
     return found
 
 
+_COLUMN_KEY = "fastapi_modular.column"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ColumnSpec:
+    """Cột chữ được tạo dưới database bằng kiểu nào.
+
+    Mặc định (không khai gì) là `VARCHAR` không giới hạn — Postgres nhận, SQLite
+    nhận. Khai độ dài khi bạn muốn database CHẶN dữ liệu quá dài, khai `text`
+    khi trường có thể rất dài và giới hạn nào cũng là võ đoán.
+    """
+
+    length: int | None = None
+    text: bool = False
+
+
+def column(*, length: int | None = None, text: bool = False) -> dict:
+    """Chọn kiểu cột cho một trường chữ. Đặt vào `metadata=` của trường:
+
+        @entity()
+        @dataclass(slots=True)
+        class Camera(Entity):
+            id: str
+            name: str = field(default="", metadata=column(length=50))    # VARCHAR(50)
+            note: str = field(default="", metadata=column(text=True))    # TEXT
+
+    Độ dài được kiểm CẢ ở tầng khung, trước khi câu lệnh xuống database: SQLite
+    bỏ qua `VARCHAR(50)` (ghi 60 ký tự vẫn lọt) còn Postgres thì báo lỗi, nên
+    nếu chỉ dựa vào database thì cùng một đoạn code chạy được lúc dev và đổ lúc
+    chạy thật. MongoDB cũng không có khái niệm độ dài — kiểm ở đây là chỗ duy
+    nhất bốn backend giống nhau.
+
+    Chung trường với khoá ngoại thì gộp hai dict bằng `|`:
+
+        camera_id: str = field(metadata=reference(Camera) | column(length=36))
+    """
+    if length is not None and text:
+        raise BadRequestError(
+            "`column(length=..., text=True)` mâu thuẫn: TEXT là kiểu không giới hạn. "
+            "Chọn một trong hai."
+        )
+    if length is None and not text:
+        raise BadRequestError(
+            "`column()` phải khai `length=` hoặc `text=True`; không khai gì thì "
+            "bỏ hẳn `metadata=column()` đi, cột vẫn là VARCHAR như cũ."
+        )
+    if length is not None and (isinstance(length, bool) or not isinstance(length, int) or length < 1):
+        raise BadRequestError(f"`length` phải là số nguyên dương (đang là {length!r})")
+    return {_COLUMN_KEY: ColumnSpec(length=length, text=text)}
+
+
+def columns_of(entity: type) -> dict[str, ColumnSpec]:
+    """{tên cột: ColumnSpec} của một entity, đọc từ metadata của dataclass."""
+    found: dict[str, ColumnSpec] = {}
+    for field in dataclasses.fields(entity):
+        spec = field.metadata.get(_COLUMN_KEY)
+        if spec is not None:
+            found[field.name] = spec
+    return found
+
+
+def _is_text_type(declared: Any) -> bool:
+    """Kiểu này có lưu bằng cột chữ không — `str`, `Enum`, hoặc Optional của chúng."""
+    if declared is str:
+        return True
+    if isinstance(declared, type) and issubclass(declared, Enum):
+        return True
+    args = [arg for arg in get_args(declared) if arg is not type(None)]
+    return bool(args) and all(_is_text_type(arg) for arg in args)
+
+
+def check_lengths(entity: type, values: Any) -> None:
+    """Chặn chuỗi dài hơn `length` đã khai, TRƯỚC khi xuống database.
+
+    `values` là dict (đường `update`) hoặc chính entity (đường `save`).
+
+    Vì sao khung tự kiểm thay vì để database kiểm: chỉ Postgres báo lỗi. Đo
+    được — ghi 60 ký tự vào `VARCHAR(50)`: SQLite nhận, Postgres ném
+    `StringDataRightTruncation`. Không kiểm ở đây thì `fam test` trên SQLite
+    xanh còn production đổ, đúng loại lỗi khó tìm nhất.
+    """
+    limits = _max_lengths(entity)
+    if not limits:
+        return
+    read = values.get if isinstance(values, dict) else lambda name: getattr(values, name, None)
+    for name, limit in limits.items():
+        value = bind_value(read(name))
+        if isinstance(value, str) and len(value) > limit:
+            raise BadRequestError(
+                f"{entity.__name__}.{name} dài {len(value)} ký tự, quá {limit} ký tự "
+                f"đã khai bằng `column(length={limit})`. Cắt bớt trước khi ghi, hoặc "
+                f"nâng độ dài trong entity rồi chạy migration đổi cột."
+            )
+
+
+@cache
+def _max_lengths(entity: type) -> dict[str, int]:
+    """{tên cột: độ dài tối đa} — chỉ những cột có khai `length`."""
+    return {
+        name: spec.length
+        for name, spec in mapping_for(entity).column_specs
+        if spec.length is not None
+    }
+
+
 def default_of(entity: type, column: str) -> Any:
     """Giá trị mặc định của một trường — dùng cho `SET DEFAULT`."""
     for field in dataclasses.fields(entity):
@@ -175,6 +280,7 @@ class EntityMapping:
     unique: tuple[tuple[str, ...], ...]   # mỗi phần tử là một cột hoặc một cụm cột
     indexes: tuple[tuple[str, ...], ...]
     references: tuple[tuple[str, Reference], ...] = ()   # (tên cột, khoá ngoại)
+    column_specs: tuple[tuple[str, ColumnSpec], ...] = ()  # (tên cột, kiểu cột chữ)
 
     def index_specs(self) -> list[tuple[str, tuple[str, ...], bool]]:
         """[(tên index, các cột, có unique không)] cho mọi index đã khai báo."""
@@ -191,6 +297,17 @@ def mapping_for(entity: type) -> EntityMapping:
 
     hints = get_type_hints(entity)
     fields = {f.name: hints.get(f.name, str) for f in dataclasses.fields(entity)}
+
+    specs = columns_of(entity)
+    for name, spec in specs.items():
+        if _is_text_type(fields[name]):
+            continue
+        declared_as = "text=True" if spec.text else f"length={spec.length}"
+        type_name = getattr(fields[name], "__name__", fields[name])
+        raise BadRequestError(
+            f"{entity.__name__}.{name} khai `column({declared_as})` nhưng kiểu là "
+            f"{type_name}. Độ dài và TEXT chỉ đặt được cho cột chữ (`str` hoặc `Enum`)."
+        )
     return EntityMapping(
         entity=entity,
         storage=getattr(entity, "__storage_name__", f"{entity.__name__.lower()}s"),
@@ -198,6 +315,7 @@ def mapping_for(entity: type) -> EntityMapping:
         unique=tuple(getattr(entity, "__storage_unique__", ())),
         indexes=tuple(getattr(entity, "__storage_indexes__", ())),
         references=tuple(references_of(entity).items()),
+        column_specs=tuple(specs.items()),
     )
 
 
@@ -305,6 +423,7 @@ def check_changes(entity: type, changes: Filters) -> dict[str, Any]:
                 f"Có: {', '.join(sorted(known))}"
             )
         check_value(value, f"Giá trị của {name!r}")
+    check_lengths(entity, changes)
     return {name: bind_value(value) for name, value in changes.items()}
 
 

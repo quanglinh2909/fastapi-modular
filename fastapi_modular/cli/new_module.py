@@ -55,7 +55,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from fastapi_modular import Entity, entity
+from fastapi_modular import Entity, column, entity
 from fastapi_modular.core.clock import utcnow
 
 
@@ -73,7 +73,11 @@ class {cls}(Entity):
 
     # TODO: thêm các trường của bạn ở đây. Trường có giá trị mặc định thì bản
     # ghi cũ vẫn đọc được sau khi thêm cột (xem docs/database.md).
-    name: str = ""
+    #
+    # `column(length=100)` khớp với `max_length=100` bên DTO: DTO chặn ở cửa
+    # vào, cột chặn dưới database. Trường có thể rất dài thì dùng
+    # `column(text=True)` (xem docs/entity.md).
+    name: str = field(default="", metadata=column(length=100))
 
     created_at: datetime = field(default_factory=utcnow)
     updated_at: datetime = field(default_factory=utcnow)
@@ -492,7 +496,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print("Việc tiếp theo:")
     print(f"  1. Thêm trường vào entities/{entity}_model.py và dto/{entity}_dto.py")
-    print("  2. Khai unique/indexes trong @entity nếu cần")
+    print("  2. Khai unique/indexes trong @entity, độ dài cột chữ bằng column(length=...)")
     print(f"  3. Viết thân các hàm trong {entity}_service.py (đang raise NotImplementedError)")
     print("  4. fam dev — route đã tự xuất hiện, không phải đăng ký ở đâu cả")
     if args.gateway:

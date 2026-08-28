@@ -105,7 +105,7 @@ Bảng ánh xạ kiểu và các quy ước (`id` tự sinh, `created_at`/`updat
 tự đóng dấu, đổi tên collection bằng `@entity(name=...)`) y như bên SQL — xem
 [database.md](entity.md#khai-báo-entity).
 
-Ba điều **chỉ đúng với Mongo**:
+Bốn điều **chỉ đúng với Mongo**:
 
 **Trường `id` được lưu vào `_id` của document.** Không tốn thêm index, và tra
 tay thì nhớ gõ `_id`:
@@ -126,6 +126,13 @@ lỗi — đừng bỏ qua nó:
 db.index_failed  collection=cameras index=uq_cameras_serial
                  hint=dọn document trùng rồi khởi động lại
 ```
+
+**`column(length=50)` vẫn chặn, `column(text=True)` thì không có nghĩa gì.**
+Mongo không có kiểu cột, nên `text=True` chỉ là lời khai không ai đọc. Nhưng độ
+dài thì **khung tự kiểm** trước khi ghi, y hệt bên SQL — ghi 63 ký tự vào cột
+khai `length=50` vẫn nhận lỗi 400. Nhờ vậy đổi `APP_DB__DRIVER` giữa Mongo và
+Postgres không làm đổi việc dữ liệu nào được nhận. Xem
+[entity.md](entity.md#độ-dài-cột-chữ-varchar50-và-text).
 
 **`APP_DB__SCHEMA_MODE` không có tác dụng.** Mongo không có schema cố định nên
 không cần migrate gì cả:
@@ -409,6 +416,7 @@ kèm cách thay, không có cái nào chạy tiếp rồi cho kết quả sai.
 | `async with db.transaction()` | ném lỗi | [xem mục trên](#không-có-transaction-và-làm-gì-thay-thế) |
 | `.sql()` | không có | `mongosh` để xem truy vấn thật |
 | `fam migrate` / `APP_DB__SCHEMA_MODE` | không cần | Mongo không có schema cố định |
+| `column(text=True)` | không có nghĩa | Mongo không có kiểu cột; `column(length=…)` thì khung vẫn chặn |
 
 Câu lỗi khi gọi `join`:
 

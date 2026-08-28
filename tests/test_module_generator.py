@@ -155,7 +155,9 @@ def test_goi_y_trong_service_bo_chu_thich_ra_la_chay_duoc(tmp_path: Path):
     entity = tmp_path / "src" / "api" / "alerts" / "entities" / "alert_model.py"
     entity.write_text(
         entity.read_text(encoding="utf-8").replace(
-            '    name: str = ""', '    name: str = ""\n    zone: str = ""'
+            '    name: str = field(default="", metadata=column(length=100))',
+            '    name: str = field(default="", metadata=column(length=100))'
+            '\n    zone: str = field(default="", metadata=column(length=16))',
         ),
         encoding="utf-8",
     )
@@ -200,6 +202,13 @@ def test_goi_y_trong_service_bo_chu_thich_ra_la_chay_duoc(tmp_path: Path):
 
             assert client.get(f"/api/alerts/{ma}").json()["name"] == "Đã đổi"
             assert client.patch("/api/alerts/khong-co", json={"name": "x"}).status_code == 404
+            # `column(length=...)` phải có hiệu lực THẬT qua HTTP. `zone` cố ý
+            # không khai `max_length` bên DTO, nên 400 này chỉ có thể đến từ
+            # entity — không phải từ pydantic.
+            qua_dai = client.post("/api/alerts", json={"name": "A", "zone": "x" * 17})
+            assert qua_dai.status_code == 400, qua_dai.text
+            assert "16 ký tự" in qua_dai.text, qua_dai.text
+
             assert client.delete(f"/api/alerts/{ma}").status_code == 204
             assert client.get(f"/api/alerts/{ma}").status_code == 404
         print("GOI-Y-CHAY-DUOC")
@@ -233,6 +242,9 @@ def test_entity_co_san_ba_truong_bat_buoc():
     assert "@entity(" in model
     assert "(Entity):" in model, "khuôn sinh phải kế thừa Entity, không thì `.where(X.a == b)` gãy"
     assert "TODO" in model, "phải có chỗ đánh dấu để người dùng thêm trường"
+    assert "metadata=column(length=100)" in model, (
+        "cột chữ của khuôn sinh phải khớp `max_length` bên DTO"
+    )
 
 
 # ------------------------------------------------------------ gateway WebSocket

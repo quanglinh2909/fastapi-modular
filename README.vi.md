@@ -42,6 +42,7 @@ fam init && fam dev
 | `relations: {camera: {logs: {items: true}}}` (TypeORM) | `.nest_under(Camera, CameraLog, ItemLog)` — mỗi mức một câu lệnh |
 | *(TypeORM không có)* | `.nest_under(Camera)` — lọc theo sự kiện, nhận về camera kèm sự kiện bên trong |
 | `@ManyToOne(…, {onDelete: 'CASCADE'})` (TypeORM) | `field(metadata=reference(Camera, on_delete="CASCADE"))` — khoá ngoại THẬT dưới database |
+| `@Column({length: 50})` / `@Column({type: 'text'})` (TypeORM) | `field(metadata=column(length=50))` / `column(text=True)` — chặn ngay lúc ghi, trên mọi backend |
 | `@UseGuards()` | `guards=[...]` ở controller hoặc từng route |
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
 | `@SubscribeMessage('x')` | `@subscribe("x")` |
@@ -440,7 +441,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              1134 test chạy không cần hạ tầng, 358 test nữa cần driver/server thật
+tests/              1149 test chạy không cần hạ tầng, 376 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 
@@ -476,7 +477,7 @@ MIT — xem [LICENSE](https://github.com/quanglinh2909/fastapi-modular/blob/main
 - [docs/architecture.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/architecture.md) — cấu trúc module, DI, đối chiếu NestJS
 - [docs/config.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/config.md) — Settings, thứ tự ưu tiên, thêm biến của riêng bạn
 - [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) — SQL: chọn driver (memory / SQLite / PostgreSQL), kết nối, tự chỉnh schema
-- [docs/entity.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/entity.md) — khai bảng: `@entity`, khoá ngoại + `on_delete`, unique/index
+- [docs/entity.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/entity.md) — khai bảng: `@entity`, khoá ngoại + `on_delete`, unique/index, độ dài cột chữ
 - [docs/repository.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/repository.md) — đọc/ghi trong service: `find`, `save`, `update`, `delete`
 - [docs/query.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/query.md) — query builder: JOIN, lớn/bé, NULL, gộp nhóm, dữ liệu lồng nhau
 - [docs/transaction.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/transaction.md) — ghi nhiều bảng: cùng thành công hoặc cùng không

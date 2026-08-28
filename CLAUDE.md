@@ -83,7 +83,7 @@ Mỗi thay đổi code phải cập nhật tài liệu tương ứng **trong cù
 | tên file / lớp mà `cli/new_module.py` sinh ra | mục "Thêm module mới" ở `docs/architecture.md` |
 | `core/providers.py` hoặc `cli/new_provider.py` | `docs/providers.md` |
 | `core/rpc.py`, `*/responders.py`, `emit`/`send` | `docs/rpc.md`, và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
-| `infrastructure/database/base.py` (`@entity`, `reference`, khoá ngoại) | `docs/entity.md`, **và `docs/mongodb.md`** (bên đó khung tự áp ràng buộc, khác hẳn), và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
+| `infrastructure/database/base.py` (`@entity`, `reference`, `column`, khoá ngoại) | `docs/entity.md`, **và `docs/mongodb.md`** (bên đó khung tự áp ràng buộc, khác hẳn), và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
 | `infrastructure/database/query.py` (builder) | `docs/query.md`, và bảng đối chiếu NestJS ở **cả hai README** + `docs/architecture.md` |
 | `infrastructure/database/mongo.py` | `docs/mongodb.md` — **mọi** mục, nhất là bảng "cái KHÔNG dùng được" |
 | transaction (`repository.py`, `sql.py`, `memory.py`) | `docs/transaction.md` **và** `docs/mongodb.md` mục "Không có transaction" |
@@ -132,7 +132,7 @@ link trong `docs/*.md` thì cứ để tương đối.
 ## Kiểm chứng trước khi nói là xong
 
 ```bash
-pytest -q                       # 1134 passed, 358 skipped (358 skip cần hạ tầng hoặc driver thật)
+pytest -q                       # 1149 passed, 376 skipped (376 skip cần hạ tầng hoặc driver thật)
 fam lint fastapi_modular src tests    # `fam lint` trần chỉ soi `src`, thiếu thư viện và test
 ```
 

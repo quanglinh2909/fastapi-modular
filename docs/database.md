@@ -436,6 +436,17 @@ Cột biến mất, các hàng vẫn còn nguyên. SQLite cần bản ≥ 3.35 m
 db.column_type_mismatch  column='cameras.port: VARCHAR -> INTEGER'
 ```
 
+Đổi **độ dài** cũng vậy — khai `column(length=64)` cho cột đang là `VARCHAR(8)`
+thì bạn nhận cảnh báo chứ cột không tự nới ra:
+
+```
+db.column_type_mismatch  column='cameras.code: VARCHAR(8) -> VARCHAR(64)'
+```
+
+Cột đã có `VARCHAR(50)` mà entity để `str` trơn thì **không** bị kêu: khung chỉ
+so độ dài khi entity có khai. Xem
+[entity.md](entity.md#độ-dài-cột-chữ-varchar50-và-text).
+
 Cố ý làm vậy: mỗi database một cú pháp `ALTER COLUMN` khác nhau, phép đổi có thể
 mất dữ liệu (`VARCHAR` → `INTEGER` với dữ liệu không phải số) và có thể khoá bảng
 rất lâu trên bảng lớn. Đó là việc của một migration được review, không phải của

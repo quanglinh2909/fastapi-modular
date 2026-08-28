@@ -31,6 +31,7 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    Text,
     func,
     select,
 )
@@ -49,6 +50,7 @@ from fastapi_modular.core.container import Scope, injectable
 from fastapi_modular.core.exceptions import BadRequestError
 from fastapi_modular.core.logging import get_logger
 from fastapi_modular.infrastructure.database.base import (
+    ColumnSpec,
     DatabaseBackend,
     Filters,
     Match,
@@ -84,7 +86,11 @@ def _type_name(type_: Any, dialect: Any) -> str:
     return rendered.split("(")[0].strip().upper()
 
 
-def _column_type(declared: type) -> Any:
+def _column_type(declared: type, spec: ColumnSpec | None = None) -> Any:
+    if spec is not None:
+        # Trường có khai `column(...)` thì lời khai đó thắng: TEXT là kiểu
+        # không giới hạn, còn `length` thành VARCHAR(n) để database chặn hộ.
+        return Text() if spec.text else String(spec.length)
     if isinstance(declared, type) and issubclass(declared, Enum):
         return String(64)  # Enum lưu bằng .value cho dễ đọc và dễ migrate
     return _COLUMN_TYPES.get(declared, String)
@@ -149,13 +155,14 @@ def build_metadata(*entities: type) -> MetaData:
     metadata = MetaData()
     for entity in entities:
         mapping = mapping_for(entity)
+        specs = dict(mapping.column_specs)
         Table(
             mapping.storage,
             metadata,
             *(
                 Column(
                     name,
-                    _column_type(declared),
+                    _column_type(declared, specs.get(name)),
                     primary_key=(name == "id"),
                     nullable=(name != "id"),
                 )
@@ -297,9 +304,10 @@ class SqlBackend(DatabaseBackend):
             return table
 
         references = dict(mapping.references)
+        specs = dict(mapping.column_specs)
         columns = []
         for name, declared in mapping.fields.items():
-            args: list[Any] = [name, _column_type(declared)]
+            args: list[Any] = [name, _column_type(declared, specs.get(name))]
             ref = references.get(name)
             if ref is not None:
                 target = mapping_for(ref.target)
@@ -531,10 +539,22 @@ class SqlBackend(DatabaseBackend):
                 # Phải compile CẢ HAI bằng cùng dialect. Dùng str() cho kiểu do
                 # inspector trả về sẽ mất thông tin (TIMESTAMP WITH TIME ZONE
                 # in ra thành "TIMESTAMP") và sinh cảnh báo sai.
-                want = _type_name(column.type, dialect)
-                have = _type_name(existing[column.name]["type"], dialect)
+                want_type, have_type = column.type, existing[column.name]["type"]
+                want = _type_name(want_type, dialect)
+                have = _type_name(have_type, dialect)
                 if want != have:
                     mismatched.append(f"{table.name}.{column.name}: {have} -> {want}")
+                    continue
+                # Cùng kiểu nhưng khác độ dài: chỉ kêu khi entity CÓ khai
+                # `column(length=...)`. Không khai thì mọi bảng cũ có
+                # VARCHAR(n) đều bị kêu oan, vì khung sinh VARCHAR trơn.
+                length = getattr(want_type, "length", None)
+                if length is not None and getattr(have_type, "length", None) != length:
+                    mismatched.append(
+                        f"{table.name}.{column.name}: "
+                        f"{have_type.compile(dialect=dialect)} -> "
+                        f"{want_type.compile(dialect=dialect)}"
+                    )
                 continue
 
             ddl = f"{column.name} {column.type.compile(dialect=dialect)}"

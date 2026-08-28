@@ -47,6 +47,7 @@ public API, and this README, are in English. Start with
 | `relations: {camera: {logs: {items: true}}}` (TypeORM) | `.nest_under(Camera, CameraLog, ItemLog)` — one query per level |
 | *(no TypeORM equivalent)* | `.nest_under(Camera)` — filter on events, get cameras back with them nested |
 | `@ManyToOne(…, {onDelete: 'CASCADE'})` (TypeORM) | `field(metadata=reference(Camera, on_delete="CASCADE"))` — a real FK in the database |
+| `@Column({length: 50})` / `@Column({type: 'text'})` (TypeORM) | `field(metadata=column(length=50))` / `column(text=True)` — checked before the write on every backend |
 | `@UseGuards()` | `guards=[...]` on the controller or a single route |
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
 | `@SubscribeMessage('x')` | `@subscribe("x")` |
@@ -442,7 +443,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              1134 tests that need no infrastructure, 358 more with real drivers/servers
+tests/              1149 tests that need no infrastructure, 376 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 
@@ -482,7 +483,7 @@ Written in Vietnamese, organised for reference rather than reading front to back
 - [docs/architecture.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/architecture.md) — module layout, DI, the NestJS comparison
 - [docs/config.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/config.md) — Settings, precedence, adding your own variables
 - [docs/database.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/database.md) — SQL: pick a driver (memory / SQLite / PostgreSQL), connections, schema sync
-- [docs/entity.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/entity.md) — declare tables: `@entity`, foreign keys + `on_delete`, unique/index
+- [docs/entity.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/entity.md) — declare tables: `@entity`, foreign keys + `on_delete`, unique/index, column length
 - [docs/repository.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/repository.md) — read/write in a service: `find`, `save`, `update`, `delete`
 - [docs/query.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/query.md) — query builder: JOIN, comparisons, NULL, grouping, nested results
 - [docs/transaction.md](https://github.com/quanglinh2909/fastapi-modular/blob/main/docs/transaction.md) — write several tables: all or nothing, SAVEPOINT

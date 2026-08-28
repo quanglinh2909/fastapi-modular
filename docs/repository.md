@@ -188,6 +188,7 @@ làm cho giống hệt.
 | `… không có trường 'x'` | gõ sai tên cột; khung chặn thay vì báo "đã sửa" rồi không sửa gì |
 | `… không có giá trị nào để ghi` | DTO không có field nào được gửi lên, hoặc quên truyền giá trị |
 | `… sẽ sửa MỌI dòng` | `update_where` với điều kiện rỗng — xem mục Lưu ý |
+| `… quá 50 ký tự đã khai bằng column(length=50)` | chuỗi dài hơn độ dài cột — [độ dài cột chữ](entity.md#độ-dài-cột-chữ-varchar50-và-text) |
 | 409 khi sửa | vi phạm khoá ngoại hoặc cột `unique` |
 
 #### Tra cứu

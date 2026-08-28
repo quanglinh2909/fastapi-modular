@@ -22,9 +22,12 @@ khoá ngoại, và cho bạn lọc bằng toán tử thường (`Camera.score >=
 | "**Xoá khu vực thì camera ở lại, chỉ mất chỗ gắn**" | [`SET NULL`](#set-null--con-ở-lại-mất-chỗ-gắn) |
 | "Còn hoá đơn thì KHÔNG cho xoá khách hàng" | [`RESTRICT`](#restrict--chặn-không-cho-xoá) |
 | "**Xoá cha mà cháu vẫn còn**" | [Cascade dừng giữa chừng](#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại) |
+| "Cột mã thiết bị chỉ được dài 50 ký tự" | [Độ dài cột chữ](#độ-dài-cột-chữ-varchar50-và-text) |
+| "Trường ghi chú có thể rất dài" | [Độ dài cột chữ](#độ-dài-cột-chữ-varchar50-và-text) |
 | "Email không được trùng" | [Ràng buộc duy nhất và index](#ràng-buộc-duy-nhất-và-index) |
 | "Truy vấn chậm, cần index" | [Ràng buộc duy nhất và index](#ràng-buộc-duy-nhất-và-index) |
 | "`created_at` / `updated_at` ai đặt" | [Dấu thời gian](#dấu-thời-gian) |
+| "Hỏng rồi, tra ở đâu" | [Hỏng thì tra ở đây](#hỏng-thì-tra-ở-đây) |
 
 ---
 
@@ -108,7 +111,7 @@ bằng `@entity(name="camera_list")`.
 
 | Khai trong Python | Cột trong SQL |
 |---|---|
-| `str` | `VARCHAR` |
+| `str` | `VARCHAR` không giới hạn — đặt độ dài hay đổi sang `TEXT` bằng [`column()`](#độ-dài-cột-chữ-varchar50-và-text) |
 | `int` | `INTEGER` |
 | `float` | `FLOAT` |
 | `bool` | `BOOLEAN` |
@@ -158,6 +161,86 @@ trong service — kiểm rồi mới ghi là một cuộc đua, hai request đ�
 
 Ghi trùng thì nhận lỗi **409**, không phải 500. Chi tiết thứ tự cột trong cụm:
 [Ràng buộc duy nhất và index](#ràng-buộc-duy-nhất-và-index).
+
+---
+
+## Độ dài cột chữ: `VARCHAR(50)` và `TEXT`
+
+`str` mặc định thành `VARCHAR` không giới hạn. Muốn database chặn dữ liệu quá
+dài, hoặc muốn một cột `TEXT` cho đoạn mô tả dài, khai bằng `column()` đặt vào
+`metadata=` của trường:
+
+```python
+# src/api/camera/entities/camera_model.py
+from dataclasses import dataclass, field
+
+from fastapi_modular import Entity, column, entity
+
+
+@entity()
+@dataclass(slots=True)
+class Camera(Entity):
+    id: str
+    code: str = field(default="", metadata=column(length=50))    # VARCHAR(50)
+    note: str = field(default="", metadata=column(text=True))    # TEXT
+    name: str = ""                                               # VARCHAR như cũ
+```
+
+Tương đương `@Column({ length: 50 })` và `@Column({ type: "text" })` của TypeORM.
+
+### Tham số của `column`
+
+| Tham số | Bắt buộc | Mặc định | Để làm gì |
+|---|---|---|---|
+| `length` | một trong hai | `None` | Số ký tự tối đa. Cột thành `VARCHAR(n)`, và khung chặn chuỗi dài hơn ngay lúc ghi |
+| `text` | một trong hai | `False` | Cột thành `TEXT` — không giới hạn độ dài |
+
+Cả hai đều là **keyword-only**, và phải khai đúng một trong hai: `column()`
+rỗng hay `column(length=50, text=True)` đều bị chặn ngay lúc khai báo.
+
+**Quá dài thì bị chặn ở khung, không đợi database.** Ghi 63 ký tự vào cột khai
+`length=50` cho lỗi **400** với câu nói rõ chỗ sai:
+
+```
+Camera.code dài 63 ký tự, quá 50 ký tự đã khai bằng `column(length=50)`.
+Cắt bớt trước khi ghi, hoặc nâng độ dài trong entity rồi chạy migration đổi cột.
+```
+
+Chặn cả trên đường `save()` lẫn `update()` / `update_where()`, và **không có gì
+được ghi** khi bị chặn.
+
+**Vì sao khung phải tự chặn: chỉ Postgres báo lỗi.** Đo được — ghi 60 ký tự vào
+`VARCHAR(50)`: SQLite nhận bình thường, Postgres ném
+`StringDataRightTruncationError`. MongoDB thì không có khái niệm độ dài. Không
+chặn ở tầng khung thì `fam test` trên SQLite xanh còn production Postgres đổ,
+đúng loại lỗi khó tìm nhất.
+
+**Enum đếm theo `.value`, không phải theo tên.** Cột Enum lưu bằng `.value` nên
+`column(length=4)` đo trên chuỗi được lưu.
+
+**Chung trường với khoá ngoại thì gộp hai dict bằng `|`:**
+
+```python
+camera_id: str = field(default="", metadata=reference(Camera) | column(length=36))
+```
+
+**`length` chỉ đặt được cho cột chữ.** Đặt lên `int` / `float` / `datetime` thì
+app **chết ngay lúc khởi động** với câu "Độ dài và TEXT chỉ đặt được cho cột chữ
+(`str` hoặc `Enum`)" — sai kiểu thì hỏng ngay, không im lặng bỏ qua.
+
+**Đổi độ dài của cột ĐÃ CÓ phải làm bằng migration.** Khung không tự
+`ALTER COLUMN` — mỗi database một cú pháp, và phép đổi có thể khoá bảng rất
+lâu. Với `APP_DB__SCHEMA_MODE=sync` bạn chỉ nhận một cảnh báo:
+
+```
+db.column_type_mismatch  column='cameras.code: VARCHAR(8) -> VARCHAR(64)'
+```
+
+Cột cũ có `VARCHAR(50)` mà entity để `str` trơn thì **không** bị kêu — nếu
+không, mọi bảng đang có sẵn đều nhận cảnh báo không ai sửa được.
+
+**MongoDB: `length` vẫn có hiệu lực, `text=True` không có nghĩa gì.** Xem
+[mongodb.md](mongodb.md#cái-không-dùng-được-trên-mongo).
 
 ---
 
@@ -536,3 +619,19 @@ Hai quy ước:
 
 ---
 
+## Hỏng thì tra ở đây
+
+| Bạn thấy gì | Nguyên nhân |
+|---|---|
+| 409 `không có Camera nào mang id đó` lúc ghi | khoá ngoại trỏ tới bản ghi cha không tồn tại — [chặn dữ liệu rác](#nó-chặn-dữ-liệu-rác-ngay-lúc-ghi) |
+| 409 lúc xoá cha | còn bản ghi con và khoá ngoại khai `RESTRICT` — [`RESTRICT`](#restrict--chặn-không-cho-xoá) |
+| Xoá cha thì con đi theo, nhưng **cháu ở lại** | bảng cũ chưa có khoá ngoại thật dưới database — [Cascade dừng giữa chừng](#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại) |
+| `[warning] db.foreign_keys_stale` lúc khởi động | như trên: khoá ngoại trong entity chưa có dưới database |
+| `db.indexes_missing` lúc khởi động | `schema_mode="off"` mà index chưa được tạo — ràng buộc duy nhất KHÔNG có hiệu lực |
+| `db.index_failed` | dữ liệu cũ đã có bản trùng, không tạo được unique index — dọn rồi khởi động lại |
+| 400 `… quá 50 ký tự đã khai bằng column(length=50)` | chuỗi dài hơn độ dài cột — [độ dài cột chữ](#độ-dài-cột-chữ-varchar50-và-text) |
+| Khởi động chết: `Độ dài và TEXT chỉ đặt được cho cột chữ` | `column(...)` đặt lên trường `int`/`float`/`datetime` |
+| `db.column_type_mismatch  'cameras.code: VARCHAR(8) -> VARCHAR(64)'` | đổi `length` trong entity — khung không tự `ALTER`, phải migration |
+| Thêm trường mới, bản ghi cũ đọc ra lỗi | trường mới chưa có giá trị mặc định — [Bốn quy ước phải biết](#bốn-quy-ước-phải-biết) |
+
+---

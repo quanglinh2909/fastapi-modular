@@ -77,6 +77,7 @@ quét nó đi". Xếp khác thì nói ra một lần trong `src/main.py`:
 | `find({relations: …})` (TypeORM) | `.include(Event, fields=…, exclude=…)` · `.nest_under(Camera)` — dữ liệu lồng nhau, hai chiều |
 | `@ManyToOne(…, {onDelete})` (TypeORM) | `reference(X, on_delete=…)` — xem [database.md](entity.md#khoá-ngoại-nối-hai-bảng-với-nhau) |
 | `@Entity()` | `@entity` |
+| `@Column({length, type: 'text'})` (TypeORM) | `field(metadata=column(length=50))` — xem [entity.md](entity.md#độ-dài-cột-chữ-varchar50-và-text) |
 | `extends BaseEntity` | `class X(Entity)` — chỉ để lọc bằng toán tử: `.where(X.score >= 0.8)` |
 | `overrideProvider()` | `container.override()` |
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
@@ -194,7 +195,7 @@ chỉ thân hàm là chưa viết, gọi vào trả **501** kèm tên hàm:
 Ba việc còn lại của bạn:
 
 1. Thêm trường vào `entities/<tên>_model.py` và `dto/<tên>_schema.py`
-2. Khai `unique=` / `indexes=` trong `@entity` nếu cần
+2. Khai `unique=` / `indexes=` trong `@entity`, độ dài cột chữ bằng `column(length=…)`
 3. Viết thân hàm trong `<tên>_service.py` — mỗi hàm có sẵn gợi ý dạng chú thích,
    bỏ chú thích ra là chạy được (có test chép-dán-chạy-thật canh điều đó). Gợi ý
    của `update_<tên>` dùng [`repo.update(id, payload)`](repository.md#sửa-dữ-liệu-không-cần-đọc-về-trước)
@@ -332,7 +333,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 1134 test trên backend memory (358 test nữa cần hạ tầng hoặc driver thật)
+fam test       # 1149 test trên backend memory (376 test nữa cần hạ tầng hoặc driver thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

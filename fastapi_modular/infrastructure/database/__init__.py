@@ -3,7 +3,13 @@
 Import từ đây:  from fastapi_modular.infrastructure.database import Repository
 """
 
-from fastapi_modular.infrastructure.database.base import Entity, Reference, reference
+from fastapi_modular.infrastructure.database.base import (
+    ColumnSpec,
+    Entity,
+    Reference,
+    column,
+    reference,
+)
 from fastapi_modular.infrastructure.database.query import (
     Aggregate,
     F,
@@ -28,6 +34,7 @@ from fastapi_modular.infrastructure.database.repository import Database, Reposit
 
 __all__ = [
     "Aggregate",
+    "ColumnSpec",
     "Database",
     "Entity",
     "F",
@@ -37,6 +44,7 @@ __all__ = [
     "and_",
     "avg",
     "between",
+    "column",
     "count",
     "ilike",
     "in_",

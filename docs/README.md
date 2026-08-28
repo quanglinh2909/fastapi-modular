@@ -3,7 +3,7 @@
 | Tài liệu | Nội dung |
 |---|---|
 | [database.md](database.md) | SQL: chọn driver (memory / SQLite / PostgreSQL), kết nối, mất kết nối, tự chỉnh schema |
-| [entity.md](entity.md) | Khai bảng dữ liệu: `@entity`, khoá ngoại + `on_delete`, unique/index, dấu thời gian |
+| [entity.md](entity.md) | Khai bảng dữ liệu: `@entity`, khoá ngoại + `on_delete`, unique/index, độ dài cột chữ, dấu thời gian |
 | [repository.md](repository.md) | Đọc/ghi trong service: `find`, `save`, `update`/`update_where`, `delete` |
 | [query.md](query.md) | Truy vấn phức tạp: JOIN, lớn/bé, NULL, gộp nhóm, dữ liệu lồng nhau, injection |
 | [transaction.md](transaction.md) | Ghi nhiều bảng: cùng thành công hoặc cùng không, SAVEPOINT |

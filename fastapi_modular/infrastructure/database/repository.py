@@ -30,6 +30,7 @@ from fastapi_modular.infrastructure.database.base import (
     DatabaseBackend,
     Transaction,
     check_changes,
+    check_lengths,
     is_transient_error,
     mapping_for,
 )
@@ -264,6 +265,7 @@ class Repository(Generic[E]):
             is_new = not getattr(obj, "id", None)
             created = getattr(obj, "created_at", None)
             obj.updated_at = created if (is_new and created is not None) else utcnow()  # type: ignore[attr-defined]
+        check_lengths(self._entity, obj)
         return await self._backend.save(self._entity, obj)
 
     async def update(
