@@ -232,6 +232,45 @@ Hai lỗi hay gặp, cả hai đều được log cảnh báo lúc boot:
 - `api.module_without_controller` — thư mục không có `@controller` nào.
 - `controller.no_routes` — có controller nhưng chưa method nào mang `@get`/`@post`.
 
+### Tham số của `@controller`
+
+| Tham số | Bắt buộc | Mặc định | Để làm gì |
+|---|---|---|---|
+| `prefix` | không | `""` | tiền tố đường dẫn cho MỌI route trong class: `"/alerts"` |
+| `tags` | không | `None` | nhóm trong trang `/docs`; thường để đúng một tên module |
+| `guards` | không | `()` | guard chạy trước MỌI route của class — xem [operations.md](operations.md#guard) |
+| *(còn lại)* | không | — | mọi tham số khác chuyển thẳng cho `APIRouter` của FastAPI: `dependencies`, `responses`, `deprecated`… |
+
+### Tham số của `@get` / `@post` / `@put` / `@patch` / `@delete`
+
+| Tham số | Bắt buộc | Mặc định | Để làm gì |
+|---|---|---|---|
+| `path` | không | `""` | phần đường dẫn nối sau `prefix`. `""` là chính `prefix`; `"/{alert_id}"` là route động |
+| *(còn lại)* | không | — | chuyển thẳng cho `add_api_route` của FastAPI — hay dùng nhất: `response_model`, `status_code`, `summary`, `guards` |
+
+`guards` khai ở route thì **cộng dồn** với `guards` của class, chạy sau.
+
+```python
+@controller(prefix="/alerts", tags=["alerts"], guards=[RequireHeader])
+class AlertController:
+    @get("/{alert_id}", response_model=AlertOut, summary="Một cảnh báo")
+    async def detail(self, alert_id: str) -> AlertOut: ...
+
+    @delete("/{alert_id}", status_code=204, guards=[ChiAdmin])
+    async def remove(self, alert_id: str) -> None: ...
+```
+
+### Tham số của `@injectable`
+
+| Tham số | Bắt buộc | Mặc định | Để làm gì |
+|---|---|---|---|
+| `scope` | không | `Scope.SINGLETON` | `SINGLETON` = một bản cho cả app. `Scope.REQUEST` = mỗi request một bản mới |
+
+**Singleton không được nhận provider request-scoped qua `__init__`** — nó sống
+lâu hơn request nên sẽ giữ mãi bản của request đầu tiên. Khung chặn thẳng lúc
+dựng, kèm câu chỉ đường: hoặc cho nó `scope=Scope.REQUEST`, hoặc gọi
+`container.resolve()` ngay trong method.
+
 ### `def` thường hay `async def`?
 
 Đúng luật của FastAPI, khung không đổi gì:

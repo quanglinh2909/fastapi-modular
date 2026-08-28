@@ -978,6 +978,31 @@ class CameraService:
 | `delete_where(**equals, match=)` | Xoá nhiều, trả số bản ghi |
 | `query()` | Builder cho JOIN, lớn/bé, NULL — xem [mục dưới](#truy-vấn-phức-tạp--join-lớnbé-null) |
 
+### Tham số của `find` / `find_one` / `count` / `exists` / `delete_where`
+
+Cả năm nhận cùng một bộ:
+
+| Tham số | Bắt buộc | Mặc định | Để làm gì |
+|---|---|---|---|
+| `**equals` | không | *(không lọc)* | điều kiện **so bằng**: `find(zone="T1", status="on")` = AND. Giá trị `None` bị BỎ QUA, không phải "bằng NULL" |
+| `match` | không | `None` | hàm Python lọc thêm: `match=lambda o: o.score > 0.9`. Chạy TRONG Python nên phải kéo cả bảng về — xem [Hai quy ước dễ vấp](#hai-quy-ước-dễ-vấp) |
+| `order_by` | không | `"created_at"` | tên cột để sắp; chỉ `find` có |
+| `limit` | không | `None` *(không giới hạn)* | số dòng tối đa; chỉ `find` có |
+| `offset` | không | `0` | bỏ qua bao nhiêu dòng đầu; chỉ `find` có |
+
+Cần `>=`, `LIKE`, `IN`, JOIN thì không dùng `find` nữa mà dùng
+[`query()`](#truy-vấn-phức-tạp--join-lớnbé-null) — nó chạy DƯỚI database.
+
+### Tham số của `update` và `update_where`
+
+| Tham số | Bắt buộc | Mặc định | Để làm gì |
+|---|---|---|---|
+| `id_` *(của `update`)* | **có** | — | id của bản ghi cần sửa. Truyền dict vào đây là lỗi — đó là việc của `update_where` |
+| `where` *(của `update_where`)* | **có** | — | dict hoặc DTO, điều kiện **so bằng**. Rỗng thì bị chặn |
+| `changes` | không | `None` | giá trị cần ghi: dict hoặc **DTO** (đọc bằng `exclude_unset=True`) |
+| `**set_fields` | không | — | cách viết gọn của `changes`; gộp được với nó |
+| `match` *(chỉ `update_where`)* | không | `None` | lọc thêm bằng Python; cũng là cách nói rõ "tôi cố ý sửa cả bảng" |
+
 ### Sửa dữ liệu không cần đọc về trước
 
 **Sửa một bản ghi và lấy lại chính nó** — cả handler PATCH gói trong một dòng:

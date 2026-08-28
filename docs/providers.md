@@ -211,6 +211,23 @@ src/providers/
 Một dự án có nhiều họ: `payment/`, `sms/`, `device/`, `storage/`. Chúng độc lập
 hoàn toàn — `"oryza"` bên `device` và `"oryza"` bên `sms` là hai thứ khác nhau.
 
+### Tham số của `@provider`
+
+| Tham số | Bắt buộc | Mặc định | Để làm gì |
+|---|---|---|---|
+| `name` | **có** | — | tên gọi lúc chạy: `payments.get("vnpay")`. Duy nhất trong MỘT họ; hai họ khác nhau được trùng tên |
+| `scope` | không | `Scope.SINGLETON` | `SINGLETON` = một bản dùng lại cho mọi request. `Scope.REQUEST` = mỗi request một bản mới, khi provider giữ trạng thái riêng của request |
+
+Provider nhận phụ thuộc qua `__init__` như mọi `@injectable` khác — settings,
+`RedisClient`, repository, đều tiêm được.
+
+```python
+@provider("vnpay")
+class VNPayGateway(PaymentGateway):
+    def __init__(self, settings: Settings) -> None:
+        self._key = settings.vnpay_key
+```
+
 ---
 
 ## 5. Khi provider không làm được hết mọi việc
