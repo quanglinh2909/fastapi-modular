@@ -3,9 +3,63 @@
 Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 [SemVer](https://semver.org/lang/vi/).
 
-## [Chưa phát hành]
+## [0.4.0] — 2026-08-28
 
 ### Thêm
+
+- **`id: int` — khoá chính là số tự tăng.** Khai `id: int = 0` thay cho
+  `id: str` là database phát số; `id: str` vẫn là UUID khung sinh, không đổi gì.
+
+  ```python
+  @entity()
+  @dataclass(slots=True)
+  class Camera(Entity):
+      id: int = 0                    # 0 = "chưa có"
+
+  cam = await repo.save(Camera(name="Cổng chính"))
+  print(cam.id)                      # 1
+  ```
+
+  `SERIAL` trên Postgres, `INTEGER PRIMARY KEY AUTOINCREMENT` trên SQLite, bộ
+  đếm `_fam_counters` (`$inc`, nguyên tử) trên MongoDB, bộ đếm trong bộ nhớ ở
+  `memory`. `get` / `update` / `delete` nhận cả chuỗi lẫn số.
+
+  Ba chỗ phải bắt để bốn backend cư xử như nhau:
+
+  - SQLite mặc định cấp `max(rowid) + 1`, nên xoá bản ghi cuối bảng rồi ghi tiếp
+    là số cũ QUAY LẠI (đo được: `1, 2`, xoá `2`, ghi ra `2`). Bảng có id số nay
+    được tạo với `AUTOINCREMENT`.
+  - MongoDB: bản ghi MỚI dùng `insert_one` thay cho `replace_one(upsert=True)`.
+    Bộ đếm lệch — vì có ai đó gán id tay — nay cho **409** chứ không lặng lẽ đè
+    lên document của người khác.
+  - Câu `INSERT` bỏ hẳn cột `id` thay vì gửi `0` xuống.
+
+  Nhớ đổi `<tên>_id: str` thành `int` ở controller và service, nếu không FastAPI
+  nhận `"12"` (chuỗi) và bạn được 404 khó hiểu. `fam module` ghi sẵn lời nhắc
+  này ngay cạnh trường `id`.
+
+- **`column(length=50)` và `column(text=True)`** — đặt độ dài cột chữ, hoặc đổi
+  sang `TEXT`. Tương đương `@Column({length})` / `@Column({type: 'text'})` của
+  TypeORM:
+
+  ```python
+  code: str = field(default="", metadata=column(length=50))     # VARCHAR(50)
+  note: str = field(default="", metadata=column(text=True))     # TEXT
+  ```
+
+  Độ dài được kiểm **ở tầng khung**, trước khi câu lệnh xuống database, và cho
+  **400** kèm câu nói rõ chỗ sai. Vì sao không giao hết cho database: đo được,
+  ghi 60 ký tự vào `VARCHAR(50)` thì SQLite nhận bình thường, Postgres ném
+  `StringDataRightTruncation`, MongoDB không có khái niệm độ dài — tức là chạy
+  được lúc dev và đổ lúc chạy thật. Chặn ở cả `save()`, `update()` và
+  `update_where()`; Enum đếm theo `.value`.
+
+  Gộp với khoá ngoại trên cùng một cột bằng `|`:
+  `field(metadata=reference(Camera) | column(length=36))`.
+
+  Soi schema (`schema_mode="sync"`) nay kêu cả khi lệch độ dài
+  (`cameras.code: VARCHAR(8) -> VARCHAR(64)`), nhưng chỉ khi entity CÓ khai —
+  bảng cũ có `VARCHAR(50)` mà entity để `str` trơn thì không bị kêu oan.
 
 - **`repo.update(id, changes)` và `repo.update_where(dieu_kien, changes)`** —
   sửa thẳng dưới database, không phải đọc bản ghi về trước. Thay vòng ba bước
@@ -54,6 +108,29 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
   Trên MongoDB đếm bằng `matched_count` chứ không phải `modified_count`: ghi
   đúng giá trị đang có thì Mongo coi là không sửa gì và trả 0, trong khi SQL vẫn
   đếm dòng đã khớp. Đo trên Mongo thật để chắc: `matched=1, modified=0`.
+
+### Sửa
+
+- **Trường `X | None` sinh ra cột `VARCHAR`.** `int | None` không phải một
+  `type`, nên mọi phép `is datetime` / `issubclass(..., Enum)` đều trượt và cột
+  rơi vào nhánh mặc định. Đo được với `port: int | None`: `memory` đọc về `8080`,
+  SQLite đọc về `'8080'` (chuỗi), Postgres ném `DataError` NGAY LÚC GHI.
+  `datetime | None` mất luôn múi giờ, `Enum | None` không được ép lại thành
+  Enum. Nay `X | None` cho ra đúng cột của `X`, chỉ khác là nhận `NULL`.
+
+  **Nâng cấp:** bảng tạo bằng bản ≤ 0.3.1 có cột `VARCHAR` cho những trường ấy,
+  nên `schema_mode="sync"` sẽ cảnh báo `VARCHAR -> INTEGER`. Đổi cột bằng
+  migration; bảng SQLite cũ vẫn đọc ghi được, còn Postgres thì trước đây ném lỗi
+  ngay lúc ghi nên gần như chắc chắn chưa có dữ liệu kiểu đó.
+
+- `update` / `update_where` nhận id số, không còn chặn "phải là chuỗi".
+
+- Bảng test chạy trên Postgres nay mang hậu tố ngẫu nhiên và tự xoá sau khi
+  chạy. Trước đó `test_drivers` dùng bảng `users` của app mẫu và gọi
+  `delete_where()` không điều kiện — trỏ `TEST_POSTGRES_DSN` vào một database
+  đang dùng là xoá sạch bảng `users` của dự án khác.
+
+- Bỏ hai file rác lọt vào gói: `ebsocket.md#...#`.
 
 ## [0.3.1] — 2026-08-27
 

@@ -15,13 +15,37 @@ import asyncio
 import importlib.util
 import os
 import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
 
 import pytest
 
+from fastapi_modular.core.clock import utcnow
 from fastapi_modular.core.compat import UTC
 from fastapi_modular.core.config import DatabaseSettings, Settings
+from fastapi_modular.core.container import entity
+from fastapi_modular.infrastructure.database import Entity
 from fastapi_modular.infrastructure.database.repository import Database, Repository
-from src.api.users.entities.user_model import User
+
+# Bảng RIÊNG cho lần chạy này, không dùng `users` của app mẫu.
+#
+# Vì sao quan trọng: fixture bên dưới gọi `delete_where()` KHÔNG điều kiện, tức
+# xoá sạch bảng. Nếu `TEST_POSTGRES_DSN` trỏ vào một database đang có bảng
+# `users` của dự án khác — chuyện rất dễ xảy ra, `app` là tên mặc định — thì bộ
+# test này xoá dữ liệu của người ta. Tên bảng có hậu tố ngẫu nhiên thì không
+# đụng vào đâu cả.
+TABLE = f"drvusers_{uuid.uuid4().hex[:8]}"
+
+
+@entity(name=TABLE, unique=["email"])
+@dataclass(slots=True)
+class User(Entity):
+    id: str
+    email: str
+    full_name: str
+    is_active: bool = True
+    created_at: datetime = field(default_factory=utcnow)
+    updated_at: datetime = field(default_factory=utcnow)
 
 
 def _installed(module: str) -> bool:
@@ -76,6 +100,13 @@ async def repo(request) -> Repository:
     await repository.delete_where()          # dọn dữ liệu cũ nếu có
     yield repository
     await repository.delete_where()
+    if request.param["driver"] == "postgres":
+        # Postgres dùng chung một database cho cả bộ test, nên bảng tạm phải
+        # được dọn — để lại là lần sau chạy đụng schema cũ.
+        from sqlalchemy import text as sql_text
+
+        async with database.backend._engine.begin() as conn:
+            await conn.execute(sql_text(f'DROP TABLE IF EXISTS "{TABLE}"'))
     await database.shutdown()
 
 

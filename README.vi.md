@@ -90,7 +90,7 @@ phần vào `requirements.txt`** để đồng nghiệp clone repo về chỉ c�
 
 ```
 # requirements.txt, sau khi `fam install sqlite` rồi `fam install redis`
-fastapi-modular[redis,sqlite]>=0.3.1
+fastapi-modular[redis,sqlite]>=0.4.0
 ```
 
 Nó ghi extras chứ không liệt kê từng gói con: khoảng phiên bản của

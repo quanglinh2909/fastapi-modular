@@ -144,6 +144,23 @@ khác SQL:
 TEST_MONGO_DSN='mongodb://root:root@127.0.0.1:27017/?authSource=admin' pytest -q
 ```
 
+`TEST_POSTGRES_DSN` bật thêm cột Postgres cho `test_drivers`, `test_id_types`,
+`test_column_types`, `test_schema_evolution`:
+
+```bash
+TEST_SQLITE=1 \
+TEST_MONGO_DSN='mongodb://root:root@127.0.0.1:27017/?authSource=admin' \
+TEST_POSTGRES_DSN='postgresql+asyncpg://postgres:postgres@localhost:5432/app' pytest -q
+```
+
+**Trỏ `TEST_POSTGRES_DSN` vào một database RIÊNG cho test.** Postgres không có
+"mỗi test một file" như SQLite, nên mọi test dùng chung một database. Đã dính
+một lần: DSN trỏ vào `app` — database của một dự án khác trên cùng container —
+và `test_drivers` (entity `User` -> bảng `users`) gọi `delete_where()` KHÔNG điều
+kiện, tức xoá sạch bảng `users` của người ta. Lần đó thoát vì bảng kia có khoá
+ngoại chặn lại. Giờ mọi bảng test đều mang hậu tố ngẫu nhiên và tự xoá sau khi
+chạy, nhưng đừng dựa vào đó: dùng database riêng.
+
 `tests/test_configure_env.py::test_bien_nhac_trong_docs_deu_con_that` đối chiếu
 mọi biến `APP_*` trong docs với `Settings` thật. Thêm một **nhóm** biến mới
 (`APP_<TÊN>__*`) thì phải thêm nhóm đó vào bảng `nhom` trong chính test, nếu

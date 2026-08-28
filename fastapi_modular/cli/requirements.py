@@ -7,7 +7,7 @@ với `ComponentNotEnabledError`. Đây đúng là việc `package.json` làm ch
 
 Cách ghi: **một dòng duy nhất, dùng extras**, thay vì liệt kê từng gói con:
 
-    fastapi-modular[redis,sqlite]>=0.3.0
+    fastapi-modular[redis,sqlite]>=0.4.0
 
 Vì sao extras chứ không phải danh sách gói phẳng: khoảng phiên bản của
 sqlalchemy/motor/... là chuyện của fastapi-modular, và nó đổi theo từng bản.
@@ -82,7 +82,7 @@ def _numbers(version: str) -> tuple[int, ...]:
 def _raise_floor(text: str, version: str) -> str:
     """Nâng `>=` lên phiên bản đang dùng, nếu nó cao hơn.
 
-    Vì sao cần: cài `fam install redis` bằng fastapi-modular 0.3.0 nhưng
+    Vì sao cần: cài `fam install redis` bằng fastapi-modular 0.4.0 nhưng
     requirements.txt vẫn ghi `>=0.2.1` thì đồng nghiệp được phép cài 0.2.1 —
     bản có thể chưa có extra đó, hoặc chưa có API bạn vừa dùng. Sàn phải nói
     đúng bản THẬT SỰ đang chạy.

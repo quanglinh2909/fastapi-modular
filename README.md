@@ -98,7 +98,7 @@ same job `package.json` does for `npm i`.
 
 ```
 # requirements.txt, after `fam install sqlite` and `fam install redis`
-fastapi-modular[redis,sqlite]>=0.3.1
+fastapi-modular[redis,sqlite]>=0.4.0
 ```
 
 It records the extras, not the individual packages: the version ranges of

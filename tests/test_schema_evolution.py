@@ -78,6 +78,41 @@ class After:
 
 After.__storage_name__ = TABLE       # cùng bảng với Before
 
+# Bảng RIÊNG cho phép kiểm `schema_mode="off"`: nó khẳng định bảng KHÔNG được
+# tạo, nên không dùng chung tên với các test ở trên. SQLite mỗi test một file
+# nên không lộ, Postgres dùng chung một database thì lộ ngay.
+TABLE_OFF = f"{TABLE}_off"
+
+
+@dataclass(slots=True)
+class Untouched:
+    id: str
+    name: str
+    created_at: datetime = field(default_factory=utcnow)
+
+
+Untouched.__storage_name__ = TABLE_OFF
+
+
+@pytest.fixture(scope="module", autouse=True)
+async def _don_bang_tam():
+    """Postgres dùng chung một database cho cả bộ test — bảng tạm phải dọn.
+
+    Không dọn thì lần chạy sau gặp schema cũ, và database của người dùng đầy
+    dần những bảng `evo_*` không ai biết của ai.
+    """
+    yield
+    if not os.getenv("TEST_POSTGRES_DSN"):
+        return
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(os.environ["TEST_POSTGRES_DSN"])
+    async with engine.begin() as conn:
+        for name in (TABLE, TABLE_OFF):
+            await conn.execute(text(f'DROP TABLE IF EXISTS "{name}"'))
+    await engine.dispose()
+
 
 @pytest.mark.asyncio
 async def test_them_truong_va_bu_gia_tri_mac_dinh():
@@ -141,14 +176,14 @@ async def test_schema_mode_off_khong_dung_gi():
     settings = rieng
     backend = create_backend(settings)
     await backend.startup()
-    await backend.create_schema(Before)
+    await backend.create_schema(Untouched)
 
     async with backend._engine.connect() as conn:
         if backend.name == "postgres":
             sql = "SELECT to_regclass(:t) IS NOT NULL"
         else:
             sql = "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=:t"
-        co_bang = bool((await conn.execute(text(sql), {"t": TABLE})).scalar())
+        co_bang = bool((await conn.execute(text(sql), {"t": TABLE_OFF})).scalar())
 
     assert co_bang is False, "schema_mode=off mà vẫn tạo bảng"
     await backend.shutdown()
