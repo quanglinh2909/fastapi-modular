@@ -195,7 +195,12 @@ Ba việc còn lại của bạn:
 
 1. Thêm trường vào `entities/<tên>_model.py` và `dto/<tên>_schema.py`
 2. Khai `unique=` / `indexes=` trong `@entity` nếu cần
-3. Viết thân hàm trong `<tên>_service.py` — mỗi hàm có sẵn gợi ý dạng chú thích
+3. Viết thân hàm trong `<tên>_service.py` — mỗi hàm có sẵn gợi ý dạng chú thích,
+   bỏ chú thích ra là chạy được (có test chép-dán-chạy-thật canh điều đó). Gợi ý
+   của `update_<tên>` dùng [`repo.update(id, payload)`](database.md#sửa-dữ-liệu-không-cần-đọc-về-trước)
+   — nhận thẳng DTO, một lượt đi database. Cần đọc bản ghi cũ trước khi ghi
+   (kiểm trùng, so giá trị cũ) thì dùng `apply_changes` + `save` như
+   `src/api/users/user_service.py`.
 
 Không phải đăng ký ở đâu cả: không sửa `main.py`, không sửa `api/app.py`.
 
@@ -288,7 +293,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 1130 test trên backend memory (351 test nữa cần hạ tầng hoặc driver thật)
+fam test       # 1131 test trên backend memory (351 test nữa cần hạ tầng hoặc driver thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

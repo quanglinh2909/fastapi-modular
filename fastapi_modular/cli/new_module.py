@@ -126,6 +126,12 @@ class {cls}Out(OutputSchema):
 
 Chỉ tầng này chứa business rule. Ném lỗi nghiệp vụ (NotFoundError/ConflictError)
 chứ không biết gì về HTTP status code.
+
+Các gợi ý bên dưới có dùng `NotFoundError` — bỏ chú thích thì thêm dòng import:
+
+    from fastapi_modular import NotFoundError
+
+(chưa import sẵn vì file mới sinh chưa dùng tới, và `fam lint` sẽ báo import thừa)
 """
 
 from __future__ import annotations
@@ -166,10 +172,14 @@ class {cls}Service:
         raise NotImplementedError("{cls}Service.create_{var} chưa được viết")
 
     async def update_{var}(self, {var}_id: str, payload: {cls}Update) -> {cls}:
-        # TODO: gợi ý:
-        #   item = await self.get_{var}({var}_id)
-        #   apply_changes(item, payload)      # updated_at do repository lo
-        #   return await self._repo.save(item)
+        # TODO: gợi ý — `update` nhận thẳng DTO, chỉ ghi field client gửi lên:
+        #   if not await self._repo.update({var}_id, payload):
+        #       raise NotFoundError(f"Không tìm thấy {var} {{{var}_id}}")
+        #   return await self.get_{var}({var}_id)
+        #
+        # Cần đọc bản ghi cũ trước khi ghi (kiểm tra trùng, so giá trị cũ) thì
+        # dùng `apply_changes(item, payload)` rồi `save(item)` — xem
+        # src/api/users/user_service.py.
         raise NotImplementedError("{cls}Service.update_{var} chưa được viết")
 
     async def delete_{var}(self, {var}_id: str) -> None:

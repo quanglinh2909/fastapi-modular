@@ -28,6 +28,10 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
   THỰC SỰ gửi mới được ghi. `model_dump()` trần sẽ ghi `None` đè lên mọi cột
   không gửi. Truyền entity thì bị từ chối, kèm lời chỉ đường sang `save(obj)`.
   Trả về **số dòng khớp**.
+
+- `fam module` sinh gợi ý `update_<tên>` theo API mới — `repo.update(id, payload)`
+  thay cho vòng `get` -> `apply_changes` -> `save`. Có test chép-dán-chạy-thật:
+  bỏ chú thích cả năm gợi ý, thêm một trường như bộ sinh dặn, rồi gọi qua HTTP.
   Thứ tự tham số lấy đúng của TypeORM (`repo.update(criteria, partialEntity)`).
 
   `updated_at` tự đóng dấu như `save()`. Ràng buộc vẫn được áp trên cả ba
