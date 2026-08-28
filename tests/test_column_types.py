@@ -67,6 +67,22 @@ class ColBadge:
     updated_at: datetime = field(default_factory=utcnow)
 
 
+@entity()
+@dataclass(slots=True)
+class ColOptional:
+    """Mọi trường đều `| None` — chỗ khung từng sinh nhầm hết thành VARCHAR."""
+
+    id: str
+    port: int | None = None
+    score: float | None = None
+    live: bool | None = None
+    seen_at: datetime | None = None
+    kind: Kind | None = None
+    note: str | None = None
+    created_at: datetime = field(default_factory=utcnow)
+    updated_at: datetime = field(default_factory=utcnow)
+
+
 class _Db:
     def __init__(self, backend) -> None:
         self.backend = backend
@@ -79,6 +95,8 @@ class _Db:
         not HAS_SQLITE, reason="đặt TEST_SQLITE=1 và cài aiosqlite")),
     pytest.param("mongodb", marks=pytest.mark.skipif(
         not HAS_MONGO, reason="đặt TEST_MONGO_DSN và cài motor")),
+    pytest.param("postgres", marks=pytest.mark.skipif(
+        not HAS_POSTGRES, reason="đặt TEST_POSTGRES_DSN và cài asyncpg")),
 ])
 async def badges(request, tmp_path):
     if request.param == "memory":
@@ -87,6 +105,8 @@ async def badges(request, tmp_path):
         settings = DatabaseSettings(
             driver="sqlite", dsn=f"sqlite+aiosqlite:///{tmp_path}/{uuid.uuid4().hex}.db"
         )
+    elif request.param == "postgres":
+        settings = DatabaseSettings(driver="postgres", dsn=POSTGRES_DSN)
     else:
         settings = DatabaseSettings(
             driver="mongodb", dsn=MONGO_DSN, name=f"fam_col_{uuid.uuid4().hex[:8]}"
@@ -94,14 +114,76 @@ async def badges(request, tmp_path):
     backend = create_backend(settings)
     await backend.startup()
     if hasattr(backend, "create_schema"):
-        await backend.create_schema(ColZone, ColBadge)
+        await backend.create_schema(ColZone, ColBadge, ColOptional)
 
     db = _Db(backend)
     await Repository(ColZone, db).save(ColZone(id="z1"))
     yield Repository(ColBadge, db)
     if request.param == "mongodb":
         await backend._client.drop_database(backend._database_name)
+    if request.param == "postgres":
+        # Postgres dùng chung một database cho cả bộ test, nên phải dọn bảng —
+        # để lại dữ liệu là test sau đếm nhầm. Bảng con trước, bảng cha sau.
+        from sqlalchemy import text as sql_text
+
+        async with backend._engine.begin() as conn:
+            for name in ("colbadges", "coloptionals", "colzones"):
+                await conn.execute(sql_text(f'DROP TABLE IF EXISTS "{name}" CASCADE'))
     await backend.shutdown()
+
+
+@pytest.fixture
+async def optionals(badges):
+    """Repository của `ColOptional`, dùng chung backend với fixture `badges`."""
+    return Repository(ColOptional, badges._db)
+
+
+# ------------------------------------------------- trường `X | None`
+async def test_optional_fields_keep_their_type_through_the_database(optionals):
+    """`int | None` phải đọc về `int`, không phải `'8080'`.
+
+    Đo được trước khi sửa: cột sinh ra là VARCHAR nên SQLite trả chuỗi, Postgres
+    ném `DataError` ngay lúc ghi, còn memory trả đúng số — cùng một entity, ba
+    kết quả khác nhau.
+    """
+    when = utcnow()
+    await optionals.save(ColOptional(
+        id="o1", port=8080, score=0.75, live=True, seen_at=when, kind=Kind.SHORT, note="x",
+    ))
+    found = await optionals.get("o1")
+
+    assert found.port == 8080 and isinstance(found.port, int)
+    assert found.score == 0.75 and isinstance(found.score, float)
+    assert found.live is True
+    assert found.kind is Kind.SHORT, "Enum trong Optional cũng phải ép lại"
+    assert found.seen_at.tzinfo is not None, "datetime đọc ra luôn kèm múi giờ"
+    assert abs((found.seen_at - when).total_seconds()) < 1
+
+
+async def test_optional_fields_still_accept_none(optionals):
+    await optionals.save(ColOptional(id="o2"))
+    found = await optionals.get("o2")
+    assert (found.port, found.score, found.live, found.seen_at, found.kind) == (
+        None, None, None, None, None,
+    )
+
+
+@pytest.mark.skipif(not (HAS_SQLITE or HAS_POSTGRES), reason="cần SQLite hoặc Postgres")
+def test_optional_columns_render_the_right_sql_type():
+    from sqlalchemy.dialects import postgresql
+
+    from fastapi_modular.infrastructure.database.sql import build_metadata
+
+    table = build_metadata(ColOptional).tables[mapping_for(ColOptional).storage]
+    rendered = {
+        c.name: c.type.compile(dialect=postgresql.dialect()) for c in table.columns
+    }
+    assert rendered["port"] == "INTEGER"
+    assert rendered["score"] == "FLOAT"
+    assert rendered["live"] == "BOOLEAN"
+    assert rendered["seen_at"] == "TIMESTAMP WITH TIME ZONE"
+    assert rendered["kind"] == "VARCHAR(64)", "Enum trong Optional vẫn là cột Enum"
+    assert rendered["note"] == "VARCHAR"
 
 
 # ------------------------------------------------------------------ khai báo

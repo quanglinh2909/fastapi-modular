@@ -11,6 +11,7 @@ Bật driver thật bằng biến môi trường:
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import os
 import uuid
@@ -142,6 +143,10 @@ async def test_ban_ghi_moi_co_created_bang_updated(repo):
     loaded = await repo.get(saved.id)
     assert loaded.created_at == loaded.updated_at, "chưa sửa thì hai mốc phải bằng nhau"
 
+    # Mongo lưu datetime tới MILI giây, nên hai lần save sát nhau rơi vào cùng
+    # một mốc và `>` không đúng — đo được 147/200 vòng bị trùng khi ghi liên
+    # tiếp. Chờ 2ms để phép so nói về cái nó định nói: đã sửa thì mốc phải mới.
+    await asyncio.sleep(0.002)
     loaded.full_name = "N2"
     await repo.save(loaded)
     again = await repo.get(saved.id)

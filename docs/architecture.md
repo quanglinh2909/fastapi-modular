@@ -77,6 +77,7 @@ quét nó đi". Xếp khác thì nói ra một lần trong `src/main.py`:
 | `find({relations: …})` (TypeORM) | `.include(Event, fields=…, exclude=…)` · `.nest_under(Camera)` — dữ liệu lồng nhau, hai chiều |
 | `@ManyToOne(…, {onDelete})` (TypeORM) | `reference(X, on_delete=…)` — xem [database.md](entity.md#khoá-ngoại-nối-hai-bảng-với-nhau) |
 | `@Entity()` | `@entity` |
+| `@PrimaryGeneratedColumn()` (TypeORM) | `id: int = 0` — xem [entity.md](entity.md#id-chuỗi-uuid-hay-số-tự-tăng) |
 | `@Column({length, type: 'text'})` (TypeORM) | `field(metadata=column(length=50))` — xem [entity.md](entity.md#độ-dài-cột-chữ-varchar50-và-text) |
 | `extends BaseEntity` | `class X(Entity)` — chỉ để lọc bằng toán tử: `.where(X.score >= 0.8)` |
 | `overrideProvider()` | `container.override()` |
@@ -333,7 +334,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 1149 test trên backend memory (376 test nữa cần hạ tầng hoặc driver thật)
+fam test       # 1163 test trên backend memory (424 test nữa cần hạ tầng hoặc driver thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

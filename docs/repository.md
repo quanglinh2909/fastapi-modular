@@ -44,12 +44,12 @@ class CameraService:
 
 | Hàm | Việc |
 |---|---|
-| `get(id)` | Lấy theo id, không có thì `None` |
+| `get(id)` | Lấy theo id (chuỗi hay số), không có thì `None` |
 | `find(**equals, match=, order_by=, limit=, offset=)` | Danh sách |
 | `find_one(**equals, match=)` | Bản ghi đầu tiên khớp |
 | `count(**equals, match=)` | Đếm |
 | `exists(**equals, match=)` | Có hay không |
-| `save(obj)` | Upsert, tự sinh id nếu chưa có |
+| `save(obj)` | Upsert, tự sinh id nếu chưa có — UUID, hoặc số tự tăng nếu entity khai [`id: int`](entity.md#id-chuỗi-uuid-hay-số-tự-tăng) |
 | `update(id, changes, **set)` | **Sửa một bản ghi** (nhận cả DTO), trả về chính nó — [xem dưới](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
 | `update_where(dieu_kien, changes, **set)` | Sửa nhiều theo điều kiện, trả số dòng khớp |
 | `delete(id)` | Xoá một, trả `True/False` |
@@ -75,7 +75,7 @@ Cần `>=`, `LIKE`, `IN`, JOIN thì không dùng `find` nữa mà dùng
 
 | Tham số | Bắt buộc | Mặc định | Để làm gì |
 |---|---|---|---|
-| `id_` *(của `update`)* | **có** | — | id của bản ghi cần sửa. Truyền dict vào đây là lỗi — đó là việc của `update_where` |
+| `id_` *(của `update`)* | **có** | — | id của bản ghi cần sửa, **chuỗi hay số đều được**. Truyền dict vào đây là lỗi — đó là việc của `update_where` |
 | `where` *(của `update_where`)* | **có** | — | dict hoặc DTO, điều kiện **so bằng**. Rỗng thì bị chặn |
 | `changes` | không | `None` | giá trị cần ghi: dict hoặc **DTO** (đọc bằng `exclude_unset=True`) |
 | `**set_fields` | không | — | cách viết gọn của `changes`; gộp được với nó |
@@ -182,6 +182,7 @@ làm cho giống hệt.
 | IDE: `Expected type 'str', got 'dict[...]'` | đang gọi `update` với điều kiện — đổi sang `update_where` |
 | `update` sửa MỘT bản ghi theo id nên tham số đầu phải là chuỗi | như trên, lúc chạy |
 | `update_where` nhận điều kiện dạng dict hoặc DTO | ngược lại: đang truyền id cho `update_where` — dùng `update(id, ...)` |
+| `tham số đầu phải là chuỗi hoặc số` | đang truyền dict/DTO cho `update` — dùng `update_where` |
 | `update` trả `None` | không có bản ghi nào mang id đó (không phải lỗi ghi) |
 | `update_where` trả `0` | không dòng nào khớp điều kiện |
 | Sửa một field mà các field khác **thành `null`** | đã tự `payload.model_dump()` — truyền thẳng `payload` vào |

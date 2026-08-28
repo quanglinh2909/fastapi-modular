@@ -18,6 +18,7 @@ from fastapi_modular.core.exceptions import ConflictError
 from fastapi_modular.infrastructure.database.base import (
     DatabaseBackend,
     DuplicateKeyViolation,
+    EntityId,
     Filters,
     Match,
     RollbackRequested,
@@ -46,7 +47,7 @@ class MemoryUnitOfWork:
 
     def __init__(self) -> None:
         self._backend: MemoryBackend | None = None
-        self._snapshot: dict[str, dict[str, Any]] | None = None
+        self._snapshot: dict[str, dict[EntityId, Any]] | None = None
 
     def join(self, backend: MemoryBackend) -> None:
         if self._snapshot is None:
@@ -63,7 +64,10 @@ class MemoryBackend(DatabaseBackend):
     name = "memory"
 
     def __init__(self) -> None:
-        self._tables: dict[str, dict[str, Any]] = {}
+        self._tables: dict[str, dict[EntityId, Any]] = {}
+        # Bộ đếm cho entity khai `id: int`, một bộ mỗi bảng. Cố ý KHÔNG khôi
+        # phục khi transaction rollback — sequence của Postgres cũng không lùi.
+        self._counters: dict[str, int] = {}
         self._tx_lock = asyncio.Lock()
         # Độ sâu transaction CỦA TASK NÀY — để khối lồng nhau không tự khoá mình.
         self._tx_depth: ContextVar[int] = ContextVar(f"memory_tx_depth_{id(self)}", default=0)
@@ -73,14 +77,15 @@ class MemoryBackend(DatabaseBackend):
 
     async def shutdown(self) -> None:
         self._tables.clear()
+        self._counters.clear()
 
     async def ping(self) -> bool:
         return True
 
-    def _table(self, entity: type) -> dict[str, Any]:
+    def _table(self, entity: type) -> dict[EntityId, Any]:
         return self._tables.setdefault(mapping_for(entity).storage, {})
 
-    def _copy_tables(self) -> dict[str, dict[str, Any]]:
+    def _copy_tables(self) -> dict[str, dict[EntityId, Any]]:
         """Bản sao NÔNG của từng bản ghi là đủ: trường entity đều là scalar,
         datetime hoặc Enum — không sửa tại chỗ được."""
         import copy
@@ -90,7 +95,7 @@ class MemoryBackend(DatabaseBackend):
             for storage_name, records in self._tables.items()
         }
 
-    def _restore_tables(self, snapshot: dict[str, dict[str, Any]]) -> None:
+    def _restore_tables(self, snapshot: dict[str, dict[EntityId, Any]]) -> None:
         self._tables.clear()
         self._tables.update(snapshot)
 
@@ -151,7 +156,7 @@ class MemoryBackend(DatabaseBackend):
         active = active_filters(filters, entity)
         return [obj for obj in self._table(entity).values() if matches(obj, active, match)]
 
-    async def get(self, entity: type[E], id_: str) -> E | None:
+    async def get(self, entity: type[E], id_: EntityId) -> E | None:
         return self._table(entity).get(id_)
 
     async def find(
@@ -279,9 +284,25 @@ class MemoryBackend(DatabaseBackend):
         self._check_unique(entity, obj)
         self._check_references(entity, obj)
         if not getattr(obj, "id", None):
-            obj.id = uuid.uuid4().hex  # type: ignore[attr-defined]
+            obj.id = self._next_id(entity)  # type: ignore[attr-defined]
         self._table(entity)[obj.id] = obj  # type: ignore[attr-defined]
         return obj
+
+    def _next_id(self, entity: type) -> str | int:
+        """`id` cho bản ghi mới: UUID, hoặc số tăng dần nếu entity khai `id: int`.
+
+        Bộ đếm KHÔNG lùi khi xoá bản ghi cuối, y như sequence của database
+        thật. Lấy `max(id) + 1` thì xoá xong số cũ được cấp lại, và một test
+        chạy đúng trên memory sẽ sai trên Postgres.
+        """
+        mapping = mapping_for(entity)
+        if not mapping.auto_id:
+            return uuid.uuid4().hex
+        current = self._counters.get(mapping.storage, 0)
+        existing = [row_id for row_id in self._table(entity) if isinstance(row_id, int)]
+        following = max([current, *existing], default=0) + 1
+        self._counters[mapping.storage] = following
+        return following
 
     def _check_unique(self, entity: type, obj: Any) -> None:
         """Bắt chước ràng buộc unique của database thật.
@@ -333,7 +354,7 @@ class MemoryBackend(DatabaseBackend):
                     found.append((child, column, ref))
         return found
 
-    async def _cascade(self, parent: type, ids: list[str]) -> None:
+    async def _cascade(self, parent: type, ids: list[EntityId]) -> None:
         """Áp `on_delete` cho mọi bản ghi con, trước khi xoá cha.
 
         SQL thật thì database làm việc này. Ở đây khung làm, để `fam test`
@@ -363,7 +384,7 @@ class MemoryBackend(DatabaseBackend):
                     f'hoặc khai on_delete="CASCADE"/"SET NULL".'
                 )
 
-    async def delete_where_ids(self, entity: type, ids: list[str]) -> int:
+    async def delete_where_ids(self, entity: type, ids: list[EntityId]) -> int:
         """Xoá theo danh sách id, có áp khoá ngoại. Dùng nội bộ cho cascade.
 
         Mọi đường xoá đều đi qua đây, nên chỉ cần nối vào transaction ở đây.
@@ -376,7 +397,7 @@ class MemoryBackend(DatabaseBackend):
             removed += int(table.pop(id_, None) is not None)
         return removed
 
-    async def delete(self, entity: type[E], id_: str) -> bool:
+    async def delete(self, entity: type[E], id_: EntityId) -> bool:
         if id_ not in self._table(entity):
             return False
         return await self.delete_where_ids(entity, [id_]) > 0
@@ -388,7 +409,7 @@ class MemoryBackend(DatabaseBackend):
         return await self.delete_where_ids(entity, ids)
 
     async def update_one(
-        self, entity: type[E], *, id_: str, changes: Filters
+        self, entity: type[E], *, id_: EntityId, changes: Filters
     ) -> E | None:
         obj = self._table(entity).get(id_)
         if obj is None:

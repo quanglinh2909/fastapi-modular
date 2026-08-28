@@ -447,6 +447,12 @@ Cột đã có `VARCHAR(50)` mà entity để `str` trơn thì **không** bị k
 so độ dài khi entity có khai. Xem
 [entity.md](entity.md#độ-dài-cột-chữ-varchar50-và-text).
 
+**Nâng từ bản ≤ 0.3.1 mà thấy `VARCHAR -> INTEGER`:** đúng là nó. Trước đây mọi
+trường `X | None` đều sinh ra cột `VARCHAR` — `port: int | None` cũng vậy. Bản
+này sinh đúng kiểu, nên schema cũ lệch. Bảng SQLite cũ vẫn đọc ghi được (SQLite
+không ép kiểu cột); Postgres thì trước đây ném lỗi ngay lúc ghi nên gần như chắc
+chắn bảng của bạn chưa có dữ liệu kiểu đó. Đổi cột bằng migration.
+
 Cố ý làm vậy: mỗi database một cú pháp `ALTER COLUMN` khác nhau, phép đổi có thể
 mất dữ liệu (`VARCHAR` → `INTEGER` với dữ liệu không phải số) và có thể khoá bảng
 rất lâu trên bảng lớn. Đó là việc của một migration được review, không phải của

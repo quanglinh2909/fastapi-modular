@@ -22,6 +22,7 @@ khoá ngoại, và cho bạn lọc bằng toán tử thường (`Camera.score >=
 | "**Xoá khu vực thì camera ở lại, chỉ mất chỗ gắn**" | [`SET NULL`](#set-null--con-ở-lại-mất-chỗ-gắn) |
 | "Còn hoá đơn thì KHÔNG cho xoá khách hàng" | [`RESTRICT`](#restrict--chặn-không-cho-xoá) |
 | "**Xoá cha mà cháu vẫn còn**" | [Cascade dừng giữa chừng](#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại) |
+| "Tôi muốn id là số 1, 2, 3 chứ không phải chuỗi dài" | [id: chuỗi hay số tự tăng](#id-chuỗi-uuid-hay-số-tự-tăng) |
 | "Cột mã thiết bị chỉ được dài 50 ký tự" | [Độ dài cột chữ](#độ-dài-cột-chữ-varchar50-và-text) |
 | "Trường ghi chú có thể rất dài" | [Độ dài cột chữ](#độ-dài-cột-chữ-varchar50-và-text) |
 | "Email không được trùng" | [Ràng buộc duy nhất và index](#ràng-buộc-duy-nhất-và-index) |
@@ -85,13 +86,16 @@ service — xem [Duy nhất và index](#duy-nhất-và-index).
 
 ### Bốn quy ước phải biết
 
-**`id: str` là bắt buộc và là khoá chính.** Để trống lúc `save()` thì khung tự
+**Trường `id` là bắt buộc và là khoá chính.** Để trống lúc `save()` thì khung tự
 sinh (UUID):
 
 ```python
 cam = await repo.save(Camera(id="", name="Cổng chính", ip="10.0.0.1"))
 print(cam.id)     # "3f2a...", khung vừa sinh
 ```
+
+Muốn id là **số tự tăng** (`1, 2, 3…`) thì khai `id: int = 0` — xem
+[id: chuỗi UUID hay số tự tăng](#id-chuỗi-uuid-hay-số-tự-tăng).
 
 **`created_at` / `updated_at` là tuỳ chọn, nhưng có thì khung tự lo.** Mỗi lần
 `save()` đóng dấu lại `updated_at` — không có chỗ nào quên, vì mọi đường ghi
@@ -118,6 +122,9 @@ bằng `@entity(name="camera_list")`.
 | `datetime` | `TIMESTAMP WITH TIME ZONE` |
 | `Enum` | `VARCHAR(64)`, lưu bằng `.value` cho dễ đọc và dễ migrate |
 | *(kiểu khác)* | `VARCHAR` |
+
+`X | None` cho ra **đúng cột của `X`**, chỉ khác là nhận `NULL`: `port: int | None`
+là `INTEGER`, `seen_at: datetime | None` là `TIMESTAMP WITH TIME ZONE`.
 
 Cột `Enum` **lọc bằng gì cũng được** — thành viên Enum hay chuỗi `.value` đều
 khớp, trên cả ba backend:
@@ -161,6 +168,91 @@ trong service — kiểm rồi mới ghi là một cuộc đua, hai request đ�
 
 Ghi trùng thì nhận lỗi **409**, không phải 500. Chi tiết thứ tự cột trong cụm:
 [Ràng buộc duy nhất và index](#ràng-buộc-duy-nhất-và-index).
+
+---
+
+## id: chuỗi UUID hay số tự tăng
+
+Khai `id: str` thì **khung sinh UUID**; khai `id: int = 0` thì **database phát
+số tự tăng** — giống `@PrimaryGeneratedColumn()` của TypeORM.
+
+```python
+# src/api/camera/entities/camera_model.py
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from fastapi_modular import Entity, entity
+from fastapi_modular.core.clock import utcnow
+
+
+@entity()
+@dataclass(slots=True)
+class Camera(Entity):
+    id: int = 0                      # 0 = "chưa có", để database phát số
+    name: str = ""
+    created_at: datetime = field(default_factory=utcnow)
+    updated_at: datetime = field(default_factory=utcnow)
+```
+
+```python
+cam = await self._repo.save(Camera(name="Cổng chính"))
+print(cam.id)          # 1 — số database vừa phát, đã gắn lại vào entity
+```
+
+Cột sinh ra: `SERIAL` trên Postgres, `INTEGER PRIMARY KEY AUTOINCREMENT` trên
+SQLite. MongoDB không có sequence nên khung giữ bộ đếm riêng trong collection
+`_fam_counters`, cấp số bằng `$inc` — nguyên tử, hai request đồng thời không bao
+giờ nhận cùng một số.
+
+### Chọn cái nào
+
+| | `id: str` (UUID) | `id: int = 0` (số tự tăng) |
+|---|---|---|
+| Ai sinh | khung, tại chỗ | database |
+| URL | `/cameras/3f2a9c...` | `/cameras/12` — ngắn, người đọc được |
+| Tạo bản ghi mới | không tốn lượt đi nào | Mongo tốn thêm **một** lượt (SQL thì không) |
+| Gộp dữ liệu từ nhiều nơi | không bao giờ đụng nhau | hai hệ thống cùng đếm từ 1 là đụng |
+| Đoán được bản ghi kế tiếp | không | có — `/cameras/13` là bản của người khác |
+
+Mặc định `id: str` vì nó an toàn ở cả hai dòng cuối. Chọn số khi URL cần ngắn,
+hoặc khi đang nối vào một bảng có sẵn dùng khoá số.
+
+**Đổi `id_: str` thành `int` ở controller và service.** Đây là chỗ hay quên nhất:
+entity đổi rồi mà `async def get_camera(self, camera_id: str)` để nguyên thì
+FastAPI nhận `"12"` (chuỗi), tìm không ra bản ghi nào, và bạn nhận 404 khó hiểu
+thay vì lỗi.
+
+```python
+@get("/{camera_id}", response_model=CameraOut)
+async def detail(self, camera_id: int) -> Camera:      # int, không phải str
+    ...
+```
+
+**`repo.get` / `update` / `delete` nhận cả số lẫn chuỗi** — không phải đổi gì
+thêm ở tầng repository.
+
+**`0` nghĩa là "chưa có".** Đó là lý do khai `id: int = 0`: `save()` thấy `0`
+(hoặc chuỗi rỗng, với id chuỗi) thì hiểu là bản ghi mới. Vì vậy **không có bản
+ghi nào mang id `0`**.
+
+**Đừng tự gán id cho bảng số tự tăng.** `save(Camera(id=1, ...))` ghi được, nhưng
+sequence của Postgres và bộ đếm của Mongo không biết chuyện đó, nên chúng vẫn sẽ
+cấp lại đúng số ấy. Đo được, cùng một đoạn code: memory và SQLite cấp tiếp số kế
+bên (không lỗi), Postgres ném `IntegrityError` và Mongo ném `DuplicateKeyError` —
+cả hai ra **409**, chứ không đè lên bản ghi cũ. Cần gán id tay thì dùng `id: str`.
+
+**Số đã cấp không quay lại sau khi xoá, kể cả trên SQLite.** SQLite mặc định cấp
+`max(rowid) + 1` nên xoá bản ghi cuối bảng rồi ghi tiếp là số cũ trở lại; khung
+bật `AUTOINCREMENT` để bốn backend giống nhau. Đo được cả bốn: `1, 2`, xoá `2`,
+ghi tiếp ra `3`.
+
+**Đừng coi id là số đếm — nó có lỗ.** Transaction bị rollback vẫn tiêu mất số đã
+lấy trên Postgres và memory (SQLite thì cấp lại, đo được). Cần "bản ghi thứ mấy"
+thì dùng `count()`, đừng nhìn id.
+
+**Bảng đã có dữ liệu thì không đổi được kiểu id bằng cách sửa entity.** Đổi
+`str` sang `int` là đổi kiểu khoá chính và mọi khoá ngoại trỏ vào nó — việc của
+một migration, xem [migrations.md](migrations.md).
 
 ---
 
@@ -632,6 +724,9 @@ Hai quy ước:
 | 400 `… quá 50 ký tự đã khai bằng column(length=50)` | chuỗi dài hơn độ dài cột — [độ dài cột chữ](#độ-dài-cột-chữ-varchar50-và-text) |
 | Khởi động chết: `Độ dài và TEXT chỉ đặt được cho cột chữ` | `column(...)` đặt lên trường `int`/`float`/`datetime` |
 | `db.column_type_mismatch  'cameras.code: VARCHAR(8) -> VARCHAR(64)'` | đổi `length` trong entity — khung không tự `ALTER`, phải migration |
+| Dùng `id: int` mà `GET /cameras/12` trả 404 | `camera_id` ở controller/service còn khai `str` — [id số tự tăng](#id-chuỗi-uuid-hay-số-tự-tăng) |
+| 409 khi tạo bản ghi mới trên bảng id số | có ai đó tự gán id, bộ đếm đang cấp lại số đã dùng |
+| `id` của bản ghi mới là chuỗi 32 ký tự dù đã khai `int` | entity đang khai `id: str`; khai `id: int = 0` |
 | Thêm trường mới, bản ghi cũ đọc ra lỗi | trường mới chưa có giá trị mặc định — [Bốn quy ước phải biết](#bốn-quy-ước-phải-biết) |
 
 ---

@@ -69,6 +69,10 @@ from fastapi_modular.core.clock import utcnow
 class {cls}(Entity):
     # Kế thừa `Entity` để lọc bằng toán tử thường: `.where({cls}.name == "x")`.
     # Nó không thêm method nào và không làm đối tượng nặng thêm.
+    #
+    # `id: str` -> khung sinh UUID. Muốn số tự tăng 1, 2, 3 thì đổi thành
+    # `id: int = 0` và sửa `{var}_id: str` thành `int` ở controller + service
+    # (xem docs/entity.md).
     id: str
 
     # TODO: thêm các trường của bạn ở đây. Trường có giá trị mặc định thì bản

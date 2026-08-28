@@ -21,6 +21,7 @@ from fastapi_modular.core.logging import get_logger
 from fastapi_modular.core.providers import CapabilityNotSupportedError
 from fastapi_modular.infrastructure.database.base import (
     DatabaseBackend,
+    EntityId,
     Filters,
     Match,
     active_filters,
@@ -35,6 +36,10 @@ from fastapi_modular.infrastructure.database.base import (
 log = get_logger(__name__)
 
 E = TypeVar("E")
+
+# Nơi giữ bộ đếm cho entity khai `id: int`. Tên có gạch dưới đứng đầu để không
+# đụng tên collection do entity sinh ra (`mapping.storage` luôn là chữ thường).
+_COUNTERS = "_fam_counters"
 
 
 def _to_mongo(doc: dict[str, Any]) -> dict[str, Any]:
@@ -127,7 +132,7 @@ class MongoBackend(DatabaseBackend):
             query["_id"] = query.pop("id")
         return query
 
-    async def get(self, entity: type[E], id_: str) -> E | None:
+    async def get(self, entity: type[E], id_: EntityId) -> E | None:
         doc = await self._collection(entity).find_one({"_id": id_})
         return from_document(entity, _from_mongo(doc)) if doc else None
 
@@ -270,11 +275,45 @@ class MongoBackend(DatabaseBackend):
 
     async def save(self, entity: type[E], obj: E) -> E:
         await self._check_references(entity, obj)
-        if not getattr(obj, "id", None):
-            obj.id = uuid.uuid4().hex  # type: ignore[attr-defined]
+        is_new = not getattr(obj, "id", None)
+        if is_new:
+            obj.id = await self._next_id(entity)  # type: ignore[attr-defined]
         doc = _to_mongo(to_document(obj))
+        if is_new:
+            # Bản ghi mới thì INSERT, không upsert: id vừa sinh mà đã có người
+            # dùng (bộ đếm lệch vì ai đó gán tay) phải nhận 409, chứ không được
+            # lặng lẽ đè lên document của người ta. SQL cũng INSERT ở đây.
+            await self._collection(entity).insert_one(doc)
+            return obj
         await self._collection(entity).replace_one({"_id": doc["_id"]}, doc, upsert=True)
         return obj
+
+    async def _next_id(self, entity: type) -> EntityId:
+        """`id` cho document mới: UUID, hoặc số tăng dần nếu entity khai `id: int`.
+
+        Mongo không có sequence, nên số tăng dần lấy từ collection
+        `_fam_counters`: mỗi bảng một document, cấp số bằng `$inc` trong
+        `findOneAndUpdate`. Phép này nguyên tử ở mức một document, nên hai
+        request đồng thời không bao giờ nhận cùng một số.
+
+        Giá phải trả: mỗi bản ghi MỚI tốn thêm một lượt đi Mongo. Không muốn
+        trả giá đó thì khai `id: str` — UUID sinh tại chỗ, không tốn lượt nào.
+        """
+        mapping = mapping_for(entity)
+        if not mapping.auto_id:
+            return uuid.uuid4().hex
+
+        from pymongo import ReturnDocument
+
+        assert self._client is not None, "backend chưa startup()"
+        counters = self._client[self._database_name][_COUNTERS]
+        doc = await counters.find_one_and_update(
+            {"_id": mapping.storage},
+            {"$inc": {"seq": 1}},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        return int(doc["seq"])
 
     async def _check_references(self, entity: type, obj: Any) -> None:
         """Cha phải có thật — MongoDB không tự kiểm, nên khung kiểm.
@@ -305,7 +344,7 @@ class MongoBackend(DatabaseBackend):
                 )
 
     # ------------------------------------------------------------ khoá ngoại
-    async def _cascade(self, parent: type, ids: list[str]) -> None:
+    async def _cascade(self, parent: type, ids: list[EntityId]) -> None:
         """Áp `on_delete` bằng tay, vì MongoDB KHÔNG có khoá ngoại.
 
         Đây là khác biệt phải biết trước, không phải chi tiết vụn: với SQL thì
@@ -345,13 +384,13 @@ class MongoBackend(DatabaseBackend):
                             'trước, hoặc khai on_delete="CASCADE"/"SET NULL".'
                         )
 
-    async def delete(self, entity: type[E], id_: str) -> bool:
+    async def delete(self, entity: type[E], id_: EntityId) -> bool:
         await self._cascade(entity, [id_])
         result = await self._collection(entity).delete_one({"_id": id_})
         return result.deleted_count > 0
 
     async def update_one(
-        self, entity: type[E], *, id_: str, changes: Filters
+        self, entity: type[E], *, id_: EntityId, changes: Filters
     ) -> E | None:
         """`find_one_and_update` — sửa và lấy về bản MỚI trong một lượt."""
         from pymongo import ReturnDocument

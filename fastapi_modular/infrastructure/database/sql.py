@@ -52,6 +52,7 @@ from fastapi_modular.core.logging import get_logger
 from fastapi_modular.infrastructure.database.base import (
     ColumnSpec,
     DatabaseBackend,
+    EntityId,
     Filters,
     Match,
     RollbackRequested,
@@ -62,6 +63,7 @@ from fastapi_modular.infrastructure.database.base import (
     from_document,
     mapping_for,
     to_document,
+    unwrap_optional,
 )
 
 log = get_logger(__name__)
@@ -87,6 +89,9 @@ def _type_name(type_: Any, dialect: Any) -> str:
 
 
 def _column_type(declared: type, spec: ColumnSpec | None = None) -> Any:
+    # `port: int | None` phải ra INTEGER chứ không phải VARCHAR — xem
+    # `unwrap_optional`.
+    declared = unwrap_optional(declared)
     if spec is not None:
         # Trường có khai `column(...)` thì lời khai đó thắng: TEXT là kiểu
         # không giới hạn, còn `length` thành VARCHAR(n) để database chặn hộ.
@@ -172,6 +177,8 @@ def build_metadata(*entities: type) -> MetaData:
                 Index(name, *columns, unique=is_unique)
                 for name, columns, is_unique in mapping.index_specs()
             ),
+            # Xem `_table`: giữ cho SQLite không cấp lại số của bản ghi đã xoá.
+            sqlite_autoincrement=mapping.auto_id,
         )
     return metadata
 
@@ -320,7 +327,15 @@ class SqlBackend(DatabaseBackend):
             columns.append(
                 Column(*args, primary_key=(name == "id"), nullable=(name != "id"))
             )
-        table = Table(mapping.storage, self._metadata, *columns)
+        # `sqlite_autoincrement`: SQLite mặc định cấp `max(rowid) + 1`, nên xoá
+        # bản ghi cuối bảng rồi ghi tiếp là số cũ QUAY LẠI — đo được: 1, 2, xoá
+        # 2, ghi tiếp ra 2. Postgres và Mongo (bộ đếm `_fam_counters`) đều không
+        # cấp lại, nên để nguyên thì code chạy đúng ở dev SQLite mà hỏng ở
+        # production. Cờ này chỉ có tác dụng với SQLite, dialect khác bỏ qua.
+        table = Table(
+            mapping.storage, self._metadata, *columns,
+            sqlite_autoincrement=mapping.auto_id,
+        )
         self._tables[mapping.storage] = table
         return table
 
@@ -669,7 +684,7 @@ class SqlBackend(DatabaseBackend):
         return from_document(entity, dict(row._mapping))
 
     # ------------------------------------------------------------------ truy vấn
-    async def get(self, entity: type[E], id_: str) -> E | None:
+    async def get(self, entity: type[E], id_: EntityId) -> E | None:
         table = self._table(entity)
         async with self._conn() as conn:
             row = (await conn.execute(select(table).where(table.c.id == id_))).first()
@@ -912,6 +927,18 @@ class SqlBackend(DatabaseBackend):
 
         table = self._table(entity)
         is_new = not getattr(obj, "id", None)
+
+        if is_new and mapping_for(entity).auto_id:
+            # `id: int` -> để database phát số. Bỏ hẳn cột id khỏi câu INSERT
+            # (gửi 0 xuống là ghi đè lên sequence), rồi đọc số vừa phát về gắn
+            # lại vào entity: người gọi cần `saved.id` ngay dòng sau.
+            values = to_document(obj)
+            values.pop("id", None)
+            async with self._conn() as conn:
+                result = await conn.execute(sql_insert(table).values(**values))
+            obj.id = result.inserted_primary_key[0]  # type: ignore[attr-defined]
+            return obj
+
         if is_new:
             obj.id = uuid.uuid4().hex  # type: ignore[attr-defined]
 
@@ -927,7 +954,7 @@ class SqlBackend(DatabaseBackend):
                     await conn.execute(sql_insert(table).values(**values))
         return obj
 
-    async def delete(self, entity: type[E], id_: str) -> bool:
+    async def delete(self, entity: type[E], id_: EntityId) -> bool:
         table = self._table(entity)
         async with self._conn() as conn:
             result = await conn.execute(sql_delete(table).where(table.c.id == id_))
@@ -949,7 +976,7 @@ class SqlBackend(DatabaseBackend):
         return int(result.rowcount)
 
     async def update_one(
-        self, entity: type[E], *, id_: str, changes: Filters
+        self, entity: type[E], *, id_: EntityId, changes: Filters
     ) -> E | None:
         """`UPDATE ... WHERE id = ? RETURNING *` — sửa và lấy về trong MỘT lượt.
 

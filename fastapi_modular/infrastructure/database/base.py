@@ -26,6 +26,9 @@ E = TypeVar("E")
 Filters = dict[str, Any]
 Match = Callable[[Any], bool] | None
 
+# `id` của một bản ghi: chuỗi (khung tự sinh UUID) hoặc số (database tự tăng).
+EntityId = str | int
+
 
 MAX_INDEX_NAME = 63  # PostgreSQL cắt tên định danh ở 63 ký tự
 
@@ -281,6 +284,7 @@ class EntityMapping:
     indexes: tuple[tuple[str, ...], ...]
     references: tuple[tuple[str, Reference], ...] = ()   # (tên cột, khoá ngoại)
     column_specs: tuple[tuple[str, ColumnSpec], ...] = ()  # (tên cột, kiểu cột chữ)
+    auto_id: bool = False        # `id: int` -> database tự tăng, khung không sinh
 
     def index_specs(self) -> list[tuple[str, tuple[str, ...], bool]]:
         """[(tên index, các cột, có unique không)] cho mọi index đã khai báo."""
@@ -316,6 +320,7 @@ def mapping_for(entity: type) -> EntityMapping:
         indexes=tuple(getattr(entity, "__storage_indexes__", ())),
         references=tuple(references_of(entity).items()),
         column_specs=tuple(specs.items()),
+        auto_id=fields.get("id") is int,
     )
 
 
@@ -331,6 +336,19 @@ def to_document(obj: Any) -> dict[str, Any]:
 def _allows_none(declared: Any) -> bool:
     """Kiểu có chấp nhận None không (Optional[X] hoặc X | None)."""
     return declared is Any or type(None) in get_args(declared)
+
+
+def unwrap_optional(declared: Any) -> Any:
+    """`int | None` -> `int`. Kiểu không phải Optional thì trả lại nguyên xi.
+
+    Phải có vì `X | None` KHÔNG phải một `type`: mọi phép `is datetime` hay
+    `issubclass(..., Enum)` đều trượt, và cột đi theo nhánh mặc định. Đo được
+    trước khi có hàm này: `port: int | None` sinh ra cột `VARCHAR`, nên SQLite
+    đọc về `'8080'` (chuỗi) trong khi memory đọc về `8080`, còn Postgres thì ném
+    `DataError` ngay lúc ghi. Cùng một entity, ba kết quả.
+    """
+    args = [arg for arg in get_args(declared) if arg is not type(None)]
+    return args[0] if len(args) == 1 else declared
 
 
 @cache
@@ -355,6 +373,7 @@ def coerce_value(declared: Any, value: Any) -> Any:
     """
     if value is None:
         return None
+    declared = unwrap_optional(declared)
     if isinstance(declared, type) and issubclass(declared, Enum):
         return declared(value)
     if declared is datetime:
@@ -592,7 +611,7 @@ class DatabaseBackend(Protocol):
     async def shutdown(self) -> None: ...
     async def ping(self) -> bool: ...
 
-    async def get(self, entity: type[E], id_: str) -> E | None: ...
+    async def get(self, entity: type[E], id_: EntityId) -> E | None: ...
     async def find(
         self,
         entity: type[E],
@@ -614,12 +633,12 @@ class DatabaseBackend(Protocol):
     async def count_query(self, spec: Any) -> int: ...
 
     async def save(self, entity: type[E], obj: E) -> E: ...
-    async def delete(self, entity: type[E], id_: str) -> bool: ...
+    async def delete(self, entity: type[E], id_: EntityId) -> bool: ...
     async def delete_where(
         self, entity: type[E], *, filters: Filters, match: Match = None
     ) -> int: ...
     async def update_one(
-        self, entity: type[E], *, id_: str, changes: Filters
+        self, entity: type[E], *, id_: EntityId, changes: Filters
     ) -> E | None: ...
     async def update_where(
         self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None

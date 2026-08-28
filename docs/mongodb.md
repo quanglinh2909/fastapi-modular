@@ -105,7 +105,13 @@ Bảng ánh xạ kiểu và các quy ước (`id` tự sinh, `created_at`/`updat
 tự đóng dấu, đổi tên collection bằng `@entity(name=...)`) y như bên SQL — xem
 [database.md](entity.md#khai-báo-entity).
 
-Bốn điều **chỉ đúng với Mongo**:
+Năm điều **chỉ đúng với Mongo**:
+
+**`id: int` dùng được, bằng bộ đếm riêng.** Mongo không có sequence, nên khung
+giữ collection `_fam_counters` (mỗi bảng một document) và cấp số bằng `$inc`
+trong `findOneAndUpdate` — nguyên tử, hai request đồng thời không bao giờ nhận
+cùng một số. Giá phải trả: mỗi bản ghi MỚI tốn thêm một lượt đi Mongo; `id: str`
+thì không tốn lượt nào. Xem [entity.md](entity.md#id-chuỗi-uuid-hay-số-tự-tăng).
 
 **Trường `id` được lưu vào `_id` của document.** Không tốn thêm index, và tra
 tay thì nhớ gõ `_id`:

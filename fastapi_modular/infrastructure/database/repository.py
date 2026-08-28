@@ -28,6 +28,7 @@ from fastapi_modular.core.logging import get_logger
 from fastapi_modular.core.providers import CapabilityNotSupportedError
 from fastapi_modular.infrastructure.database.base import (
     DatabaseBackend,
+    EntityId,
     Transaction,
     check_changes,
     check_lengths,
@@ -167,7 +168,7 @@ class Database:
             yield handle
 
 
-def _as_dict(value: Any, *, vai_tro: str) -> dict[str, Any]:
+def _as_dict(value: Any, *, role: str) -> dict[str, Any]:
     """dict hoặc DTO pydantic -> dict. DTO thì chỉ lấy field client THỰC SỰ gửi.
 
     `exclude_unset=True` là mấu chốt, giống hệt `apply_changes`: nó phân biệt
@@ -180,11 +181,11 @@ def _as_dict(value: Any, *, vai_tro: str) -> dict[str, Any]:
         return value.model_dump(exclude_unset=True)
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         raise BadRequestError(
-            f"`update` nhận dict hoặc DTO pydantic làm {vai_tro}, không nhận entity. "
+            f"`update` nhận dict hoặc DTO pydantic làm {role}, không nhận entity. "
             f"Đã có sẵn cả bản ghi thì dùng `save(obj)`."
         )
     raise BadRequestError(
-        f"`update` không hiểu {vai_tro} kiểu {type(value).__name__}. "
+        f"`update` không hiểu {role} kiểu {type(value).__name__}. "
         f"Truyền dict, hoặc DTO pydantic."
     )
 
@@ -202,7 +203,7 @@ class Repository(Generic[E]):
         return self._db.backend
 
     # ------------------------------------------------------------------ đọc
-    async def get(self, id_: str) -> E | None:
+    async def get(self, id_: EntityId) -> E | None:
         return await self._backend.get(self._entity, id_)
 
     async def find(
@@ -270,7 +271,7 @@ class Repository(Generic[E]):
 
     async def update(
         self,
-        id_: str,
+        id_: EntityId,
         changes: dict[str, Any] | BaseModel | None = None,
         **set_fields: Any,
     ) -> E | None:
@@ -316,11 +317,11 @@ class Repository(Generic[E]):
 
         Sửa NHIỀU dòng theo điều kiện thì dùng `update_where(...)`.
         """
-        if not isinstance(id_, str):
+        if not isinstance(id_, (str, int)) or isinstance(id_, bool):
             raise BadRequestError(
                 f"`update` sửa MỘT bản ghi theo id nên tham số đầu phải là chuỗi "
-                f"(đang là {type(id_).__name__}). Sửa nhiều dòng theo điều kiện "
-                f"thì dùng `update_where(...)`."
+                f"hoặc số (đang là {type(id_).__name__}). Sửa nhiều dòng theo "
+                f"điều kiện thì dùng `update_where(...)`."
             )
         return await self._backend.update_one(
             self._entity, id_=id_, changes=self._changes(changes, set_fields)
@@ -355,13 +356,13 @@ class Repository(Generic[E]):
         phải ý định sửa cả bảng. Thật sự muốn sửa hết thì nói rõ:
         `match=lambda _: True`.
         """
-        if isinstance(where, str):
+        if isinstance(where, (str, int)) and not isinstance(where, bool):
             raise BadRequestError(
                 "`update_where` nhận điều kiện dạng dict hoặc DTO. Sửa một bản "
                 'ghi theo id thì dùng `update(id, ...)` — nó trả về chính bản '
                 "ghi đã sửa."
             )
-        filters = _as_dict(where, vai_tro="điều kiện")
+        filters = _as_dict(where, role="điều kiện")
         if not filters and match is None:
             raise BadRequestError(
                 f"`update_where` trên {self._entity.__name__} không có điều kiện nào — "
@@ -378,7 +379,7 @@ class Repository(Generic[E]):
     def _changes(self, changes: Any, set_fields: dict[str, Any]) -> dict[str, Any]:
         """Gộp dict/DTO/kwargs thành bộ giá trị đã soi, có đóng dấu `updated_at`."""
         values: dict[str, Any] = {
-            **(_as_dict(changes, vai_tro="giá trị") if changes is not None else {}),
+            **(_as_dict(changes, role="giá trị") if changes is not None else {}),
             **set_fields,
         }
         if not values:
@@ -397,7 +398,7 @@ class Repository(Generic[E]):
             values["updated_at"] = utcnow()
         return check_changes(self._entity, values)
 
-    async def delete(self, id_: str) -> bool:
+    async def delete(self, id_: EntityId) -> bool:
         return await self._backend.delete(self._entity, id_)
 
     async def delete_where(
