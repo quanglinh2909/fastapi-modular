@@ -954,26 +954,41 @@ class SqlBackend(DatabaseBackend):
 
     async def update_where(
         self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None
-    ) -> int:
-        """MỘT câu `UPDATE ... WHERE`, không đọc dòng nào về trước.
+    ) -> list[E]:
+        """`UPDATE ... WHERE ... RETURNING *` — sửa và lấy về các dòng đã sửa.
 
-        Đây là điểm khác biệt với vòng `get` -> sửa -> `save`: sửa 10.000 dòng
-        chỉ tốn một lượt đi database, và không có khe hở giữa lúc đọc và lúc
-        ghi để ai đó chen vào.
+        Vẫn là MỘT câu lệnh, không phải mỗi dòng một câu, và không có khe hở
+        giữa lúc đọc và lúc ghi để ai đó chen vào.
 
         `match=` là hàm Python nên không dịch được sang SQL: khi có nó thì phải
-        đọc về, lọc, rồi sửa theo danh sách id — chậm hơn, nhưng vẫn là một câu
-        UPDATE chứ không phải mỗi dòng một câu.
+        đọc về, lọc, rồi sửa theo danh sách id.
         """
         table = self._table(entity)
+        assert self._engine is not None
+        ids: list[str] | None = None
         if match is not None:
             ids = [obj.id for obj in await self.find(entity, filters=filters, match=match)]  # type: ignore[attr-defined]
             if not ids:
-                return 0
+                return []
             where = [table.c.id.in_(ids)]
         else:
             where = self._where(entity, table, filters)
 
+        stmt = sql_update(table).where(*where).values(**changes)
         async with self._conn() as conn:
-            result = await conn.execute(sql_update(table).where(*where).values(**changes))
-        return int(result.rowcount)
+            if self._engine.dialect.update_returning:
+                rows = (await conn.execute(stmt.returning(*table.c))).all()
+                return [self._row_to_entity(entity, row) for row in rows]
+
+            # Dialect không có RETURNING: phải biết trước sửa những id nào, vì
+            # điều kiện có thể không còn khớp sau khi ghi (sửa đúng cột đang lọc).
+            if ids is None:
+                ids = [
+                    row[0]
+                    for row in (await conn.execute(select(table.c.id).where(*where))).all()
+                ]
+            if not ids:
+                return []
+            await conn.execute(stmt)
+            rows = (await conn.execute(select(table).where(table.c.id.in_(ids)))).all()
+        return [self._row_to_entity(entity, row) for row in rows]

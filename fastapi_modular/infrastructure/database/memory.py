@@ -398,7 +398,7 @@ class MemoryBackend(DatabaseBackend):
 
     async def update_where(
         self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None
-    ) -> int:
+    ) -> list[E]:
         """Sửa tại chỗ, nhưng vẫn phải qua đúng những phép kiểm của `save`.
 
         SQL thật áp ràng buộc duy nhất và khoá ngoại cho cả câu UPDATE, không
@@ -408,7 +408,7 @@ class MemoryBackend(DatabaseBackend):
         found = self._select(entity, filters, match)
         for obj in found:
             self._apply(entity, obj, changes)
-        return len(found)
+        return found
 
     def _apply(self, entity: type, obj: Any, changes: Filters) -> None:
         """Ghi giá trị vào một bản ghi, qua đúng những phép kiểm của `save`.

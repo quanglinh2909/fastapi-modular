@@ -504,7 +504,8 @@ primary mới cần chừng đó thời gian.
 | `db.index_failed` lúc khởi động | dữ liệu cũ đã trùng, `unique` không tạo được — dọn document trùng rồi khởi động lại |
 | Không thấy `db.indexes_ready` | file entity chưa nằm trong `src/api/<module>/entities/` |
 | `409` khi ghi con: "không có Camera nào mang id đó" | đúng như SQL — ghi cha trước, hoặc để cột đó `None` |
-| `update_where` trả số lớn hơn số dòng thật sự ĐỔI | đúng: nó đếm dòng KHỚP điều kiện, y như SQL. Mongo có `modified_count` riêng (ghi đúng giá trị đang có thì bằng 0), khung không dùng vì hai backend kia không có |
+| `update_where` trả nhiều bản ghi hơn số dòng thật sự ĐỔI | đúng: nó trả các dòng KHỚP điều kiện, y như SQL. Ghi đúng giá trị đang có thì Mongo coi là không sửa gì (`modified_count` = 0) nhưng dòng vẫn khớp |
+| `update_where` tốn 3 lượt trên Mongo, SQL chỉ 1 | Mongo không có `RETURNING`: phải lấy `_id` khớp điều kiện TRƯỚC, sửa, rồi đọc lại — đọc lại bằng điều kiện cũ sẽ sai khi bạn sửa đúng cột đang lọc |
 | `/health/ready` trả `database: false` | sai DSN, hoặc server chưa lên — xem log `db.unreachable_at_startup` |
 | Xoá cha xong con vẫn còn | tiến trình chết giữa chừng lúc dọn; chạy lại lệnh xoá |
 | `ServerSelectionTimeoutError` | không tới được server: sai host/cổng, hoặc firewall |

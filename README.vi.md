@@ -29,7 +29,7 @@ fam init && fam dev
 | `@InjectRepository(X) repo: Repository<X>` | `repo: Repository[X]` |
 | `@Transaction()` / `queryRunner.startTransaction()` | `async with db.transaction():` — khối lồng nhau thành SAVEPOINT |
 | `queryRunner.rollbackTransaction()` | tự động khi có exception; `await tx.rollback()` để huỷ mà không ném lỗi |
-| `repo.update(criteria, partialEntity)` (TypeORM) | `repo.update("cam-01", payload)` — nhận thẳng DTO, **trả về bản ghi đã sửa** trong 1 câu SQL; `repo.update_where({"zone": "T1"}, status="off")` cho nhiều dòng |
+| `repo.update(criteria, partialEntity)` (TypeORM) | `repo.update("cam-01", payload)` — nhận thẳng DTO, **trả về bản ghi đã sửa** trong 1 câu SQL; `repo.update_where({"zone": "T1"}, status="off")` trả **danh sách** bản ghi đã sửa |
 | `repo.createQueryBuilder()` (TypeORM) | `repo.query().join(X).where(Event.score >= …)` — SQL thật, xem bằng `.sql()` |
 | `Repository.find({where: {score: MoreThan(…)}})` (TypeORM) | `class Event(Entity)` rồi `.where(Event.score >= …)`, hoặc `.where(score__gte=…)` |
 | `.groupBy().having()` (TypeORM) | `.group_by(Event.camera_id).select(n=count()).having(count() > 5)` |
@@ -440,7 +440,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              1134 test chạy không cần hạ tầng, 358 test nữa cần driver/server thật
+tests/              1136 test chạy không cần hạ tầng, 362 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 
