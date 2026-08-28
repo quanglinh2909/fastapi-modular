@@ -14,6 +14,7 @@ là xong, `fam dev` là nó chạy.
 | Việc bạn muốn làm | Đọc mục |
 |---|---|
 | "Cứ 5 giây kiểm tra trạng thái camera một lần" | [1. Lặp theo chu kỳ](#1-lặp-theo-chu-kỳ) |
+| "**Vừa start là chạy luôn, đừng đợi hết chu kỳ**" | [`run_on_startup`](#chạy-ngay-lúc-app-lên-thay-vì-đợi-hết-chu-kỳ) |
 | "3 giờ sáng hàng ngày dọn log" | [2. Chạy đúng giờ](#2-chạy-đúng-giờ) |
 | "Hâm nóng cache sau khi app lên" | [3. Chạy đúng một lần](#3-chạy-đúng-một-lần) |
 | "Người dùng tải ảnh lên, trả lời ngay, xử lý sau" | [4. Đưa việc vào hàng đợi](#4-đưa-việc-vào-hàng-đợi) |
@@ -77,6 +78,32 @@ scheduler.owner    job=CameraService.update_status
 **Không thấy dòng `scheduler.job` nghĩa là khung không tìm ra method của bạn** —
 gần như luôn vì class thiếu `@injectable`, hoặc file chưa được import.
 
+### Chạy ngay lúc app lên, thay vì đợi hết chu kỳ
+
+Mặc định `@interval` **đợi hết một chu kỳ rồi mới chạy lần đầu**. Với
+`seconds=5` thì không ai để ý, nhưng với `seconds=300` thì app lên xong phải
+chờ 5 phút mới thấy gì — và đó gần như không bao giờ là thứ bạn muốn:
+
+```python
+@interval(seconds=300, run_on_startup=True)
+async def dong_bo(self) -> None:
+    ...
+```
+
+Đo được (chu kỳ 3 giây cho dễ nhìn):
+
+```
+run_on_startup=True    chạy lúc 0.0s, rồi 3.01s
+mặc định               chưa chạy gì lúc 1.0s; lần đầu là 3.01s
+```
+
+Chu kỳ vẫn tính từ lúc lượt trước **chạy xong**, không đổi.
+
+> **Nhớ rằng lần chạy đầu rơi vào lúc app đang khởi động.** Việc nặng đặt
+> `run_on_startup=True` sẽ tranh CPU với những thứ khác đang lên. Cần "hâm nóng
+> một lần rồi thôi" thì đó là [`@timeout`](#3-chạy-đúng-một-lần), không phải
+> `@interval`.
+
 ### Lưu ý
 
 **Handler không được nhận tham số nào ngoài `self`.** Việc theo lịch tự chạy,
@@ -108,8 +135,6 @@ async def ping_api(self) -> None:
 ```
 
 Lượt treo bị huỷ, ghi log `scheduler.run_timeout`, lượt sau vẫn chạy.
-
-**Muốn chạy ngay lúc app lên** thay vì đợi hết một chu kỳ: `run_on_startup=True`.
 
 **Nhiều máy cùng gọi một API ngoài** thì thêm `jitter=5` — mỗi lần chờ cộng
 thêm 0–5 giây ngẫu nhiên, để cả đàn không đập vào cùng một giây.
@@ -669,6 +694,7 @@ có request thì không có "danh tính của request này".
 | Bạn thấy gì | Gần như luôn là |
 |---|---|
 | **Viết decorator rồi mà không thấy chạy** | class thiếu `@injectable`, hoặc file chưa được import. Kiểm bằng log khởi động: `scheduler.job` / `jobs.started` / `events.started` phải nhắc tên bạn |
+| **Đợi mãi mới thấy chạy lần đầu** | đúng thiết kế: `@interval` đợi hết một chu kỳ rồi mới chạy. Muốn chạy ngay lúc app lên thì [`run_on_startup=True`](#chạy-ngay-lúc-app-lên-thay-vì-đợi-hết-chu-kỳ) |
 | **Việc chạy 4 lần mỗi nhịp** | `single=False`, hoặc mỗi máy một `flock` riêng (nhiều máy thì cần Redis) |
 | **Việc không chạy lần nào, log ghi `standby`** | đúng rồi — tiến trình khác đang giữ quyền. Chạy một tiến trình thì đặt `APP_SCHEDULER__SINGLE=false` |
 | **`@cron` chạy lệch 7 tiếng** | quên `timezone=` — mặc định là UTC |
@@ -794,6 +820,28 @@ log, không làm chết những lượt khác.
 
 `@job` mặc định `max_retries=0` — hỏng là ghi log rồi bỏ. Nhớ rằng thử lại
 **làm đứng cả hàng đợi** khi `workers=1`.
+
+### Xem worker nào đang chạy
+
+`WorkerPool` giữ sổ mọi bản đang sống — tiêm vào rồi hỏi, hoặc gọi trong một
+endpoint chẩn đoán:
+
+```python
+from fastapi_modular.core.workers import WorkerPool
+
+
+@injectable
+class DebugService:
+    def __init__(self, pool: WorkerPool) -> None:
+        self._pool = pool
+
+    def dang_chay(self) -> list[dict]:
+        return self._pool.running()
+        # [{"worker": "camera", "key": "cam-01", "uptime_seconds": 903.2, "running": True}]
+```
+
+Mỗi loại worker cũng tự có `.running()` / `.stop(key)` / `.stop_all()` gắn ngay
+trên method đã khai — xem [mục 5](#5-vòng-lặp-chạy-mãi).
 
 ### Biến cấu hình
 

@@ -21,7 +21,7 @@ fam init && fam dev
 |---|---|
 | `@Module()` + module scanning | một thư mục dưới `src/api/`, tự quét |
 | `@Controller('users')` | `@controller(prefix="/users", tags=["users"])` |
-| `@Get()` `@Post()` `@Patch()` `@Delete()` | `@get()` `@post()` `@patch()` `@delete()` |
+| `@Get()` `@Post()` `@Put()` `@Patch()` `@Delete()` | `@get()` `@post()` `@put()` `@patch()` `@delete()` |
 | handler đồng bộ chạy ngay luồng chính (Nest) | `def` thường chạy ở thread pool, `async def` chạy trên vòng lặp — đúng luật FastAPI |
 | `@Injectable()` | `@injectable` |
 | `@Injectable({scope: Scope.REQUEST})` | `@injectable(scope=Scope.REQUEST)` |

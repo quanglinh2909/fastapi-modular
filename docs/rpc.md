@@ -20,7 +20,7 @@ chạy thật hai chiều với `@nestjs/microservices` 11.2.1 — xem [mục cu
 | "Bắn đi rồi thôi, không cần trả lời" | [`publish` hay `emit`](#publish-hay-emit) |
 | "Dùng Redis / MQTT / Kafka thay RabbitMQ" | [Bốn hạ tầng khác nhau chỗ nào](#bốn-hạ-tầng-khác-nhau-chỗ-nào) |
 | "Nói chuyện với một service NestJS THẬT" | [Đối chứng với NestJS thật](#đối-chứng-với-nestjs-thật) |
-| "Chờ mãi không thấy trả lời" | [Số đo và chẩn đoán](#số-đo-và-chẩn-đoán) |
+| "Chờ mãi không thấy trả lời" | [Hỏng thì tra ở đây](#hỏng-thì-tra-ở-đây) |
 
 ---
 
@@ -465,7 +465,21 @@ console.log(transformPatternToRoute({z:1, a:2, M:3}));'   # {"a":2,"M":3,"z":1}
 
 ---
 
-## Số đo và chẩn đoán
+## Hỏng thì tra ở đây
+
+| Thấy gì | Gần như luôn là |
+|---|---|
+| `RpcTimeoutError` mà bên kia vẫn sống | pattern lệch nhau — soi `mq.no_responder` ở bên trả lời |
+| `RpcTimeoutError` và bên kia không có log gì | sai `queue`, hoặc responder chưa khởi động được |
+| Nhiều `mq.reply_too_late` | `timeout` ngắn hơn thời gian xử lý thật |
+| Gọi được lần đầu rồi treo | broker rớt giữa chừng; xem `mq.connection_lost` |
+| Handler trả về giá trị mà bên gọi không nhận | đang dùng `emit` (bắn đi rồi quên) chứ không phải `send` — xem `mq.responder_result_dropped` |
+
+---
+
+## Tra cứu
+
+### Dòng log và ý nghĩa
 
 | Log | Nghĩa |
 |---|---|
@@ -477,11 +491,4 @@ console.log(transformPatternToRoute({z:1, a:2, M:3}));'   # {"a":2,"M":3,"z":1}
 | `mq.reply_too_late` | trả lời về sau khi người gọi đã bỏ cuộc — `timeout` đang quá ngắn |
 | `rpc.reply_failed` | làm xong việc nhưng gửi câu trả lời không được |
 
-Triệu chứng hay gặp:
 
-| Thấy gì | Gần như luôn là |
-|---|---|
-| `RpcTimeoutError` mà bên kia vẫn sống | pattern lệch nhau — soi `mq.no_responder` ở bên trả lời |
-| `RpcTimeoutError` và bên kia không có log gì | sai `queue`, hoặc responder chưa khởi động được |
-| Nhiều `mq.reply_too_late` | `timeout` ngắn hơn thời gian xử lý thật |
-| Gọi được lần đầu rồi treo | broker rớt giữa chừng; xem `mq.connection_lost` |

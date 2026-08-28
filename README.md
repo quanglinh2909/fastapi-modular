@@ -26,7 +26,7 @@ public API, and this README, are in English. Start with
 |---|---|
 | `@Module()` + module scanning | a directory under `src/api/`, auto-scanned |
 | `@Controller('users')` | `@controller(prefix="/users", tags=["users"])` |
-| `@Get()` `@Post()` `@Patch()` `@Delete()` | `@get()` `@post()` `@patch()` `@delete()` |
+| `@Get()` `@Post()` `@Put()` `@Patch()` `@Delete()` | `@get()` `@post()` `@put()` `@patch()` `@delete()` |
 | sync handler runs on the main thread (Nest) | `def` handler runs in a thread pool, `async def` on the event loop — FastAPI's own rule |
 | `@Injectable()` | `@injectable` |
 | `@Injectable({scope: Scope.REQUEST})` | `@injectable(scope=Scope.REQUEST)` |

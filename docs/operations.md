@@ -16,6 +16,7 @@ chuyện gì đang xảy ra.
 | "Đếm ai đang nối WebSocket" | [WebSocket](#websocket) |
 | "Soi hàng đợi RabbitMQ đang ứ" | [RabbitMQ](#rabbitmq) |
 | "Lần một request qua nhiều dòng log" | [Trace](#trace) |
+| "**Đang trả 503 mà database vẫn sống**" | [Hỏng thì tra ở đây](#hỏng-thì-tra-ở-đây) |
 
 ---
 
@@ -300,3 +301,18 @@ Người dùng báo lỗi kèm `trace_id` là tra được toàn bộ hành trì
 
 Template mới truyền `trace_id`, chưa sinh span và chưa gửi đi đâu. Muốn xem dạng
 biểu đồ thì cắm OpenTelemetry: `trace_id` đã đúng khuôn W3C nên nối được ngay.
+
+---
+
+## Hỏng thì tra ở đây
+
+| Bạn thấy gì | Nguyên nhân |
+|---|---|
+| Mọi request trả **503** dù database vẫn sống | mạch đang ngắt sau một loạt lỗi — xem `db.circuit_open`, chờ `APP_DB__CIRCUIT_RESET_SECONDS` rồi nó tự thử lại (`db.circuit_half_open` → `db.circuit_closed`) |
+| **503** kèm `Retry-After` | đúng thiết kế: nói cho client biết chờ bao lâu thay vì để nó đập lại ngay |
+| `db.call_timeout` trong log | một lời gọi vượt `APP_DB__QUERY_TIMEOUT_SECONDS`; database chậm chứ không chết |
+| Guard không chặn gì cả | class guard thiếu `@injectable`, hoặc quên truyền vào `guards=[...]` |
+| Guard trả **500** thay vì **403** | guard ném lỗi lập trình (KeyError, AttributeError) chứ không phải `ForbiddenError` — đọc traceback, đừng sửa thành 403 |
+| `/metrics` trả 404 | sai đường dẫn — nó là `/api/metrics` (có tiền tố `/api`), và luôn bật, không có biến nào tắt |
+| Số đo luôn bằng 0 | đang soi tiến trình khác: `fam run` mặc định 4 worker, mỗi worker một bộ đếm riêng |
+| Log của một request nằm rải rác, không lần được | lọc theo `request_id`; đi xuyên nhiều dịch vụ thì lọc theo `trace_id` |

@@ -2,6 +2,22 @@
 
 ---
 
+## Bạn đang cần làm gì?
+
+| Việc bạn muốn làm | Đọc mục |
+|---|---|
+| "Khách chọn cổng thanh toán nào thì gọi cổng đó" | [1. Nó giải quyết vấn đề gì?](#1-nó-giải-quyết-vấn-đề-gì) |
+| "Làm theo từng bước, từ số 0" | [3. Làm theo](#3-làm-theo-từ-không-có-gì-tới-hai-cổng-thanh-toán) |
+| "Thêm một hãng camera mới mà không sửa service" | [3. Làm theo](#3-làm-theo-từ-không-có-gì-tới-hai-cổng-thanh-toán) |
+| "**Hãng này không mở được cửa, hãng kia thì được**" | [5. Khi provider không làm được hết mọi việc](#5-khi-provider-không-làm-được-hết-mọi-việc) |
+| "Nên dùng cái này, hay chỉ cần `@injectable`?" | [2. Khi nào dùng, khi nào ĐỪNG](#2-khi-nào-dùng-khi-nào-đừng) |
+| "File `capabilities.py` phình to quá" | [8. Viết năng lực cho dễ bảo trì](#8-viết-năng-lực-cho-dễ-bảo-trì) |
+| "Sinh sẵn khung cho tôi" | [10. Bảng lệnh](#10-bảng-lệnh) — `fam provider <họ> <tên>` |
+| "Gọi vào thì lỗi 404 / 501" | [9. Hỏng thì tra ở đây](#9-hỏng-thì-tra-ở-đây) |
+| "Tra chữ ký API" | [6. Bảng tra API](#6-bảng-tra-api) |
+
+---
+
 ## 1. Nó giải quyết vấn đề gì?
 
 Bạn làm chức năng thanh toán. Công ty dùng **VNPay**. Bạn viết:
@@ -268,7 +284,7 @@ Nhận sổ: `def __init__(self, x: Providers[NangLuc]) -> None`
 
 | Gọi | Trả về | Ném lỗi |
 |---|---|---|
-| `get(tên)` | provider, **đúng kiểu năng lực đã khai** | **404** không có tên · **501** có tên nhưng thiếu năng lực |
+| `get(tên)` | provider, **đúng kiểu năng lực đã khai** | **404** (`ProviderNotFoundError`) không có tên · **501** (`CapabilityNotSupportedError`) có tên nhưng thiếu năng lực |
 | `supports(tên)` | `bool` — có làm được việc này không | **404** |
 | `names()` | **chỉ** provider làm được việc này | — |
 | `all_names()` | mọi provider của họ | — |
@@ -327,7 +343,7 @@ providers.registered  package=src.providers families=['payment'] capabilities=['
 
 **`src/main.py` phải gọi `register_providers()`** trước `register_routes()`.
 `fam init` sinh sẵn dòng đó; `create_app()` cũng gọi hộ. Dự án cũ lắp tay thì tự
-thêm — quên là gặp lỗi ở [mục 9](#9-tra-sự-cố).
+thêm — quên là gặp lỗi ở [mục 9](#9-hỏng-thì-tra-ở-đây).
 
 **Không có `src/providers/` thì bỏ qua**, không lỗi. Dự án không dùng provider
 không phải tạo thư mục rỗng.
@@ -447,7 +463,7 @@ async def snapshot(self, cam: DahuaHandle) -> bytes: ...        # ✗ hãng khá
 
 ---
 
-## 9. Tra sự cố
+## 9. Hỏng thì tra ở đây
 
 | Triệu chứng | Nguyên nhân | Cách chữa |
 |---|---|---|

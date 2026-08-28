@@ -37,32 +37,6 @@ chết và hạn dùng đều là thứ **tự bật**, không phải thứ mặ
 
 ---
 
-## Cấu hình
-
-Trong `.env` chỉ có thứ thuộc về **kết nối**. Mọi chính sách của từng consumer
-khai ở `@rabbitmq_subscriber`.
-
-Xoá dòng nào thì biến đó quay về mặc định — trừ `URL`, thứ duy nhất phải tự
-điền vì không đoán được.
-
-| Biến | Bắt buộc | Mặc định | Ý nghĩa |
-|---|---|---|---|
-| `APP_RABBITMQ__ENABLED` | không | `false` | bật/tắt toàn bộ lớp này |
-| `APP_RABBITMQ__URL` | **có** | `amqp://guest:guest@localhost:5672/` | `amqp://user:pass@host:port/vhost` |
-| `APP_RABBITMQ__PUBLISH_TIMEOUT_SECONDS` | không | `5.0` | chờ broker xác nhận một lần đăng tin; đè bằng `publish(timeout=)` |
-| `APP_RABBITMQ__CONNECT_TIMEOUT_SECONDS` | không | `10.0` | chờ khi mở kết nối |
-| `APP_RABBITMQ__HEARTBEAT_SECONDS` | không | `30` | nhịp tim AMQP; phát hiện đứt sau ~2× giá trị này |
-| `APP_RABBITMQ__RECONNECT_DELAY_SECONDS` | không | `2.0` | chờ trước lần nối lại đầu tiên |
-| `APP_RABBITMQ__MAX_RECONNECT_DELAY_SECONDS` | không | `30.0` | trần thời gian chờ (tăng gấp đôi mỗi lần) |
-
-`fam env rabbitmq` ghi sẵn cả bảy dòng này vào `.env`, mỗi dòng kèm giải
-thích và mặc định ngay phía trên.
-
-Mật khẩu chứa `@` viết thẳng được (`amqp://admin:Pass@123@host:5672/`); parser
-lấy dấu `@` cuối cùng làm ranh giới.
-
----
-
 ## Đăng tin
 
 ```python
@@ -689,7 +663,7 @@ về hàng đợi chính bằng `broker.publish_to_queue("alert-mailer", body)`,
 đi nếu không cứu được. Khung cố ý không tự động làm việc này: tự đẩy về nghĩa là
 lặp lại đúng vòng lỗi vừa thoát ra.
 
-### Ví dụ chạy được
+## Kiểm xem nó chạy chưa
 
 `src/api/rabbitmq_test/` có sẵn một consumer ba lối ra và hai endpoint để bấm
 thử — không cần viết gì thêm:
@@ -837,7 +811,33 @@ Thiếu thư viện `aio-pika` mà `ENABLED=true` thì báo lỗi ngay lúc kh�
 
 ---
 
-## Số đo
+## Tra cứu
+
+### Cấu hình
+
+Trong `.env` chỉ có thứ thuộc về **kết nối**. Mọi chính sách của từng consumer
+khai ở `@rabbitmq_subscriber`.
+
+Xoá dòng nào thì biến đó quay về mặc định — trừ `URL`, thứ duy nhất phải tự
+điền vì không đoán được.
+
+| Biến | Bắt buộc | Mặc định | Ý nghĩa |
+|---|---|---|---|
+| `APP_RABBITMQ__ENABLED` | không | `false` | bật/tắt toàn bộ lớp này |
+| `APP_RABBITMQ__URL` | **có** | `amqp://guest:guest@localhost:5672/` | `amqp://user:pass@host:port/vhost` |
+| `APP_RABBITMQ__PUBLISH_TIMEOUT_SECONDS` | không | `5.0` | chờ broker xác nhận một lần đăng tin; đè bằng `publish(timeout=)` |
+| `APP_RABBITMQ__CONNECT_TIMEOUT_SECONDS` | không | `10.0` | chờ khi mở kết nối |
+| `APP_RABBITMQ__HEARTBEAT_SECONDS` | không | `30` | nhịp tim AMQP; phát hiện đứt sau ~2× giá trị này |
+| `APP_RABBITMQ__RECONNECT_DELAY_SECONDS` | không | `2.0` | chờ trước lần nối lại đầu tiên |
+| `APP_RABBITMQ__MAX_RECONNECT_DELAY_SECONDS` | không | `30.0` | trần thời gian chờ (tăng gấp đôi mỗi lần) |
+
+`fam env rabbitmq` ghi sẵn cả bảy dòng này vào `.env`, mỗi dòng kèm giải
+thích và mặc định ngay phía trên.
+
+Mật khẩu chứa `@` viết thẳng được (`amqp://admin:Pass@123@host:5672/`); parser
+lấy dấu `@` cuối cùng làm ranh giới.
+
+### Số đo
 
 ```bash
 curl -s localhost:8000/api/metrics | grep rabbitmq_
@@ -854,7 +854,7 @@ curl -s localhost:8000/api/metrics | grep rabbitmq_
 
 ---
 
-## Lệnh hay dùng
+### Lệnh hay dùng
 
 ```bash
 fam install rabbitmq

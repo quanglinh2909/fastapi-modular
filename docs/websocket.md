@@ -31,11 +31,11 @@ Cứ chép về là xong; đọc phần giải thích khi nào cần.
 
 ---
 
-## Bạn cần gì?
+## Bạn đang cần làm gì?
 
-| Bạn muốn | Đi tới |
+| Việc bạn muốn làm | Đọc mục |
 |---|---|
-| Thấy nó chạy trước đã | [1. Chạy thử 30 giây](#1-chạy-thử-30-giây) |
+| "Cho tôi thấy nó chạy trước đã" | [1. Chạy thử 30 giây](#1-chạy-thử-30-giây) |
 | Viết client (JS/trình duyệt) | [2. Client tối thiểu](#2-client-tối-thiểu-chạy-được-ngay) · [9. Next.js đầy đủ](#9-client-nextjs-đầy-đủ) |
 | Viết server (gateway) | [4. Viết một gateway](#4-viết-một-gateway) |
 | Gửi tin từ REST / tác vụ nền | [`WebSocketServer`](#websocketserver--đẩy-tin-từ-bất-cứ-đâu) |
@@ -43,7 +43,7 @@ Cứ chép về là xong; đọc phần giải thích khi nào cần.
 | Thêm đăng nhập | [6. Xác thực](#6-xác-thực) |
 | Chuẩn bị lên production | [8. Chạy nhiều worker](#8-chạy-nhiều-worker) |
 | Thử tay, không viết code | [10. Postman](#10-thử-tay-bằng-postman) |
-| **Đang gặp lỗi** | [13. Tra sự cố theo triệu chứng](#13-tra-sự-cố-theo-triệu-chứng) |
+| **Đang gặp lỗi** | [13. Hỏng thì tra ở đây](#13-hỏng-thì-tra-ở-đây) |
 
 ---
 
@@ -868,7 +868,7 @@ khác nhau mỗi lần, tuỳ client rơi vào worker nào); với `redis` là 6
 
 ---
 
-## 13. Tra sự cố theo triệu chứng
+## 13. Hỏng thì tra ở đây
 
 | Triệu chứng | Nguyên nhân gần như chắc chắn | Cách chữa |
 |---|---|---|

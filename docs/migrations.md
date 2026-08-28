@@ -113,6 +113,20 @@ SQLite không có `ALTER TABLE ... ALTER COLUMN`. Alembic lách bằng cách t�
 mới rồi chép dữ liệu sang; `env.py` tự bật `render_as_batch` khi driver là
 sqlite, nên bạn không phải làm gì.
 
+## Hỏng thì tra ở đây
+
+| Bạn thấy gì | Nguyên nhân |
+|---|---|
+| `alembic: command not found` | chưa cài — `fam install sqlite` (hoặc `postgres`) kéo theo Alembic |
+| `autogenerate` sinh ra file rỗng | entity chưa được import nên Alembic không thấy bảng nào; kiểm `src/api/<module>/entities/` |
+| `autogenerate` đòi xoá sạch bảng | đang trỏ vào database TRỐNG — soi `APP_DB__DSN` trong `.env` |
+| Migration chạy được ở dev, hỏng ở SQLite | SQLite không `ALTER` được cột; cần [chế độ batch](#sqlite-cần-chế-độ-batch) |
+| Bảng đã có nhưng Alembic đòi tạo lại | database chưa được đóng dấu phiên bản — [bắt đầu với database có sẵn](#bắt-đầu-với-database-đã-có-sẵn-dữ-liệu) |
+| Đổi `on_delete` mà database không đổi theo | `create`/`sync` không đụng ràng buộc; xem [database.md](database.md#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại) |
+| Production tự đổi schema lúc khởi động | `APP_DB__SCHEMA_MODE` chưa đặt `off` — đó mới là lúc Alembic làm chủ |
+
+---
+
 ## Bắt đầu với database đã có sẵn dữ liệu
 
 Nếu bảng đã tồn tại (do `schema_mode=create` tạo trước đó), đừng chạy migration

@@ -14,6 +14,7 @@ nghĩa phần của khung; **ứng dụng kế thừa để thêm phần của m
 | "`.env` sinh ra sao, đổi thế nào" | [`.env` do `fam env` sinh ra](#env-do-fam-env-sinh-ra) |
 | "Sợ mang DEBUG=true lên production" | [Chặn cấu hình nguy hiểm](#chặn-cấu-hình-nguy-hiểm-lên-production) |
 | "Tra một biến `APP_*` nghĩa là gì" | [Các nhóm định nghĩa sẵn](#các-nhóm-khung-định-nghĩa-sẵn) — và bảng chi tiết trong doc của từng phần |
+| "Sửa `.env` mà không thấy đổi gì" | [Hỏng thì tra ở đây](#hỏng-thì-tra-ở-đây) |
 
 ---
 
@@ -174,6 +175,20 @@ WebSocket adapter `local` khi chạy nhiều worker.
 
 Cảnh báo chứ không chặn — app vẫn lên, vì tắt sản xuất vì một cấu hình đáng ngờ
 còn tệ hơn. Muốn chặn thì đọc `settings.check_production_safety()` rồi tự quyết.
+
+---
+
+## Hỏng thì tra ở đây
+
+| Bạn thấy gì | Nguyên nhân |
+|---|---|
+| Sửa `.env` mà app không đổi gì | biến môi trường **thắng** `.env` — `echo $APP_DB__DRIVER` xem có ai đặt sẵn không; hoặc chưa khởi động lại |
+| Biến bạn thêm vào `.env` không tới được code | chưa khai trong `AppSettings` — [Thêm biến của riêng bạn](#thêm-biến-của-riêng-bạn). Biến lạ bị **bỏ qua trong im lặng** (`extra="ignore"`), không báo lỗi |
+| Nhóm lồng nhau không nhận | thiếu **hai** gạch dưới: `APP_DB__DRIVER` chứ không phải một gạch |
+| `fam env <x>` ghi đè mất chỉnh sửa của tôi | nó chỉ THAY khối giữa hai mốc `# >>> x <<<`; mọi dòng ngoài khối được giữ nguyên. Đã sửa trong khối thì chép ra ngoài |
+| `config.unsafe_for_production` lúc khởi động | `APP_ENV=prod` mà còn CORS mở, `debug=true`, database `memory`, `schema_mode` khác `off`, hoặc WebSocket adapter `local` với nhiều worker |
+| App chạy bằng bộ nhớ tạm, restart là mất dữ liệu | thiếu `APP_DB__DRIVER` — chạy `fam install sqlite` |
+| Không chắc app đang đọc cấu hình nào | `fam info` in ra driver, kết nối và thư viện đã cài |
 
 ---
 

@@ -68,7 +68,7 @@ quét nó đi". Xếp khác thì nói ra một lần trong `src/main.py`:
 | `@Module()` + module scanning | thư mục dưới `src/api/`, tự quét ở `fastapi_modular/discovery.py` |
 | `@UseGuards()` | `guards=[...]` ở `@controller` hoặc từng route |
 | `@Controller('users')` | `@controller(prefix="/users", tags=["users"])` |
-| `@Get()` `@Post()` `@Patch()` `@Delete()` | `@get()` `@post()` `@patch()` `@delete()` |
+| `@Get()` `@Post()` `@Put()` `@Patch()` `@Delete()` | `@get()` `@post()` `@put()` `@patch()` `@delete()` |
 | `@Injectable()` | `@injectable` |
 | `@Injectable({scope: Scope.REQUEST})` | `@injectable(scope=Scope.REQUEST)` |
 | `forwardRef(() => X)` | `Lazy[X]` |
