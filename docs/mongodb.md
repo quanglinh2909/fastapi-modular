@@ -12,6 +12,7 @@
 | "**Trả về camera kèm danh sách sự kiện**" | [Dữ liệu lồng nhau](#dữ-liệu-lồng-nhau) |
 | "**Ghi 2 collection, hỏng thì huỷ cả hai**" | [Không có transaction](#không-có-transaction-và-làm-gì-thay-thế) |
 | "Xoá cha thì con thế nào" | [Khoá ngoại](#khoá-ngoại-khung-tự-làm-không-phải-database) |
+| "Sửa một bản ghi rồi lấy lại chính nó" | [database.md — `update`](database.md#sửa-dữ-liệu-không-cần-đọc-về-trước) — chạy được trên Mongo |
 | "Sao câu lệnh này báo lỗi?" | [Cái KHÔNG dùng được](#cái-không-dùng-được-trên-mongo) |
 | "Hỏng rồi, tra ở đâu" | [Hỏng thì tra ở đây](#hỏng-thì-tra-ở-đây) |
 
@@ -503,7 +504,7 @@ primary mới cần chừng đó thời gian.
 | `db.index_failed` lúc khởi động | dữ liệu cũ đã trùng, `unique` không tạo được — dọn document trùng rồi khởi động lại |
 | Không thấy `db.indexes_ready` | file entity chưa nằm trong `src/api/<module>/entities/` |
 | `409` khi ghi con: "không có Camera nào mang id đó" | đúng như SQL — ghi cha trước, hoặc để cột đó `None` |
-| `update` trả về số lớn hơn số dòng thật sự ĐỔI | đúng: nó đếm dòng KHỚP điều kiện, y như SQL. Mongo có `modified_count` riêng (ghi đúng giá trị cũ thì bằng 0), khung không dùng nó vì hai backend kia không có |
+| `update_where` trả số lớn hơn số dòng thật sự ĐỔI | đúng: nó đếm dòng KHỚP điều kiện, y như SQL. Mongo có `modified_count` riêng (ghi đúng giá trị đang có thì bằng 0), khung không dùng vì hai backend kia không có |
 | `/health/ready` trả `database: false` | sai DSN, hoặc server chưa lên — xem log `db.unreachable_at_startup` |
 | Xoá cha xong con vẫn còn | tiến trình chết giữa chừng lúc dọn; chạy lại lệnh xoá |
 | `ServerSelectionTimeoutError` | không tới được server: sai host/cổng, hoặc firewall |
