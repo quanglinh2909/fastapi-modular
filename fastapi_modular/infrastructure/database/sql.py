@@ -928,6 +928,30 @@ class SqlBackend(DatabaseBackend):
             result = await conn.execute(sql_delete(table).where(*self._where(entity, table, filters)))
         return int(result.rowcount)
 
+    async def update_one(
+        self, entity: type[E], *, id_: str, changes: Filters
+    ) -> E | None:
+        """`UPDATE ... WHERE id = ? RETURNING *` — sửa và lấy về trong MỘT lượt.
+
+        `RETURNING` có ở PostgreSQL từ lâu và ở SQLite từ 3.35 (2021). Bản cũ
+        hơn thì lùi về hai câu: UPDATE rồi SELECT. Không dùng bản ghi đang có
+        trong bộ nhớ làm kết quả, vì database có thể tự đổi thêm (DEFAULT,
+        trigger) và khi ấy thứ trả cho client sẽ khác thứ nằm trong bảng.
+        """
+        table = self._table(entity)
+        assert self._engine is not None
+        stmt = sql_update(table).where(table.c.id == id_).values(**changes)
+
+        async with self._conn() as conn:
+            if self._engine.dialect.update_returning:
+                row = (await conn.execute(stmt.returning(*table.c))).first()
+                return self._row_to_entity(entity, row) if row is not None else None
+
+            if int((await conn.execute(stmt)).rowcount) == 0:
+                return None
+            row = (await conn.execute(select(table).where(table.c.id == id_))).first()
+        return self._row_to_entity(entity, row) if row is not None else None
+
     async def update_where(
         self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None
     ) -> int:

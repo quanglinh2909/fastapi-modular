@@ -115,7 +115,8 @@ async def kho(request, tmp_path):
 # ------------------------------------------------------------------ theo id
 async def test_update_theo_id(kho):
     cameras, _, _ = kho
-    assert await cameras.update("c1", name="Cổng chính") == 1
+    row = await cameras.update("c1", name="Cổng chính")
+    assert row is not None and row.name == "Cổng chính", "trả về chính bản ghi đã sửa"
     assert (await cameras.get("c1")).name == "Cổng chính"
     assert (await cameras.get("c2")).name == "Kho", "dòng khác không được đụng"
 
@@ -130,16 +131,16 @@ async def test_gia_tri_truyen_bang_dict_hay_kwargs_deu_duoc(kho):
     assert (row.name, row.threshold) == ("B", 0.9), "dict và kwargs gộp lại"
 
 
-async def test_id_khong_ton_tai_thi_tra_ve_0(kho):
+async def test_id_khong_ton_tai_thi_tra_ve_None(kho):
     cameras, _, _ = kho
-    assert await cameras.update("khong-co", name="x") == 0
+    assert await cameras.update("khong-co", name="x") is None
 
 
 # --------------------------------------------------- theo cột khác, nhiều dòng
 async def test_update_nhieu_dong_theo_cot_khac(kho):
     """Chính là việc người dùng cần: một câu lệnh sửa mọi dòng khớp điều kiện."""
     cameras, _, _ = kho
-    assert await cameras.update({"zone": "T1"}, status=UpStatus.ON) == 2
+    assert await cameras.update_where({"zone": "T1"}, status=UpStatus.ON) == 2
 
     assert [r.status for r in await cameras.find(zone="T1")] == [UpStatus.ON] * 2
     assert (await cameras.get("c3")).zone == "T2", "vùng khác không bị đụng"
@@ -147,14 +148,14 @@ async def test_update_nhieu_dong_theo_cot_khac(kho):
 
 async def test_dieu_kien_nhieu_cot_la_AND(kho):
     cameras, _, _ = kho
-    assert await cameras.update({"zone": "T1", "name": "Kho"}, threshold=0.7) == 1
+    assert await cameras.update_where({"zone": "T1", "name": "Kho"}, threshold=0.7) == 1
     assert (await cameras.get("c2")).threshold == 0.7
     assert (await cameras.get("c1")).threshold == 0.5
 
 
 async def test_khong_khop_dong_nao_thi_tra_ve_0(kho):
     cameras, _, _ = kho
-    assert await cameras.update({"zone": "KHONG-CO"}, name="x") == 0
+    assert await cameras.update_where({"zone": "KHONG-CO"}, name="x") == 0
 
 
 async def test_ghi_dung_gia_tri_dang_co_van_dem_la_mot_dong(kho):
@@ -171,7 +172,7 @@ async def test_ghi_dung_gia_tri_dang_co_van_dem_la_mot_dong(kho):
     # Phải ghim CẢ `updated_at`, nếu không dấu thời gian mới làm document đổi
     # thật và `modified_count` cũng thành 1 — phép kiểm sẽ xanh dù code sai.
     # Đo trên Mongo thật: matched=1, modified=0 khi không có gì đổi.
-    assert await cameras.update("c2", name="Kho", updated_at=row.updated_at) == 1
+    assert await cameras.update_where({"id": "c2"}, name="Kho", updated_at=row.updated_at) == 1
 
 
 # ----------------------------------------------------------------- kiểu dữ liệu
@@ -194,12 +195,66 @@ async def test_ghi_None_vao_cot_cho_phep_trong(kho):
     assert (await cameras.get("c1")).zone_id is None
 
 
+async def test_tra_ve_ban_doc_tu_DATABASE_chu_khong_phai_ban_trong_bo_nho(kho):
+    """Database có thể tự đổi thêm; thứ trả cho client phải là thứ nằm trong bảng."""
+    cameras, _, _ = kho
+    row = await cameras.update("c1", name="X")
+    assert row is not None
+    doc_lai = await cameras.get("c1")
+    assert (row.name, row.threshold, row.updated_at) == (
+        doc_lai.name, doc_lai.threshold, doc_lai.updated_at
+    )
+
+
+async def test_update_khong_nhan_dieu_kien_dang_dict(kho):
+    """Chỉ dẫn sang `update_where` thay vì sửa nhầm rồi trả về khó hiểu."""
+    cameras, _, _ = kho
+    with pytest.raises(BadRequestError, match="update_where"):
+        await cameras.update({"zone": "T1"}, name="x")
+
+
+async def test_update_where_khong_nhan_id(kho):
+    cameras, _, _ = kho
+    with pytest.raises(BadRequestError, match=r"update\(id"):
+        await cameras.update_where("c1", name="x")
+
+
+@pytest.mark.skipif(not CO_SQLITE, reason="đặt TEST_SQLITE=1 và cài aiosqlite")
+async def test_update_theo_id_chi_ton_MOT_cau_lenh(tmp_path):
+    """Cả điểm của việc dùng `RETURNING`: sửa và lấy về trong một lượt.
+
+    Vòng `get` -> `save` tốn hai câu. Nếu chỗ này thành hai câu thì lợi ích duy
+    nhất của `update` biến mất mà không ai thấy.
+    """
+    from sqlalchemy import event
+
+    backend = create_backend(DatabaseSettings(
+        driver="sqlite", dsn=f"sqlite+aiosqlite:///{tmp_path}/dem.db"))
+    await backend.startup()
+    await backend.create_schema(UpZone, UpCamera)
+    cameras = Repository(UpCamera, _Db(backend))
+    await cameras.save(UpCamera(id="c1", name="A"))
+
+    cau_lenh: list[str] = []
+
+    @event.listens_for(backend._engine.sync_engine, "before_cursor_execute")
+    def ghi(conn, cursor, statement, *args):
+        if "up_cameras" in statement:
+            cau_lenh.append(statement)
+
+    await cameras.update("c1", name="B")
+
+    assert len(cau_lenh) == 1, cau_lenh
+    assert "UPDATE" in cau_lenh[0] and "RETURNING" in cau_lenh[0].upper()
+    await backend.shutdown()
+
+
 # ---------------------------------------------------------------- truyền DTO
 async def test_truyen_thang_DTO(kho):
     """Không phải `payload.model_dump()` nữa — DTO đi thẳng vào."""
     cameras, _, _ = kho
-    assert await cameras.update("c1", UpCameraUpdate(name="Cổng chính")) == 1
-    assert (await cameras.get("c1")).name == "Cổng chính"
+    row = await cameras.update("c1", UpCameraUpdate(name="Cổng chính"))
+    assert row is not None and row.name == "Cổng chính"
 
 
 async def test_DTO_chi_ghi_field_client_THUC_SU_gui(kho):
@@ -240,7 +295,7 @@ async def test_DTO_gop_duoc_voi_kwargs(kho):
 async def test_where_cung_nhan_DTO(kho):
     """Hợp với bộ lọc sinh bằng `partial_of(...)`."""
     cameras, _, _ = kho
-    assert await cameras.update(UpCameraUpdate(zone="T1"), status=UpStatus.ON) == 2
+    assert await cameras.update_where(UpCameraUpdate(zone="T1"), status=UpStatus.ON) == 2
 
 
 async def test_where_la_DTO_bo_qua_field_khong_gui_KE_CA_khi_mac_dinh_khac_None(kho):
@@ -257,7 +312,7 @@ async def test_where_la_DTO_bo_qua_field_khong_gui_KE_CA_khi_mac_dinh_khac_None(
 
     cameras, _, _ = kho
 
-    assert await cameras.update(BoLoc(zone="T1"), threshold=0.8) == 2
+    assert await cameras.update_where(BoLoc(zone="T1"), threshold=0.8) == 2
 
 
 async def test_DTO_rong_bi_chan_va_noi_ro_vi_sao(kho):
@@ -312,7 +367,7 @@ async def test_dieu_kien_rong_bi_chan(kho):
     """`where` rỗng gần như luôn là lỗi lập trình, không phải ý định sửa cả bảng."""
     cameras, _, _ = kho
     with pytest.raises(BadRequestError, match="sẽ sửa MỌI dòng"):
-        await cameras.update({}, name="x")
+        await cameras.update_where({}, name="x")
 
     assert (await cameras.get("c1")).name == "Cổng", "không được sửa gì cả"
 
@@ -326,7 +381,7 @@ async def test_khong_co_gia_tri_nao_bi_chan(kho):
 
 async def test_co_y_sua_ca_bang_thi_noi_ro_bang_match(kho):
     cameras, _, _ = kho
-    assert await cameras.update({}, zone="X", match=lambda _: True) == 3
+    assert await cameras.update_where({}, zone="X", match=lambda _: True) == 3
     assert {r.zone for r in await cameras.find()} == {"X"}
 
 
@@ -348,8 +403,8 @@ async def test_khoa_ngoai_tro_toi_cha_khong_ton_tai_bi_chan(kho):
 
 async def test_khoa_ngoai_hop_le_thi_doi_duoc(kho):
     cameras, _, _ = kho
-    assert await cameras.update("c1", zone_id="z2") == 1
-    assert (await cameras.get("c1")).zone_id == "z2"
+    row = await cameras.update("c1", zone_id="z2")
+    assert row is not None and row.zone_id == "z2"
 
 
 async def test_update_lam_trung_cot_unique_bi_chan(kho):
@@ -370,7 +425,7 @@ async def test_update_trong_transaction_huy_duoc(tmp_path):
     await cameras.save(UpCamera(id="c1", name="Cổng", zone="T1"))
 
     async with backend.transaction() as tx:
-        await cameras.update({"zone": "T1"}, name="ĐỔI RỒI")
+        await cameras.update_where({"zone": "T1"}, name="ĐỔI RỒI")
         assert (await cameras.get("c1")).name == "ĐỔI RỒI", "trong khối thì thấy"
         await tx.rollback()
 

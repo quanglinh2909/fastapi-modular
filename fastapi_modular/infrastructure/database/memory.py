@@ -387,6 +387,15 @@ class MemoryBackend(DatabaseBackend):
         ids = [obj.id for obj in self._select(entity, filters, match)]
         return await self.delete_where_ids(entity, ids)
 
+    async def update_one(
+        self, entity: type[E], *, id_: str, changes: Filters
+    ) -> E | None:
+        obj = self._table(entity).get(id_)
+        if obj is None:
+            return None
+        self._apply(entity, obj, changes)
+        return obj
+
     async def update_where(
         self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None
     ) -> int:
@@ -396,18 +405,27 @@ class MemoryBackend(DatabaseBackend):
         riêng INSERT. Bỏ qua ở đây thì `fam test` xanh trong khi production ném
         lỗi 409 — đúng kiểu lệch tệ nhất.
         """
-        self._join_request()
-        fields = mapping_for(entity).fields
         found = self._select(entity, filters, match)
         for obj in found:
-            for name, value in changes.items():
-                # Ép về đúng kiểu đã khai. Không có bước này thì cột Enum giữ
-                # nguyên chuỗi thô, trong khi SQL/Mongo đọc lên vẫn ra Enum —
-                # `r.status.value` chạy ở hai chỗ kia và nổ ở đây.
-                setattr(obj, name, coerce_value(fields[name], value))
-            self._check_unique(entity, obj)
-            self._check_references(entity, obj)
+            self._apply(entity, obj, changes)
         return len(found)
+
+    def _apply(self, entity: type, obj: Any, changes: Filters) -> None:
+        """Ghi giá trị vào một bản ghi, qua đúng những phép kiểm của `save`.
+
+        SQL thật áp ràng buộc duy nhất và khoá ngoại cho cả câu UPDATE, không
+        riêng INSERT. Bỏ qua ở đây thì `fam test` xanh trong khi production ném
+        lỗi 409 — đúng kiểu lệch tệ nhất.
+        """
+        self._join_request()
+        fields = mapping_for(entity).fields
+        for name, value in changes.items():
+            # Ép về đúng kiểu đã khai. Không có bước này thì cột Enum giữ
+            # nguyên chuỗi thô, trong khi SQL/Mongo đọc lên vẫn ra Enum —
+            # `r.status.value` chạy ở hai chỗ kia và nổ ở đây.
+            setattr(obj, name, coerce_value(fields[name], value))
+        self._check_unique(entity, obj)
+        self._check_references(entity, obj)
 
 
 def _read(row: dict[str, Any], column: Any) -> Any:

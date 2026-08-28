@@ -18,7 +18,7 @@ builder, không có transaction, không có migration.
 | "**Xoá cha mà cháu vẫn còn**" | [Cascade dừng giữa chừng](#cascade-dừng-giữa-chừng-database-chưa-biết-khoá-ngoại) |
 | "Đọc/ghi dữ liệu trong service" | [Dùng Repository trong code](#dùng-repository-trong-code) |
 | "**Sửa một dòng mà không phải đọc nó về trước**" | [`update`](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
-| "**Sửa hàng loạt: mọi camera Tầng 1 thành offline**" | [`update`](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
+| "**Sửa hàng loạt: mọi camera Tầng 1 thành offline**" | [`update_where`](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
 | "**Truyền thẳng DTO của PATCH vào để sửa**" | [`update`](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
 | "**Ghi 2 bảng, hỏng thì huỷ cả hai**" | [Transaction](#transaction--ghi-nhiều-bảng-thì-cùng-thành-công-hoặc-cùng-không) |
 | "Lọc lớn hơn, nhỏ hơn, NULL, nối bảng" | [Truy vấn phức tạp](#truy-vấn-phức-tạp--join-lớnbé-null) |
@@ -972,7 +972,8 @@ class CameraService:
 | `count(**equals, match=)` | Đếm |
 | `exists(**equals, match=)` | Có hay không |
 | `save(obj)` | Upsert, tự sinh id nếu chưa có |
-| `update(where, changes, **set)` | **Sửa thẳng dưới database** (nhận cả DTO), trả số dòng khớp — [xem dưới](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
+| `update(id, changes, **set)` | **Sửa một bản ghi** (nhận cả DTO), trả về chính nó — [xem dưới](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
+| `update_where(**equals, changes)` | Sửa nhiều, trả số dòng khớp |
 | `delete(id)` | Xoá một, trả `True/False` |
 | `delete_where(**equals, match=)` | Xoá nhiều, trả số bản ghi |
 | `query()` | Builder cho JOIN, lớn/bé, NULL — xem [mục dưới](#truy-vấn-phức-tạp--join-lớnbé-null) |
@@ -987,28 +988,49 @@ item.status = "offline"
 await self._repo.save(item)
 ```
 
-`update()` làm cùng việc đó bằng **một** câu lệnh:
+`update()` làm cùng việc đó bằng **một** câu lệnh, và trả về **chính bản ghi đã
+sửa**:
 
 ```python
-await self._repo.update(camera_id, status="offline")
+cam = await self._repo.update(camera_id, status="offline")
 ```
 
-Điều kiện là **id, hoặc bất kỳ trường nào khác** — và khi đó nó sửa **mọi dòng
-khớp**:
+Đo được: `update(id)` sinh **1** câu SQL, vòng `get` + `save` sinh **2** — nhờ
+`UPDATE ... RETURNING *` (SQL) và `find_one_and_update` (Mongo). Bản trả về đọc
+từ database sau khi ghi, không phải bản trong bộ nhớ: database có thể tự đổi
+thêm (giá trị mặc định, trigger), và thứ trả cho client phải là thứ đang thật sự
+nằm trong bảng.
+
+Không có id đó thì trả `None` — cùng quy ước với `get()`:
 
 ```python
-# theo id
-await cameras.update("cam-01", {"name": "Cổng chính"})
+cam = await self._repo.update(camera_id, payload)
+if cam is None:
+    raise NotFoundError(f"Không tìm thấy camera {camera_id}")
+return cam
+```
 
-# theo cột khác: mọi camera ở Tầng 1 chuyển sang offline
-so_dong = await cameras.update({"zone": "Tầng 1"}, status="offline")
+Sửa **nhiều dòng theo điều kiện** là hàm còn lại, `update_where` — cùng cặp với
+`delete` / `delete_where`:
+
+```python
+# mọi camera ở Tầng 1 chuyển sang offline
+so_dong = await cameras.update_where({"zone": "Tầng 1"}, status="offline")
 
 # nhiều điều kiện = AND; giá trị viết bằng dict hay kwargs đều được
-await cameras.update({"zone": "T1", "status": "online"}, threshold=0.9)
+await cameras.update_where({"zone": "T1", "status": "online"}, threshold=0.9)
 ```
 
-Trả về **số dòng khớp** (`0` nghĩa là không có dòng nào thoả điều kiện).
-`updated_at` tự đóng dấu, y như `save()`.
+| Hàm | Điều kiện | Trả về |
+|---|---|---|
+| `update(id, …)` | một id | **bản ghi đã sửa**, hoặc `None` |
+| `update_where(dieu_kien, …)` | dict/DTO, so bằng | **số dòng khớp** |
+
+`update_where` trả số dòng chứ không trả dữ liệu là **cố ý**: một câu lệnh có
+thể khớp hàng trăm nghìn dòng, và đọc hết chúng về chỉ để trả cho người gọi là
+thứ không nên xảy ra ngầm. Cần dữ liệu thì `find(...)` sau đó.
+
+`updated_at` tự đóng dấu ở cả hai, y như `save()`.
 
 **DTO truyền thẳng vào được**, không phải `model_dump()` nữa — cả handler còn
 một dòng:
@@ -1030,7 +1052,8 @@ của `partial_of`), nên đổi mỗi `name` sẽ ghi `None` đè lên mọi c�
 `null` tường minh thì vẫn xoá được cột, vì `null` đã gửi là đã "set".
 
 Trộn được cả ba cách trong một lời gọi: `update(id, dto, status="off")`.
-`where` cũng nhận DTO — hợp với bộ lọc sinh bằng `partial_of(...)`.
+Điều kiện của `update_where` cũng nhận DTO — hợp với bộ lọc sinh bằng
+`partial_of(...)`.
 
 Truyền **entity** vào thì bị từ chối, kèm lời chỉ đường: đã có sẵn cả bản ghi
 thì `save(obj)` mới đúng.
@@ -1043,11 +1066,11 @@ nên người từ NestJS sang không phải nhớ thêm gì.
 `async with db.transaction():`, hoặc dùng [`RedisClient.incr`](redis.md#khoá--giá-trị)
 nếu chỉ là bộ đếm.
 
-**`where` rỗng bị chặn.** `update({}, ...)` gần như luôn là biến rỗng do lỗi
-lập trình chứ không phải ý định sửa cả bảng — cố ý thì nói rõ:
+**`where` rỗng bị chặn.** `update_where({}, ...)` gần như luôn là biến rỗng do
+lỗi lập trình chứ không phải ý định sửa cả bảng — cố ý thì nói rõ:
 
 ```python
-await cameras.update({}, zone="X", match=lambda _: True)
+await cameras.update_where({}, zone="X", match=lambda _: True)
 ```
 
 **Không đổi được `id`.** Nó là danh tính bản ghi và là thứ khoá ngoại của bảng
@@ -1057,9 +1080,9 @@ sang.
 **Ràng buộc vẫn được áp.** Sửa một cột khoá ngoại sang giá trị không tồn tại,
 hay làm trùng một cột `unique`, đều bị từ chối (409) — trên cả ba backend.
 
-**Điều kiện chỉ so BẰNG.** Cần `>=`, `LIKE`, `IN` thì lọc bằng
-[`query()`](#truy-vấn-phức-tạp--join-lớnbé-null) rồi `update` theo id, hoặc
-truyền `match=` (lọc bằng Python, phải đọc dòng về trước nên chậm hơn).
+**Điều kiện của `update_where` chỉ so BẰNG.** Cần `>=`, `LIKE`, `IN` thì lọc
+bằng [`query()`](#truy-vấn-phức-tạp--join-lớnbé-null) rồi `update` theo từng id,
+hoặc truyền `match=` (lọc bằng Python, phải đọc dòng về trước nên chậm hơn).
 
 ### Hai quy ước dễ vấp
 

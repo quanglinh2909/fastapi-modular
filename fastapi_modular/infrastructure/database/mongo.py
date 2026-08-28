@@ -350,6 +350,31 @@ class MongoBackend(DatabaseBackend):
         result = await self._collection(entity).delete_one({"_id": id_})
         return result.deleted_count > 0
 
+    async def update_one(
+        self, entity: type[E], *, id_: str, changes: Filters
+    ) -> E | None:
+        """`find_one_and_update` — sửa và lấy về bản MỚI trong một lượt."""
+        from pymongo import ReturnDocument
+
+        await self._check_fk_changes(entity, changes)
+        doc = await self._collection(entity).find_one_and_update(
+            {"_id": id_}, {"$set": dict(changes)}, return_document=ReturnDocument.AFTER
+        )
+        return from_document(entity, _from_mongo(doc)) if doc else None
+
+    async def _check_fk_changes(self, entity: type, changes: Filters) -> None:
+        """Cha phải có thật — Mongo không có khoá ngoại, khung kiểm thay."""
+        for column, ref in mapping_for(entity).references:
+            value = changes.get(column)
+            if value is None:
+                continue
+            parent = await self._collection(ref.target).find_one({"_id": value}, {"_id": 1})
+            if parent is None:
+                raise ConflictError(
+                    f"{entity.__name__}.{column} = {value!r} nhưng không có "
+                    f"{ref.target.__name__} nào mang id đó."
+                )
+
     async def update_where(
         self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None
     ) -> int:
@@ -370,14 +395,7 @@ class MongoBackend(DatabaseBackend):
         # Giá trị đã qua `bind_value` ở Repository (Enum -> .value), tức đúng
         # thứ `to_document` làm lúc save. Không cần đổi gì thêm.
         doc = dict(changes)
-        for column, ref in mapping_for(entity).references:
-            if doc.get(column) is not None:
-                cha = await self._collection(ref.target).find_one({"_id": doc[column]}, {"_id": 1})
-                if cha is None:
-                    raise ConflictError(
-                        f"{entity.__name__}.{column} = {doc[column]!r} nhưng không có "
-                        f"{ref.target.__name__} nào mang id đó."
-                    )
+        await self._check_fk_changes(entity, doc)
         result = await self._collection(entity).update_many(query, {"$set": doc})
         return int(result.matched_count)
 

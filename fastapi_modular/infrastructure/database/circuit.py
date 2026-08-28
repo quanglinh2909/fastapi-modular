@@ -216,6 +216,9 @@ class CircuitBreakerBackend(DatabaseBackend):
     ) -> int:
         return await self._call("delete_where", entity, filters=filters, match=match)
 
+    async def update_one(self, entity: type[E], *, id_: str, changes: Filters) -> E | None:
+        return await self._call("update_one", entity, id_=id_, changes=changes)
+
     async def update_where(
         self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None
     ) -> int:

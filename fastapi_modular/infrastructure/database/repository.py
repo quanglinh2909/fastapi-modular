@@ -268,13 +268,11 @@ class Repository(Generic[E]):
 
     async def update(
         self,
-        where: str | dict[str, Any] | BaseModel,
+        id_: str,
         changes: dict[str, Any] | BaseModel | None = None,
-        *,
-        match: Callable[[E], bool] | None = None,
         **set_fields: Any,
-    ) -> int:
-        """Sửa thẳng dưới database, KHÔNG đọc bản ghi về trước. Trả về số dòng khớp.
+    ) -> E | None:
+        """Sửa MỘT bản ghi theo id và trả về chính nó sau khi sửa. `None` = không có id đó.
 
         Thay cho vòng ba bước quen thuộc:
 
@@ -282,27 +280,17 @@ class Repository(Generic[E]):
             item.status = "offline"
             await repo.save(item)                   # 1 lượt nữa
 
-        chỉ còn một dòng, và một lượt đi database:
+        chỉ còn một dòng, và **một** lượt đi database — `UPDATE ... RETURNING *`
+        với SQL, `find_one_and_update` với Mongo:
 
-            await repo.update(camera_id, status="offline")
+            cam = await repo.update(camera_id, status="offline")
 
-        `where` nhận **id** (chuỗi) hoặc **dict điều kiện** — so bằng, trên bất
-        kỳ trường nào, và sửa MỌI dòng khớp:
-
-            await repo.update("cam-01", {"name": "Cổng chính"})   # theo id
-            await repo.update({"zone": "Tầng 1"}, status="off")   # theo cột khác
-            await repo.update({"zone": "T1", "status": "on"}, threshold=0.9)
-
-        Giá trị cần ghi truyền bằng dict, bằng kwargs, hay **bằng thẳng DTO**
-        đều được; các cách gộp lại nếu dùng nhiều hơn một. Thứ tự tham số lấy
-        đúng của TypeORM (`repo.update(criteria, partialEntity)`) cho người từ
-        NestJS sang đỡ phải nhớ thêm.
-
-        DTO đi thẳng vào, không phải `model_dump()` nữa:
+        DTO truyền thẳng vào được, không phải `model_dump()`:
 
             @patch("/{camera_id}")
-            async def update(self, camera_id: str, payload: CameraUpdate) -> int:
-                return await self._repo.update(camera_id, payload)
+            async def update(self, camera_id: str, payload: CameraUpdate) -> CameraOut:
+                cam = await self._service.update(camera_id, payload)
+                ...
 
         DTO được đọc bằng `exclude_unset=True`, y như `apply_changes`: chỉ field
         client THỰC SỰ gửi lên mới được ghi. Đây là chỗ phải cẩn thận — dùng
@@ -310,40 +298,87 @@ class Repository(Generic[E]):
         sạch dữ liệu cũ. Gửi `null` tường minh vẫn xoá được cột, vì `null` đã
         gửi là đã "set".
 
-        `where` cũng nhận DTO, hợp với bộ lọc sinh bằng `partial_of(...)`.
+        Giá trị truyền bằng dict, kwargs, hay DTO đều được; gộp lại nếu dùng
+        nhiều hơn một. `updated_at` tự đóng dấu, y như `save()`.
 
-        `updated_at` tự đóng dấu, y như `save()` — trừ khi bạn tự đặt nó.
+        Bản trả về đọc từ DATABASE sau khi ghi, không phải bản trong bộ nhớ —
+        database có thể tự đổi thêm (giá trị mặc định, trigger), và khi ấy thứ
+        trả cho client phải là thứ đang thật sự nằm trong bảng.
 
-        Ba điều phải biết:
+        Hai điều dễ vấp:
 
-        - **Không đọc về nên không chạy được logic trong Python.** Cần đọc giá
-          trị cũ để tính giá trị mới (`so_lan += 1`) thì đây không phải chỗ:
-          `update` chỉ GHI ĐÈ. Tăng giảm nguyên tử chưa có, dùng `.query()` với
-          `db.transaction()`.
+        - **Không đọc giá trị cũ được.** `update` chỉ GHI ĐÈ, nên `so_lan += 1`
+          không viết bằng nó — đọc rồi ghi trong `async with db.transaction():`.
         - **Không đổi được `id`** — nó là danh tính bản ghi và là thứ khoá ngoại
           của bảng khác đang trỏ tới.
-        - **`where` rỗng bị chặn**, vì gần như luôn là lỗi lập trình chứ không
-          phải ý định sửa cả bảng. Thật sự muốn sửa hết thì nói rõ:
-          `match=lambda _: True`.
 
-        `match=` lọc bằng Python nên phải đọc dòng về trước — dùng khi điều kiện
-        không viết được bằng phép so bằng.
+        Sửa NHIỀU dòng theo điều kiện thì dùng `update_where(...)`.
         """
-        filters = (
-            {"id": where} if isinstance(where, str) else _as_dict(where, vai_tro="điều kiện")
+        if not isinstance(id_, str):
+            raise BadRequestError(
+                f"`update` sửa MỘT bản ghi theo id nên tham số đầu phải là chuỗi "
+                f"(đang là {type(id_).__name__}). Sửa nhiều dòng theo điều kiện "
+                f"thì dùng `update_where(...)`."
+            )
+        return await self._backend.update_one(
+            self._entity, id_=id_, changes=self._changes(changes, set_fields)
         )
+
+    async def update_where(
+        self,
+        where: dict[str, Any] | BaseModel,
+        changes: dict[str, Any] | BaseModel | None = None,
+        *,
+        match: Callable[[E], bool] | None = None,
+        **set_fields: Any,
+    ) -> int:
+        """Sửa MỌI bản ghi khớp điều kiện. Trả về số dòng khớp.
+
+            # mọi camera ở Tầng 1 chuyển sang offline
+            so_dong = await cameras.update_where({"zone": "Tầng 1"}, status="offline")
+
+            # nhiều điều kiện = AND
+            await cameras.update_where({"zone": "T1", "status": "online"}, threshold=0.9)
+
+        Điều kiện chỉ so BẰNG, trên bất kỳ trường nào; `where` nhận cả DTO (hợp
+        với bộ lọc sinh bằng `partial_of(...)`). Cần `>=`, `LIKE`, `IN` thì lọc
+        bằng `.query()` rồi `update` theo từng id, hoặc truyền `match=` (lọc
+        bằng Python nên phải đọc dòng về trước).
+
+        **Trả về số dòng chứ không trả dữ liệu**, cố ý: một câu lệnh có thể khớp
+        hàng trăm nghìn dòng, và đọc hết chúng về chỉ để trả cho người gọi là
+        thứ không ai muốn xảy ra ngầm. Cần dữ liệu thì `find(...)` sau đó.
+
+        **`where` rỗng bị chặn**, vì gần như luôn là lỗi lập trình chứ không
+        phải ý định sửa cả bảng. Thật sự muốn sửa hết thì nói rõ:
+        `match=lambda _: True`.
+        """
+        if isinstance(where, str):
+            raise BadRequestError(
+                "`update_where` nhận điều kiện dạng dict hoặc DTO. Sửa một bản "
+                'ghi theo id thì dùng `update(id, ...)` — nó trả về chính bản '
+                "ghi đã sửa."
+            )
+        filters = _as_dict(where, vai_tro="điều kiện")
+        if not filters and match is None:
+            raise BadRequestError(
+                f"`update_where` trên {self._entity.__name__} không có điều kiện nào — "
+                f"câu lệnh này sẽ sửa MỌI dòng. Truyền `{{'ten_cot': gia_tri}}`, "
+                f"hoặc nói rõ ý định bằng `match=lambda _: True`."
+            )
+        return await self._backend.update_where(
+            self._entity,
+            filters=filters,
+            changes=self._changes(changes, set_fields),
+            match=match,
+        )
+
+    def _changes(self, changes: Any, set_fields: dict[str, Any]) -> dict[str, Any]:
+        """Gộp dict/DTO/kwargs thành bộ giá trị đã soi, có đóng dấu `updated_at`."""
         values: dict[str, Any] = {
             **(_as_dict(changes, vai_tro="giá trị") if changes is not None else {}),
             **set_fields,
         }
-
-        if not filters and match is None:
-            raise BadRequestError(
-                f"`update` trên {self._entity.__name__} không có điều kiện nào — "
-                f"câu lệnh này sẽ sửa MỌI dòng. Truyền id, hoặc "
-                f"`{{'ten_cot': gia_tri}}`. Cố ý sửa cả bảng thì nói rõ bằng "
-                f"`match=lambda _: True`."
-            )
         if not values:
             them = (
                 " DTO không có field nào được gửi lên — `exclude_unset` bỏ hết."
@@ -358,13 +393,7 @@ class Repository(Generic[E]):
             # Đóng dấu ở đây chứ không ở service, cùng lý do với `save()`: mọi
             # đường ghi đều đi qua repository nên không có chỗ nào quên.
             values["updated_at"] = utcnow()
-
-        return await self._backend.update_where(
-            self._entity,
-            filters=filters,
-            changes=check_changes(self._entity, values),
-            match=match,
-        )
+        return check_changes(self._entity, values)
 
     async def delete(self, id_: str) -> bool:
         return await self._backend.delete(self._entity, id_)

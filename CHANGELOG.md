@@ -7,17 +7,25 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 
 ### Thêm
 
-- **`repo.update(where, changes)`** — sửa thẳng dưới database, không phải đọc
-  bản ghi về trước. Thay vòng ba bước `get` -> sửa -> `save` (hai lượt đi
-  database) bằng một câu lệnh:
+- **`repo.update(id, changes)` và `repo.update_where(dieu_kien, changes)`** —
+  sửa thẳng dưới database, không phải đọc bản ghi về trước. Thay vòng ba bước
+  `get` -> sửa -> `save` bằng một câu lệnh:
 
   ```python
-  await cameras.update("cam-01", status="offline")            # theo id
-  await cameras.update({"zone": "Tầng 1"}, status="offline")  # theo cột khác, NHIỀU dòng
+  cam = await cameras.update("cam-01", status="offline")            # -> bản ghi đã sửa
+  n = await cameras.update_where({"zone": "Tầng 1"}, status="off")  # -> số dòng khớp
   ```
 
-  `where` nhận id (chuỗi), dict điều kiện so bằng trên bất kỳ trường nào, hoặc
-  DTO. Giá trị truyền bằng dict, kwargs, hay **thẳng DTO của PATCH**:
+  Cùng cặp với `delete` / `delete_where`. `update` trả về **chính bản ghi đã
+  sửa** (`None` nếu không có id đó) và chỉ tốn **một** câu lệnh — đo được: 1 câu
+  so với 2 của `get` + `save` — nhờ `UPDATE ... RETURNING *` (SQL) và
+  `find_one_and_update` (Mongo). Bản trả về đọc từ database sau khi ghi, không
+  phải bản trong bộ nhớ.
+
+  `update_where` trả **số dòng khớp** chứ không trả dữ liệu, cố ý: một câu lệnh
+  có thể khớp hàng trăm nghìn dòng.
+
+  Giá trị truyền bằng dict, kwargs, hay **thẳng DTO của PATCH**:
 
   ```python
   async def update(self, camera_id: str, payload: CameraUpdate) -> int:

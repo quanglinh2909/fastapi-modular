@@ -499,6 +499,9 @@ class DatabaseBackend(Protocol):
     async def delete_where(
         self, entity: type[E], *, filters: Filters, match: Match = None
     ) -> int: ...
+    async def update_one(
+        self, entity: type[E], *, id_: str, changes: Filters
+    ) -> E | None: ...
     async def update_where(
         self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None
     ) -> int: ...
