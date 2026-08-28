@@ -17,7 +17,7 @@ Không cần cấu hình gì để bật: có decorator thì runner chạy, khô
 
 ## Vì sao thứ này nên nằm trong khung
 
-`fam run` mặc định bật **4 worker**. Một vòng `while True: await sleep(5)` viết
+`fam run --workers 4` chạy 4 tiến trình. Một vòng `while True: await sleep(5)` viết
 tay trong service sẽ chạy **bốn lần mỗi 5 giây** — và triệu chứng thì rất khó
 lần: log nhân bốn, API ngoài kêu vượt quota, hai tiến trình ghi đè trạng thái
 của nhau. Mặc định ở đây là `single=True`, tức có khoá; xem `core/locks.py`.

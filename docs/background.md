@@ -104,6 +104,20 @@ Chu kỳ vẫn tính từ lúc lượt trước **chạy xong**, không đổi.
 > một lần rồi thôi" thì đó là [`@timeout`](#3-chạy-đúng-một-lần), không phải
 > `@interval`.
 
+### Tham số của `@interval`
+
+| Tham số | Bắt buộc | Mặc định | Để làm gì |
+|---|---|---|---|
+| `seconds` | **có** | — | chu kỳ, tính từ lúc lượt trước **chạy xong** |
+| `run_on_startup` | không | `False` | `True` = chạy ngay lúc app lên, không đợi hết chu kỳ |
+| `max_seconds` | không | `None` *(không giới hạn)* | trần cho MỘT lượt; quá thì huỷ lượt đó, lượt sau vẫn chạy |
+| `single` | không | `True` | chỉ một tiến trình chạy. `False` = mọi worker cùng chạy (cố ý, ví dụ dọn cache trong RAM của riêng từng tiến trình) |
+| `jitter` | không | `0.0` | cộng ngẫu nhiên 0..jitter giây vào mỗi lần chờ, để nhiều máy không đập vào API ngoài cùng một giây |
+| `name` | không | *(`Class.method`)* | tên hiển thị **và tên KHOÁ**; hai việc trùng tên là báo lỗi lúc khởi động |
+| `thread` | không | `False` | `True` = chạy trong thread, hàm khai `def` thường. Dùng khi thân hàm toàn lời gọi CHẶN |
+
+Handler nhận `(self)` hoặc `(self, ctx: WorkerContext)` — **không nhận dữ liệu**.
+
 ### Lưu ý
 
 **Handler không được nhận tham số nào ngoài `self`.** Việc theo lịch tự chạy,
@@ -139,10 +153,11 @@ Lượt treo bị huỷ, ghi log `scheduler.run_timeout`, lượt sau vẫn ch�
 **Nhiều máy cùng gọi một API ngoài** thì thêm `jitter=5` — mỗi lần chờ cộng
 thêm 0–5 giây ngẫu nhiên, để cả đàn không đập vào cùng một giây.
 
-### Cái bẫy lớn nhất: app của bạn có 4 tiến trình
+### Cái bẫy lớn nhất: khi app của bạn có nhiều tiến trình
 
-`fam run` mặc định bật **4 worker**, tức 4 tiến trình Python độc lập, mỗi tiến
-trình nạp đủ code của bạn. Nếu tự viết `while True: await sleep(5)` thì nó chạy
+`fam run` mặc định **một** tiến trình, nên phần này chưa chạm tới bạn. Nhưng
+`fam run --workers 4` chạy **4 tiến trình Python độc lập**, mỗi tiến trình nạp
+đủ code của bạn — và đó là lúc mọi thứ dưới đây quan trọng. Nếu tự viết `while True: await sleep(5)` thì nó chạy
 **bốn lần mỗi 5 giây**: log thành 4 bản, API ngoài tốn 4× quota, 4 tiến trình
 ghi đè trạng thái của nhau.
 
@@ -188,6 +203,19 @@ scheduler.job  job=...  schedule='0 3 * * * (UTC)'
                next_run='2026-08-26T03:00:00+00:00'
                next_run_local='2026-08-26T10:00:00+07:00'
 ```
+
+### Tham số của `@cron`
+
+| Tham số | Bắt buộc | Mặc định | Để làm gì |
+|---|---|---|---|
+| `expression` | **có** | — | biểu thức cron 5 trường, truyền ở vị trí đầu: `"0 3 * * *"` |
+| `timezone` | không | `"UTC"` | **đọc kỹ**: không truyền là chạy theo UTC, lệch 7 tiếng so với giờ Việt Nam |
+| `max_seconds` | không | `None` *(không giới hạn)* | trần cho MỘT lượt; quá thì huỷ, và mốc kế tiếp vẫn chạy |
+| `single` | không | `True` | chỉ một tiến trình chạy |
+| `name` | không | *(`Class.method`)* | tên hiển thị và tên KHOÁ |
+| `thread` | không | `False` | `True` = chạy trong thread, hàm khai `def` thường |
+
+Handler nhận `(self)` hoặc `(self, ctx)` — không nhận dữ liệu, y như `@interval`.
 
 ### Viết biểu thức
 
@@ -245,6 +273,18 @@ dựng sẵn kết nối, kiểm tra một lần.
 sau lúc app đã mở cổng. Việc đó đặt thẳng vào lifespan của dự án, xem
 [architecture.md](architecture.md).
 
+### Tham số của `@timeout`
+
+| Tham số | Bắt buộc | Mặc định | Để làm gì |
+|---|---|---|---|
+| `seconds` | **có** | — | chờ bao lâu kể từ lúc app khởi động rồi chạy, đúng một lần |
+| `max_seconds` | không | `None` *(không giới hạn)* | trần cho lượt chạy đó; quá thì huỷ và ghi log |
+| `single` | không | `True` | chỉ một tiến trình chạy — quan trọng khi `fam run --workers N` với N > 1 |
+| `name` | không | *(`Class.method`)* | tên hiển thị và tên KHOÁ |
+| `thread` | không | `False` | `True` = chạy trong thread, hàm khai `def` thường |
+
+Handler nhận `(self)` hoặc `(self, ctx)`, không nhận dữ liệu.
+
 ---
 
 ## 4. Đưa việc vào hàng đợi
@@ -286,6 +326,22 @@ Chuỗi `"detect"` ở hai chỗ phải khớp nhau. Gõ sai thì việc bị b�
 `jobs.unknown` kèm danh sách tên đang có.
 
 Log khởi động: `jobs.started jobs=['detect'] workers=1 max_queued=1000`.
+
+### Tham số của `@job`
+
+| Tham số | Bắt buộc | Mặc định | Để làm gì |
+|---|---|---|---|
+| `name` | **có** | — | tên loại việc, dùng lại y hệt lúc `submit(...)`. **Duy nhất trong app** — hai `@job` trùng tên là báo lỗi lúc khởi động |
+| `max_retries` | không | `0` *(không thử lại)* | handler ném lỗi thì thử lại bấy nhiêu lần, **ngay tại chỗ** |
+| `retry_delay` | không | `1.0` | chờ bao lâu giữa hai lần thử |
+| `thread` | không | `False` | `True` = chạy trong thread, hàm khai `def` thường |
+
+Handler nhận `(self, payload)` hoặc `(self, payload, ctx)`. Chú kiểu `payload`
+bằng model Pydantic thì nó được kiểm khuôn trước khi vào hàm; sai khuôn thì bỏ
+lượt đó và ghi log, không làm chết những lượt khác.
+
+Số worker và độ dài hàng đợi là **cấu hình của app**, không phải của từng
+`@job` — `APP_JOBS__WORKERS`, `APP_JOBS__MAX_QUEUED`, xem [Tra cứu](#biến-cấu-hình).
 
 ### Lưu ý
 
@@ -386,6 +442,24 @@ Gọi được từ bất cứ đâu: lifespan lúc boot, một endpoint "thêm 
 được, miễn là duy nhất. Gọi lại **cùng một khoá không sinh bản thứ hai**, nó
 trả về bản đang chạy — với camera thì đó là điều bắt buộc, vì mở hai kết nối
 RTSP tới cùng một thiết bị là cách nhanh nhất để cả hai cùng giật.
+
+### Tham số của `@worker`
+
+| Tham số | Bắt buộc | Mặc định | Để làm gì |
+|---|---|---|---|
+| `name` | không | *(`Class.method`)* | tên LOẠI worker. Khoá đầy đủ của một bản là `<name>:<key>`, với `key` truyền lúc gọi |
+| `thread` | không | `False` | `True` = chạy cả vòng lặp trong thread; hàm phải là `def` thường và ghi database qua `ctx.run(...)` |
+| `restart` | không | `True` | vòng lặp ném lỗi thì dựng lại. `False` = hỏng là thôi |
+| `restart_delay` | không | `1.0` | chờ bao lâu trước lần dựng lại đầu tiên |
+| `max_restart_delay` | không | `30.0` | trần thời gian chờ; mỗi lần hỏng lại tăng gấp đôi tới mức này |
+| `single` | không | `False` | `True` = chỉ MỘT tiến trình chạy bản này, khoá theo `<name>:<key>`. Đặt khi nhiều worker uvicorn cùng nối tới một thiết bị |
+
+Chú ý `single` ở đây mặc định **`False`**, ngược với `@interval`/`@cron`/
+`@timeout`: worker thường gắn với một tài nguyên cụ thể (một camera, một kết
+nối) nên bốn tiến trình đọc bốn camera khác nhau là bình thường. Bốn tiến trình
+cùng đọc MỘT camera mới là vấn đề — lúc đó mới đặt `single=True`.
+
+Handler nhận `(self)`, `(self, data)`, `(self, ctx)`, hoặc `(self, data, ctx)`.
 
 ### Dừng nó, và dọn dẹp
 
@@ -500,6 +574,20 @@ Ba handler đó chạy **cùng lúc**. `OrderService` không biết chúng tồn
 một nơi nghe là thêm một method, không phải sửa chỗ phát.
 
 Log khởi động: `events.started listeners=3 events=['order.*', 'order.paid']`.
+
+### Tham số của `@on_event`
+
+| Tham số | Bắt buộc | Mặc định | Để làm gì |
+|---|---|---|---|
+| `pattern` | **có** | — | tên sự kiện muốn nghe: `"order.paid"`, `"order.*"`, `"camera.#"` |
+| `max_seconds` | không | `0.0` *(không giới hạn)* | trần cho MỘT lượt handler. Đáng đặt khi dùng `await bus.emit(...)` trong đường đi của request — bên phát đang CHỜ |
+| `thread` | không | `False` | `True` = chạy trong thread, hàm khai `def` thường. Dùng khi handler gọi hàm chặn (`requests.post`) |
+
+Handler nhận `(self)`, `(self, data)`, hoặc `(self, data, ctx)`. Chú kiểu `data`
+bằng model Pydantic thì payload được kiểm khuôn trước khi vào hàm.
+
+`APP_EVENTS__MAX_SECONDS` đặt trần mặc định cho mọi handler; giá trị khai ngay
+tại `@on_event` thắng.
 
 ### Chọn `emit` hay `dispatch`
 
@@ -762,48 +850,14 @@ trình lại nữa: mọi thread khung mở đều là daemon, nên quá hạn l
 
 ### Tham số của từng decorator
 
-```python
-@interval(
-    seconds,                # chu kỳ
-    *,
-    name="",                # tên hiển thị và tên KHOÁ; mặc định Class.method
-    single=True,            # chỉ một tiến trình chạy
-    run_on_startup=False,   # True = chạy ngay, không đợi hết một chu kỳ
-    jitter=0.0,             # cộng ngẫu nhiên 0..jitter giây vào mỗi lần chờ
-    max_seconds=None,       # trần thời gian MỘT lượt
-    thread=False,
-)
-
-@cron("0 3 * * *", *, timezone="UTC", name="", single=True,
-      max_seconds=None, thread=False)
-
-@timeout(seconds, *, name="", single=True, max_seconds=None, thread=False)
-
-@job(
-    name,                   # tên loại việc, dùng lúc submit; duy nhất trong app
-    *,
-    max_retries=0,          # thử lại NGAY TẠI CHỖ khi handler ném lỗi
-    retry_delay=1.0,
-    thread=False,
-)
-
-@worker(
-    name="",                # mặc định là Class.method
-    *,
-    thread=False,
-    restart=True,           # hỏng thì dựng lại
-    restart_delay=1.0,
-    max_restart_delay=30.0,
-    single=False,           # chỉ MỘT tiến trình chạy bản này
-)
-
-@on_event(
-    pattern,                # "order.paid", "order.*", "camera.#"
-    *,
-    thread=False,
-    max_seconds=0.0,        # 0 = không giới hạn
-)
-```
+Bảng đầy đủ nằm ngay trong mục của từng loại —
+[`@interval`](#tham-số-của-interval) ·
+[`@cron`](#tham-số-của-cron) ·
+[`@timeout`](#tham-số-của-timeout) ·
+[`@job`](#tham-số-của-job) ·
+[`@worker`](#tham-số-của-worker) ·
+[`@on_event`](#tham-số-của-on_event).
+Dưới đây chỉ là phần đối chiếu nhanh giữa sáu loại.
 
 Handler nhận được gì:
 

@@ -348,7 +348,7 @@ class SchedulerSettings(BaseModel):
 
     single: bool = True
     """Chỉ một tiến trình chạy mỗi lượt. Để True gần như mọi lúc: `fam run`
-    mặc định bật 4 worker, nên tắt cái này là việc chạy bốn lần."""
+    chạy nhiều worker thì tắt cái này là việc chạy bấy nhiêu lần."""
 
     lock_dir: str = ""
     """Thư mục chứa file khoá; để trống là dùng thư mục tạm của hệ điều hành.

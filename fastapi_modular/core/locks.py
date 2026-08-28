@@ -1,7 +1,7 @@
 """Khoá "chỉ một người chạy" — để việc định kỳ không chạy nhiều lần.
 
 Đây là lý do chính khiến `@interval` phải nằm trong khung chứ không phải tự
-viết trong dự án. `fam run` mặc định bật **4 worker**, tức 4 tiến trình Python
+viết trong dự án. `fam run --workers 4` chạy 4 tiến trình Python
 độc lập, mỗi tiến trình nạp đủ code của bạn. Một vòng `while True: sleep(5)`
 viết tay sẽ chạy **bốn lần mỗi 5 giây**: ghi log thành 4 bản, gọi API tốn 4 lần
 quota, cập nhật trạng thái camera thì bốn tiến trình ghi đè nhau.

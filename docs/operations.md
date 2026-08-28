@@ -314,5 +314,5 @@ biểu đồ thì cắm OpenTelemetry: `trace_id` đã đúng khuôn W3C nên n�
 | Guard không chặn gì cả | class guard thiếu `@injectable`, hoặc quên truyền vào `guards=[...]` |
 | Guard trả **500** thay vì **403** | guard ném lỗi lập trình (KeyError, AttributeError) chứ không phải `ForbiddenError` — đọc traceback, đừng sửa thành 403 |
 | `/metrics` trả 404 | sai đường dẫn — nó là `/api/metrics` (có tiền tố `/api`), và luôn bật, không có biến nào tắt |
-| Số đo luôn bằng 0 | đang soi tiến trình khác: `fam run` mặc định 4 worker, mỗi worker một bộ đếm riêng |
+| Số đo luôn bằng 0 | chạy nhiều worker (`fam run --workers N`) thì mỗi tiến trình một bộ đếm riêng — bạn đang soi tiến trình khác |
 | Log của một request nằm rải rác, không lần được | lọc theo `request_id`; đi xuyên nhiều dịch vụ thì lọc theo `trace_id` |

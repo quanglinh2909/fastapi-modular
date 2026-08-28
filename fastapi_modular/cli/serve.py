@@ -55,5 +55,9 @@ def serve(*, target: str, reload: bool, workers: int | None, host: str | None,
         # lần ghi file .db hay .env cũng khởi động lại server.
         uvicorn.run(target, host=host, port=port, reload=True, reload_dirs=[root])
     else:
-        uvicorn.run(target, host=host, port=port, workers=workers or 4)
+        # Mặc định MỘT tiến trình. Nhiều worker là quyết định của người triển
+        # khai, không phải mặc định êm ái: bốn tiến trình nghĩa là bốn bản
+        # `@interval`/`@worker` cùng chạy nếu quên khoá, bốn bộ đếm metrics
+        # riêng, và WebSocket không thấy nhau nếu chưa bật adapter Redis.
+        uvicorn.run(target, host=host, port=port, workers=workers or 1)
     return 0

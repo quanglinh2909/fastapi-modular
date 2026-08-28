@@ -127,7 +127,7 @@ fam: lệnh 'm' chưa rõ — khớp với migrate, module. Gõ thêm vài chữ
 | `fam init [--name <n>]` | `fam ini` | scaffold **into the current directory**; never overwrites; name defaults to the directory name |
 | `fam new <name>` | `fam n` | scaffold into a new directory |
 | `fam dev` | `fam d` | run with autoreload |
-| `fam run --workers 4` | `fam r` | run in production mode |
+| `fam run` | `fam r` | run in production mode (1 process; `--workers 4` for more) |
 | `fam module <name>` | `fam mo` | generate a module: controller + service + dto + entity |
 | `fam module <name> --gateway` | | plus a WebSocket gateway (`--consumer` for RabbitMQ) |
 | `fam module <name> --gateway-only` | | add a gateway to an **existing** module (`--consumer-only` for RabbitMQ) |
@@ -354,7 +354,7 @@ Write `while ctx.running:`, not `while True:` — a loop that never checks makes
 Ctrl+C look dead for the whole shutdown timeout. The framework says so at
 startup (`worker.endless_loop`) rather than letting you find out at 2am.
 
-`fam run` starts 4 workers, so a hand-written `while True: sleep(5)` runs
+`fam run --workers 4` starts 4 processes, so a hand-written `while True: sleep(5)` runs
 **four times**. `single=True` (the default) locks it down: measured 5 runs
 across 1 process, versus 20 runs across 4 with the lock off. The lock is
 `flock` (one machine) or Redis (many), picked automatically.

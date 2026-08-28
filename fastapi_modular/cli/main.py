@@ -3,7 +3,8 @@
     fam init                 dựng dự án ngay trong THƯ MỤC HIỆN TẠI
     fam new duan-cua-toi     dựng dự án trong một thư mục mới
     fam dev                  chạy kèm autoreload
-    fam run --workers 4      chạy chế độ production
+    fam run                  chạy chế độ production (1 tiến trình)
+    fam run --workers 4      bốn tiến trình — đọc lưu ý trong docs trước
     fam module alerts        sinh module nghiệp vụ
     fam provider sms viettel sinh provider cắm được
     fam install postgres     cài thư viện của một thành phần + ghi .env
@@ -139,7 +140,11 @@ def _main(argv: list[str] | None = None) -> int:
         p_serve.add_argument("--app", default="src.main:app", help="điểm vào ASGI")
         p_serve.add_argument("--host", help="mặc định lấy APP_HOST")
         p_serve.add_argument("--port", type=int, help="mặc định lấy APP_PORT")
-    p_run.add_argument("--workers", type=int, default=4)
+    p_run.add_argument(
+        "--workers", type=int, default=1,
+        help="số tiến trình; mặc định 1. Tăng lên thì đọc docs/background.md "
+             "(việc theo lịch) và docs/websocket.md (adapter Redis) trước",
+    )
 
     command.add_parser("info", help="cấu hình đang dùng và thư viện đã cài")
 

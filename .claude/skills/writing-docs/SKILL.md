@@ -15,6 +15,7 @@ muốn làm X thì viết thế nào" — không phải "cơ chế bên trong ra
 |---|---|---|
 | 1 | **Bạn đang cần làm gì?** | bảng "việc muốn làm" -> link mục. Câu chữ lấy từ miệng người dùng ("cứ 5 giây kiểm tra camera"), không phải tên kỹ thuật |
 | 2 | **Làm thế nào** | ví dụ chép-dán-chạy được: đủ import, đủ `@injectable`, ghi rõ file đặt ở đâu |
+| 2b | **Tham số** | ngay dưới ví dụ, MỘT bảng cho mỗi loại: `Tham số \| Bắt buộc \| Mặc định \| Để làm gì`. Đừng dồn tham số của sáu loại vào một bảng ở cuối trang — người đọc đang ở mục nào thì cần bảng của mục đó |
 | 3 | **Kiểm xem nó chạy chưa** | dòng log phải thấy, và "không thấy dòng này nghĩa là..." |
 | 4 | **Lưu ý** | từng cái bẫy một, mỗi cái mở đầu bằng câu mệnh lệnh in đậm, đặt NGAY CẠNH chỗ người ta sẽ vấp |
 | 5 | **Hỏng thì tra ở đây** | bảng *triệu chứng -> nguyên nhân*, tra bằng thứ người ta NHÌN THẤY |
@@ -34,6 +35,12 @@ muốn làm X thì viết thế nào" — không phải "cơ chế bên trong ra
   số theo cảm giác và cả hai lần sai hơn 3 lần.
 - Đừng mô tả nội bộ trừ khi người dùng phải làm gì đó khác đi vì nó.
 - Con số viết tay (số test, số biến) phải đo lại trước khi giữ nguyên.
+- **Mặc định trong bảng tham số phải đọc từ `inspect.signature`, không gõ tay.**
+  Viết script so bảng với chữ ký thật rồi chạy — nó đã bắt được một chỗ lệch
+  ngay lần đầu.
+- **Đừng dựa vào neo trùng tên** (`#tham-số-3` sinh ra từ sáu mục cùng tên
+  "Tham số"): thêm một mục nữa là mọi số dịch đi trong im lặng. Đặt tiêu đề
+  riêng — "Tham số của `@job`".
 - Sửa trang cũ thì chuyển trang đó sang khung này; đừng viết trang mới theo lối cũ.
 
 ## Trước khi nói "xong": 5 phép kiểm, viết script mà chạy

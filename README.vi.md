@@ -118,7 +118,7 @@ fam: lệnh 'm' chưa rõ — khớp với migrate, module. Gõ thêm vài chữ
 | `fam init [--name <tên>]` | `fam ini` | dựng dự án **trong thư mục hiện tại**, không ghi đè file nào đã có; tên dự án mặc định lấy theo tên thư mục |
 | `fam new <tên>` | `fam n` | dựng dự án trong một thư mục mới |
 | `fam dev` | `fam d` | chạy kèm autoreload |
-| `fam run --workers 4` | `fam r` | chạy chế độ production |
+| `fam run` | `fam r` | chạy chế độ production (1 tiến trình; `--workers 4` để nhiều hơn) |
 | `fam module <tên>` | `fam mo` | sinh module: controller + service + dto + entity |
 | `fam module <tên> --gateway` | | kèm gateway WebSocket (`--consumer` cho RabbitMQ) |
 | `fam module <tên> --gateway-only` | | chỉ thêm gateway vào module **đã có** (`--consumer-only` cho RabbitMQ) |
@@ -348,7 +348,7 @@ Viết `while ctx.running:`, đừng viết `while True:` — vòng lặp không
 làm Ctrl+C trông như chết suốt cả thời gian chờ tắt. Khung kêu ngay lúc khởi
 động (`worker.endless_loop`) chứ không để bạn phát hiện lúc 2 giờ sáng.
 
-`fam run` bật 4 worker, nên một vòng `while True: sleep(5)` viết tay sẽ chạy
+`fam run --workers 4` chạy 4 tiến trình, nên một vòng `while True: sleep(5)` viết tay sẽ chạy
 **bốn lần**. Mặc định `single=True` khoá lại: đo được 5 lượt / 1 tiến trình,
 so với 20 lượt / 4 tiến trình khi tắt khoá. Khoá dùng `flock` (một máy) hoặc
 Redis (nhiều máy), tự chọn.
