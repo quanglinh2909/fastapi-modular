@@ -973,7 +973,7 @@ class CameraService:
 | `exists(**equals, match=)` | Có hay không |
 | `save(obj)` | Upsert, tự sinh id nếu chưa có |
 | `update(id, changes, **set)` | **Sửa một bản ghi** (nhận cả DTO), trả về chính nó — [xem dưới](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
-| `update_where(dieu_kien, changes, **set)` | Sửa nhiều theo điều kiện, trả **danh sách** bản ghi đã sửa |
+| `update_where(dieu_kien, changes, **set)` | Sửa nhiều theo điều kiện, trả số dòng khớp |
 | `delete(id)` | Xoá một, trả `True/False` |
 | `delete_where(**equals, match=)` | Xoá nhiều, trả số bản ghi |
 | `query()` | Builder cho JOIN, lớn/bé, NULL — xem [mục dưới](#truy-vấn-phức-tạp--join-lớnbé-null) |
@@ -1013,25 +1013,20 @@ await cameras.update("cam-01", payload, status="offline")  # trộn
 > Gửi `null` tường minh thì vẫn xoá được cột — `null` đã gửi là đã "set".
 
 **Sửa nhiều dòng theo điều kiện** là hàm còn lại, `update_where` — cùng cặp với
-`delete` / `delete_where`. Nó trả về **danh sách các bản ghi đã sửa**:
+`delete` / `delete_where`:
 
 ```python
 # mọi camera ở Tầng 1 chuyển sang offline
-da_sua = await cameras.update_where({"zone": "Tầng 1"}, status="offline")
-for cam in da_sua:
-    await self._events.emit("camera.offline", {"id": cam.id})
+so_dong = await cameras.update_where({"zone": "Tầng 1"}, status="offline")
 
 # nhiều điều kiện = AND
 await cameras.update_where({"zone": "T1", "status": "online"}, threshold=0.9)
 ```
 
-Không dòng nào khớp thì trả `[]` — không phải `None`, nên lặp thẳng được mà
-không phải kiểm trước. Cần số lượng thì `len(...)`.
-
 | Hàm | Điều kiện | Trả về |
 |---|---|---|
 | `update(id, …)` | **một id** (chuỗi) | bản ghi đã sửa, hoặc `None` |
-| `update_where(dieu_kien, …)` | **dict/DTO**, so bằng | **danh sách** bản ghi đã sửa (`[]` nếu không khớp) |
+| `update_where(dieu_kien, …)` | **dict/DTO**, so bằng | số dòng khớp |
 
 > **Truyền nhầm giữa hai hàm thì IDE gạch đỏ ngay lúc gõ**, vì kiểu tham số đầu
 > khác nhau. `update({"zone": "T1"}, ...)` sẽ nhận
@@ -1059,13 +1054,9 @@ lỗi lập trình chứ không phải ý định sửa cả bảng. Cố ý th�
 await cameras.update_where({}, zone="X", match=lambda _: True)
 ```
 
-**Sửa bao nhiêu dòng thì đọc về bấy nhiêu bản ghi.** Với SQL vẫn là MỘT câu
-(`UPDATE ... RETURNING *`), nhưng 100.000 dòng nghĩa là 100.000 bản ghi nằm
-trong RAM; MongoDB còn tốn ba lượt vì không có `RETURNING`. Sửa hàng loạt rất
-lớn mà không cần dữ liệu trả về thì chia mẻ theo điều kiện hẹp hơn.
-
-**Thứ tự các bản ghi trả về không bảo đảm.** Database trả theo thứ tự nào là
-việc của nó — cần thứ tự thì sắp lại, hoặc `find(...)` sau đó.
+**`update_where` trả số dòng chứ không trả dữ liệu.** Cố ý: một câu lệnh có thể
+khớp hàng trăm nghìn dòng, đọc hết về chỉ để trả cho người gọi là thứ không nên
+xảy ra ngầm. Cần dữ liệu thì `find(...)` sau đó.
 
 **Điều kiện của `update_where` chỉ so BẰNG.** Cần `>=`, `LIKE`, `IN` thì lọc
 bằng [`query()`](#truy-vấn-phức-tạp--join-lớnbé-null) rồi `update` theo từng id,
@@ -1089,7 +1080,7 @@ làm cho giống hệt.
 | `update` sửa MỘT bản ghi theo id nên tham số đầu phải là chuỗi | như trên, lúc chạy |
 | `update_where` nhận điều kiện dạng dict hoặc DTO | ngược lại: đang truyền id cho `update_where` — dùng `update(id, ...)` |
 | `update` trả `None` | không có bản ghi nào mang id đó (không phải lỗi ghi) |
-| `update_where` trả `[]` | không dòng nào khớp điều kiện |
+| `update_where` trả `0` | không dòng nào khớp điều kiện |
 | Sửa một field mà các field khác **thành `null`** | đã tự `payload.model_dump()` — truyền thẳng `payload` vào |
 | `… không có trường 'x'` | gõ sai tên cột; khung chặn thay vì báo "đã sửa" rồi không sửa gì |
 | `… không có giá trị nào để ghi` | DTO không có field nào được gửi lên, hoặc quên truyền giá trị |

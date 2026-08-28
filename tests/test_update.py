@@ -140,7 +140,7 @@ async def test_id_khong_ton_tai_thi_tra_ve_None(kho):
 async def test_update_nhieu_dong_theo_cot_khac(kho):
     """Chính là việc người dùng cần: một câu lệnh sửa mọi dòng khớp điều kiện."""
     cameras, _, _ = kho
-    assert len(await cameras.update_where({"zone": "T1"}, status=UpStatus.ON)) == 2
+    assert await cameras.update_where({"zone": "T1"}, status=UpStatus.ON) == 2
 
     assert [r.status for r in await cameras.find(zone="T1")] == [UpStatus.ON] * 2
     assert (await cameras.get("c3")).zone == "T2", "vùng khác không bị đụng"
@@ -148,15 +148,14 @@ async def test_update_nhieu_dong_theo_cot_khac(kho):
 
 async def test_dieu_kien_nhieu_cot_la_AND(kho):
     cameras, _, _ = kho
-    assert len(await cameras.update_where({"zone": "T1", "name": "Kho"}, threshold=0.7)) == 1
+    assert await cameras.update_where({"zone": "T1", "name": "Kho"}, threshold=0.7) == 1
     assert (await cameras.get("c2")).threshold == 0.7
     assert (await cameras.get("c1")).threshold == 0.5
 
 
-async def test_khong_khop_dong_nao_thi_tra_ve_list_rong(kho):
-    """`[]` chứ không phải `None` — lặp thẳng được, không phải kiểm trước."""
+async def test_khong_khop_dong_nao_thi_tra_ve_0(kho):
     cameras, _, _ = kho
-    assert await cameras.update_where({"zone": "KHONG-CO"}, name="x") == []
+    assert await cameras.update_where({"zone": "KHONG-CO"}, name="x") == 0
 
 
 async def test_ghi_dung_gia_tri_dang_co_van_dem_la_mot_dong(kho):
@@ -173,7 +172,7 @@ async def test_ghi_dung_gia_tri_dang_co_van_dem_la_mot_dong(kho):
     # Phải ghim CẢ `updated_at`, nếu không dấu thời gian mới làm document đổi
     # thật và `modified_count` cũng thành 1 — phép kiểm sẽ xanh dù code sai.
     # Đo trên Mongo thật: matched=1, modified=0 khi không có gì đổi.
-    assert len(await cameras.update_where({"id": "c2"}, name="Kho", updated_at=row.updated_at)) == 1
+    assert await cameras.update_where({"id": "c2"}, name="Kho", updated_at=row.updated_at) == 1
 
 
 # ----------------------------------------------------------------- kiểu dữ liệu
@@ -250,32 +249,6 @@ async def test_update_theo_id_chi_ton_MOT_cau_lenh(tmp_path):
     await backend.shutdown()
 
 
-async def test_update_where_tra_ve_chinh_cac_ban_ghi_da_sua(kho):
-    cameras, _, _ = kho
-
-    rows = await cameras.update_where({"zone": "T1"}, status=UpStatus.ON)
-
-    assert sorted(r.id for r in rows) == ["c1", "c2"]
-    assert {r.status for r in rows} == {UpStatus.ON}, "phải là giá trị MỚI"
-    assert all(r.zone == "T1" for r in rows), "các cột khác đọc được như thường"
-
-
-async def test_sua_dung_cot_dang_LOC_van_tra_ve_du(kho):
-    """Ca dễ sai nhất: đọc lại bằng chính điều kiện cũ sẽ ra rỗng.
-
-    Mongo không có `RETURNING` nên phải lấy `_id` TRƯỚC rồi mới sửa; đọc lại
-    bằng `{"zone": "T1"}` sau khi đã đổi zone thì không còn document nào khớp,
-    và hàm sẽ báo "không sửa được gì" dù vừa sửa xong.
-    """
-    cameras, _, _ = kho
-
-    rows = await cameras.update_where({"zone": "T1"}, zone="T9")
-
-    assert len(rows) == 2
-    assert {r.zone for r in rows} == {"T9"}
-    assert len(await cameras.find(zone="T1")) == 0
-
-
 # ---------------------------------------------------------------- truyền DTO
 async def test_truyen_thang_DTO(kho):
     """Không phải `payload.model_dump()` nữa — DTO đi thẳng vào."""
@@ -322,7 +295,7 @@ async def test_DTO_gop_duoc_voi_kwargs(kho):
 async def test_where_cung_nhan_DTO(kho):
     """Hợp với bộ lọc sinh bằng `partial_of(...)`."""
     cameras, _, _ = kho
-    assert len(await cameras.update_where(UpCameraUpdate(zone="T1"), status=UpStatus.ON)) == 2
+    assert await cameras.update_where(UpCameraUpdate(zone="T1"), status=UpStatus.ON) == 2
 
 
 async def test_where_la_DTO_bo_qua_field_khong_gui_KE_CA_khi_mac_dinh_khac_None(kho):
@@ -339,7 +312,7 @@ async def test_where_la_DTO_bo_qua_field_khong_gui_KE_CA_khi_mac_dinh_khac_None(
 
     cameras, _, _ = kho
 
-    assert len(await cameras.update_where(BoLoc(zone="T1"), threshold=0.8)) == 2
+    assert await cameras.update_where(BoLoc(zone="T1"), threshold=0.8) == 2
 
 
 async def test_DTO_rong_bi_chan_va_noi_ro_vi_sao(kho):
@@ -408,7 +381,7 @@ async def test_khong_co_gia_tri_nao_bi_chan(kho):
 
 async def test_co_y_sua_ca_bang_thi_noi_ro_bang_match(kho):
     cameras, _, _ = kho
-    assert len(await cameras.update_where({}, zone="X", match=lambda _: True)) == 3
+    assert await cameras.update_where({}, zone="X", match=lambda _: True) == 3
     assert {r.zone for r in await cameras.find()} == {"X"}
 
 

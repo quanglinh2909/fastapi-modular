@@ -22,10 +22,8 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
   `find_one_and_update` (Mongo). Bản trả về đọc từ database sau khi ghi, không
   phải bản trong bộ nhớ.
 
-  `update_where` trả **danh sách các bản ghi đã sửa** (`[]` nếu không khớp dòng
-  nào). Với SQL vẫn là một câu `UPDATE ... RETURNING *`; MongoDB tốn ba lượt vì
-  không có `RETURNING` — và phải lấy `_id` TRƯỚC khi sửa, nếu không thì đọc lại
-  bằng điều kiện cũ sẽ rỗng đúng lúc bạn sửa chính cột đang lọc.
+  `update_where` trả **số dòng khớp** chứ không trả dữ liệu, cố ý: một câu lệnh
+  có thể khớp hàng trăm nghìn dòng.
 
   Giá trị truyền bằng dict, kwargs, hay **thẳng DTO của PATCH**:
 

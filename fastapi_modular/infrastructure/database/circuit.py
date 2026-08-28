@@ -221,7 +221,7 @@ class CircuitBreakerBackend(DatabaseBackend):
 
     async def update_where(
         self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None
-    ) -> list[E]:
+    ) -> int:
         return await self._call(
             "update_where", entity, filters=filters, changes=changes, match=match
         )

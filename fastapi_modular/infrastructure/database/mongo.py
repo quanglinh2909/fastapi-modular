@@ -377,29 +377,27 @@ class MongoBackend(DatabaseBackend):
 
     async def update_where(
         self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None
-    ) -> list[E]:
-        """`update_many` rồi đọc lại các document vừa sửa.
+    ) -> int:
+        """`update_many` với `$set`.
 
-        Mongo không có `RETURNING`, nên phải ba lượt: lấy `_id` khớp điều kiện,
-        sửa theo đúng danh sách đó, rồi đọc lại. Không đọc lại bằng chính điều
-        kiện cũ được — sửa đúng cột đang lọc thì sau khi ghi nó không còn khớp,
-        và kết quả sẽ rỗng dù đã sửa xong.
+        Đếm bằng `matched_count` chứ KHÔNG phải `modified_count`: ghi đúng giá
+        trị đang có thì Mongo coi là không sửa gì và trả 0, trong khi SQL vẫn
+        đếm dòng đã khớp. Lấy `matched_count` để ba backend cho cùng con số.
         """
         if match is not None:
             ids = [obj.id for obj in await self.find(entity, filters=filters, match=match)]  # type: ignore[attr-defined]
+            if not ids:
+                return 0
+            query = {"_id": {"$in": ids}}
         else:
             query = self._query(entity, filters)
-            ids = [doc["_id"] async for doc in self._collection(entity).find(query, {"_id": 1})]
-        if not ids:
-            return []
 
+        # Giá trị đã qua `bind_value` ở Repository (Enum -> .value), tức đúng
+        # thứ `to_document` làm lúc save. Không cần đổi gì thêm.
         doc = dict(changes)
         await self._check_fk_changes(entity, doc)
-        await self._collection(entity).update_many({"_id": {"$in": ids}}, {"$set": doc})
-        return [
-            from_document(entity, _from_mongo(d))
-            async for d in self._collection(entity).find({"_id": {"$in": ids}})
-        ]
+        result = await self._collection(entity).update_many(query, {"$set": doc})
+        return int(result.matched_count)
 
     async def delete_where(
         self, entity: type[E], *, filters: Filters, match: Match = None

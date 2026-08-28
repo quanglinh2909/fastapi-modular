@@ -331,33 +331,23 @@ class Repository(Generic[E]):
         *,
         match: Callable[[E], bool] | None = None,
         **set_fields: Any,
-    ) -> list[E]:
-        """Sửa MỌI bản ghi khớp điều kiện, trả về chính các bản ghi đã sửa.
+    ) -> int:
+        """Sửa MỌI bản ghi khớp điều kiện. Trả về số dòng khớp.
 
             # mọi camera ở Tầng 1 chuyển sang offline
-            da_sua = await cameras.update_where({"zone": "Tầng 1"}, status="offline")
-            for cam in da_sua:
-                ...
+            so_dong = await cameras.update_where({"zone": "Tầng 1"}, status="offline")
 
             # nhiều điều kiện = AND
             await cameras.update_where({"zone": "T1", "status": "online"}, threshold=0.9)
-
-        Không dòng nào khớp thì trả về `[]` — không phải `None`, nên lặp thẳng
-        được mà không phải kiểm trước. Cần số lượng thì `len(...)`.
 
         Điều kiện chỉ so BẰNG, trên bất kỳ trường nào; `where` nhận cả DTO (hợp
         với bộ lọc sinh bằng `partial_of(...)`). Cần `>=`, `LIKE`, `IN` thì lọc
         bằng `.query()` rồi `update` theo từng id, hoặc truyền `match=` (lọc
         bằng Python nên phải đọc dòng về trước).
 
-        **Thứ tự các bản ghi trả về không bảo đảm** — database trả theo thứ tự
-        nào là việc của nó. Cần thứ tự thì sắp lại, hoặc `find(...)` sau đó.
-
-        **Sửa bao nhiêu dòng thì đọc về bấy nhiêu bản ghi.** Với SQL đó vẫn là
-        MỘT câu (`UPDATE ... RETURNING *`), nhưng 100.000 dòng nghĩa là 100.000
-        bản ghi nằm trong RAM. Mongo còn tốn ba lượt vì không có `RETURNING`.
-        Sửa hàng loạt rất lớn mà không cần dữ liệu trả về thì chia mẻ theo
-        điều kiện hẹp hơn.
+        **Trả về số dòng chứ không trả dữ liệu**, cố ý: một câu lệnh có thể khớp
+        hàng trăm nghìn dòng, và đọc hết chúng về chỉ để trả cho người gọi là
+        thứ không ai muốn xảy ra ngầm. Cần dữ liệu thì `find(...)` sau đó.
 
         **`where` rỗng bị chặn**, vì gần như luôn là lỗi lập trình chứ không
         phải ý định sửa cả bảng. Thật sự muốn sửa hết thì nói rõ:
