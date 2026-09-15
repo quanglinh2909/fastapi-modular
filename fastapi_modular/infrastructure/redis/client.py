@@ -24,7 +24,9 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
+from fastapi_modular.core.compat import TimeoutErrors
 from fastapi_modular.core.config import Settings
+from fastapi_modular.core.connection import ConnectionEvents, connection_decorator
 from fastapi_modular.core.container import injectable
 from fastapi_modular.core.exceptions import ComponentNotEnabledError, ServiceUnavailableError
 from fastapi_modular.core.logging import get_logger
@@ -55,6 +57,19 @@ PUBSUB_HEALTH_CHECK_SECONDS = 30
 
 # Giá trị "không có gì" phải phân biệt được với None đã lưu thật.
 _MISSING = object()
+
+#: Gọi method mỗi khi nối được Redis / mỗi khi đứt. redis-py tự nối lại mà
+#: không báo gì, nên khung chạy thêm một vòng PING — xem `RedisClient._health_loop`.
+redis_on_connect = connection_decorator("redis", "connect")
+redis_on_disconnect = connection_decorator("redis", "disconnect")
+
+
+def _is_connection_error(exc: BaseException) -> bool:
+    """Lỗi của ĐƯỜNG TRUYỀN, khác lỗi của LỆNH (WRONGTYPE, sai cú pháp)."""
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    from redis.exceptions import TimeoutError as RedisTimeoutError
+
+    return isinstance(exc, (RedisConnectionError, RedisTimeoutError, OSError, *TimeoutErrors))
 
 
 def _require_redis() -> Any:
@@ -95,6 +110,8 @@ class RedisClient:
         self._rpc_channels: set[str] = set()
         self._rpc_lock = asyncio.Lock()
         self._pubsub_client: Any = None
+        self._events = ConnectionEvents("redis")
+        self._health_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------- vòng đời
     @property
@@ -103,7 +120,13 @@ class RedisClient:
 
     @property
     def connected(self) -> bool:
-        return self._client is not None and self._healthy
+        """Đường truyền tới Redis đang sống — cùng nguồn với `broker_status("redis")`.
+
+        KHÔNG đọc `_healthy`: cờ đó lật cả khi một LỆNH hỏng (sai kiểu khoá), mà
+        một lệnh gõ sai không có nghĩa là Redis đứt. Hai chỗ báo hai trạng thái
+        khác nhau thì người đọc không biết tin cái nào.
+        """
+        return self._client is not None and self._events.connected
 
     @property
     def url(self) -> str:
@@ -123,6 +146,7 @@ class RedisClient:
             log.info("redis.default_url", url=DEFAULT_URL, hint="chưa đặt APP_REDIS__URL?")
 
         self._closing = False
+        self._events.start(url=self.url)
         self._client = redis_asyncio.from_url(
             self._config.url,
             socket_connect_timeout=self._config.connect_timeout_seconds,
@@ -133,6 +157,7 @@ class RedisClient:
         if await self._try_ping():
             log.info("redis.connected", url=self.url)
             await self._run_hooks()
+            self._start_health_check()
             return
 
         log.warning(
@@ -147,9 +172,9 @@ class RedisClient:
             await self._client.ping()
         except Exception as exc:  # noqa: BLE001 - mọi lỗi đều dẫn tới cùng một việc: thử lại
             log.warning("redis.connect_failed", url=self.url, error=f"{type(exc).__name__}: {exc}")
-            self._healthy = False
+            self._mark(False, exc)
             return False
-        self._healthy = True
+        self._mark(True)
         return True
 
     async def _reconnect_forever(self) -> None:
@@ -161,8 +186,61 @@ class RedisClient:
             if await self._try_ping():
                 log.info("redis.recovered", url=self.url)
                 await self._run_hooks()
+                self._start_health_check()
                 return
             delay = min(delay * 2, self._config.max_reconnect_delay_seconds)
+
+    def _mark(self, healthy: bool, error: BaseException | None = None) -> None:
+        """Ghi trạng thái, và báo cho `@redis_on_connect` / `@redis_on_disconnect`.
+
+        Lỗi của LỆNH (sai kiểu khoá, sai cú pháp) KHÔNG tính là đứt: đường truyền
+        vẫn sống. `connected`, `broker_status()` và handler "offline" đều đọc
+        trạng thái đường truyền, nên một lệnh gõ sai không làm chúng báo động
+        giả. `_healthy` thì vẫn lật như trước — vòng nối lại dựa vào nó.
+        """
+        self._healthy = healthy
+        if healthy:
+            self._events.mark_connected(url=self.url)
+        elif error is None or _is_connection_error(error):
+            self._events.mark_disconnected(error, url=self.url)
+
+    def _start_health_check(self) -> None:
+        """Bật vòng PING — chạy suốt khi Redis bật, `health_check_seconds=0` thì thôi.
+
+        Chạy cả khi không ai khai `@redis_on_*`: `broker_status()` đọc trạng thái
+        từ RAM, và không có vòng này thì app đang rảnh sẽ báo "đang nối" mãi dù
+        Redis đã chết. Một PING mỗi vài giây không đáng kể.
+
+        Bật sau lần nối ĐẦU TIÊN chứ không phải ngay lúc khởi động: nếu vòng này
+        ping được trước `_reconnect_forever`, nó đặt `_healthy=True` và vòng
+        nối lại thoát mà không chạy `on_ready` — pub/sub không bao giờ được bật.
+        """
+        if self._config.health_check_seconds <= 0:
+            return
+        if self._health_task is None or self._health_task.done():
+            self._health_task = asyncio.create_task(self._health_loop(), name="redis-health")
+
+    async def _health_loop(self) -> None:
+        """PING định kỳ. Cần vì redis-py nối lại ngầm ở lệnh kế tiếp và không
+        báo gì: app đang rảnh thì đứt bao lâu cũng không ai biết."""
+        while not self._closing:
+            await asyncio.sleep(self._config.health_check_seconds)
+            if self._closing:
+                return
+            was_healthy = self._healthy
+            try:
+                await self._client.ping()
+            except Exception as exc:  # noqa: BLE001 - ping hỏng kiểu gì cũng là đứt
+                if was_healthy:
+                    log.warning(
+                        "redis.connection_lost", url=self.url, error=f"{type(exc).__name__}: {exc}"
+                    )
+                self._healthy = False
+                self._events.mark_disconnected(exc, url=self.url)
+            else:
+                if not was_healthy:
+                    log.info("redis.reconnected", url=self.url)
+                self._mark(True)
 
     def on_ready(self, hook: Callable[[], Awaitable[None]]) -> None:
         """Việc cần làm lại sau mỗi lần nối được — pub/sub dùng để đăng ký lại kênh."""
@@ -182,6 +260,12 @@ class RedisClient:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._supervisor
             self._supervisor = None
+        if self._health_task is not None:
+            self._health_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._health_task
+            self._health_task = None
+        await self._events.close()
         if self._client is not None:
             with contextlib.suppress(Exception):
                 await self._client.aclose()
@@ -214,9 +298,9 @@ class RedisClient:
             result = await run(client)
         except Exception as exc:
             redis_error.inc(command=op)
-            self._healthy = False
+            self._mark(False, exc)
             raise ServiceUnavailableError(f"Redis lỗi khi chạy {op}: {exc}") from exc
-        self._healthy = True
+        self._mark(True)
         return result
 
     # ---------------------------------------------------------- khoá/giá trị
@@ -282,9 +366,9 @@ class RedisClient:
                 delete += int(await client.delete(*batch))
         except Exception as exc:
             redis_error.inc(command="scan")
-            self._healthy = False
+            self._mark(False, exc)
             raise ServiceUnavailableError(f"Redis lỗi khi quét khoá: {exc}") from exc
-        self._healthy = True
+        self._mark(True)
         return delete
 
     async def exists(self, key: str) -> bool:

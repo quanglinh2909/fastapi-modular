@@ -25,6 +25,8 @@ from fastapi_modular.factory import create_app
 from fastapi_modular.infrastructure.rabbitmq import (
     PermanentMessageError,
     RabbitBroker,
+    rabbitmq_on_connect,
+    rabbitmq_on_disconnect,
     rabbitmq_responder,
     rabbitmq_subscriber,
 )
@@ -109,6 +111,44 @@ def publish(client: TestClient, routing_key: str, data: dict, exchange: str = "e
     )
     assert response.status_code == 200, response.text
     assert response.json()["published"] is True
+
+
+# ------------------------------------------------------------ nối / đứt
+CONNECTION_EVENTS: list[tuple[str, dict]] = []
+
+
+@injectable
+class RabbitmqConnectionLog:
+    @rabbitmq_on_connect
+    async def online(self, info: dict) -> None:
+        CONNECTION_EVENTS.append(("connect", info))
+
+    @rabbitmq_on_disconnect
+    async def offline(self, info: dict) -> None:
+        CONNECTION_EVENTS.append(("disconnect", info))
+
+
+def test_noi_duoc_thi_bao_on_connect_va_tat_app_khong_bao_dut(mq_settings: Settings):
+    CONNECTION_EVENTS.clear()
+    with TestClient(create_app(mq_settings)):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not CONNECTION_EVENTS:
+            time.sleep(0.05)
+        assert CONNECTION_EVENTS and CONNECTION_EVENTS[0][0] == "connect"
+        assert CONNECTION_EVENTS[0][1]["reconnect"] is False
+    assert [name for name, _ in CONNECTION_EVENTS] == ["connect"], "tắt app không phải mất kết nối"
+
+
+async def test_broker_chua_len_thi_khong_bao_gi_ca():
+    CONNECTION_EVENTS.clear()
+    broker = RabbitBroker(
+        Settings(APP_RABBITMQ=RabbitSettings(enabled=True, url="amqp://guest:guest@localhost:1/",
+                                             connect_timeout_seconds=0.5))
+    )
+    await broker.startup()
+    await anyio.sleep(0.5)
+    await broker.shutdown()
+    assert CONNECTION_EVENTS == []
 
 
 # --------------------------------------------------------------- kết nối

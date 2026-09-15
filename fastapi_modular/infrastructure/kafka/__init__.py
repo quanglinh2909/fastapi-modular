@@ -9,7 +9,11 @@ dùng thì để `APP_KAFKA__ENABLED=false` (mặc định).
 
 from __future__ import annotations
 
-from fastapi_modular.infrastructure.kafka.broker import KafkaBroker
+from fastapi_modular.infrastructure.kafka.broker import (
+    KafkaBroker,
+    kafka_on_connect,
+    kafka_on_disconnect,
+)
 from fastapi_modular.infrastructure.kafka.consumers import (
     KafkaRunner,
     PermanentMessageError,
@@ -29,6 +33,8 @@ __all__ = [
     "PermanentMessageError",
     "discover_kafka_responders",
     "discover_kafka_subscribers",
+    "kafka_on_connect",
+    "kafka_on_disconnect",
     "kafka_responder",
     "kafka_subscriber",
 ]

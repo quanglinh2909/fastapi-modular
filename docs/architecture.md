@@ -20,6 +20,7 @@ fastapi_modular/                     THƯ VIỆN — thứ được đóng gói,
 │   ├── lifespan.py            mở/đóng database và hạ tầng (ứng dụng BỌC lại, không sửa)
 │   ├── schemas.py             Page[T]
 │   ├── rpc.py                 khuôn tin emit/send tương thích NestJS (dùng chung mọi hạ tầng)
+│   ├── connection.py          @<hạ tầng>_on_connect / _on_disconnect (dùng chung mọi hạ tầng)
 │   ├── scheduler.py           @interval / @cron / @timeout + SchedulerRunner
 │   ├── cron.py                đọc biểu thức cron 5 trường
 │   ├── jobs.py                @job + JobQueue: hàng đợi việc trong tiến trình
@@ -334,7 +335,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 1163 test trên backend memory (424 test nữa cần hạ tầng hoặc driver thật)
+fam test       # 1182 test trên backend memory (432 test nữa cần hạ tầng hoặc driver thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

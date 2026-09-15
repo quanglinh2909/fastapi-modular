@@ -48,6 +48,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from fastapi_modular.core.clock import utcnow
 from fastapi_modular.core.compat import TimeoutErrors
 from fastapi_modular.core.config import Settings
+from fastapi_modular.core.connection import ConnectionEvents, connection_decorator
 from fastapi_modular.core.container import injectable
 from fastapi_modular.core.exceptions import (
     BadRequestError,
@@ -81,6 +82,11 @@ DEFAULT_URL = "amqp://guest:guest@localhost:5672/"
 # không phải của cả ứng dụng: giá trị đúng phụ thuộc handler chạy nhanh hay
 # chậm, payload nặng hay nhẹ. Đè bằng @rabbitmq_subscriber(prefetch=...).
 DEFAULT_PREFETCH = 20
+
+#: Gọi method mỗi khi nối được broker (lần đầu và mỗi lần aio-pika nối lại) /
+#: mỗi khi đứt. Luật lọc trùng nằm ở `core/connection.py`.
+rabbitmq_on_connect = connection_decorator("rabbitmq", "connect")
+rabbitmq_on_disconnect = connection_decorator("rabbitmq", "disconnect")
 
 
 def _require_aio_pika() -> Any:
@@ -156,6 +162,7 @@ class RabbitBroker:
         self._ready_hooks: list[Callable[[], Awaitable[None]]] = []
         self._supervisor: asyncio.Task[None] | None = None
         self._closing = False
+        self._events = ConnectionEvents("rabbitmq")
 
     # ------------------------------------------------------------- vòng đời
     @property
@@ -203,6 +210,7 @@ class RabbitBroker:
             )
 
         self._closing = False
+        self._events.start(url=self.url)
         if await self._try_connect():
             return
 
@@ -254,6 +262,7 @@ class RabbitBroker:
         connection.close_callbacks.add(self._on_close)
 
         log.info("mq.connected", url=self.url)
+        self._events.mark_connected(url=self.url)
         await self._run_hooks()
 
     async def _reconnect_forever(self) -> None:
@@ -270,6 +279,7 @@ class RabbitBroker:
 
     def _on_reconnect(self, _sender: Any) -> Any:
         log.info("mq.reconnected", url=self.url)
+        self._events.mark_connected(url=self.url)
         # Trả về coroutine: aio-pika await nếu callback là bất đồng bộ.
         return self._run_hooks()
 
@@ -277,6 +287,7 @@ class RabbitBroker:
         if self._closing:
             return
         log.warning("mq.connection_lost", url=self.url, error=str(exc) if exc else None)
+        self._events.mark_disconnected(exc, url=self.url)
         # Kênh RPC chết theo kết nối, và hàng đợi trả lời `amq.rabbitmq.reply-to`
         # KHÔNG sống sót qua lần nối lại — nó gắn với đúng một kênh. Ai đang chờ
         # thì câu trả lời của họ chắc chắn không bao giờ tới nữa; đánh thức ngay
@@ -317,6 +328,7 @@ class RabbitBroker:
         self._pending.cancel_all()
         self._exchanges.clear()
         self._exchange_kinds.clear()
+        await self._events.close()
 
     def _ready(self) -> None:
         if not self._config.enabled:

@@ -27,9 +27,35 @@ Hai việc làm được: **gửi tin** (`MqttClient.publish`) và **nghe topic*
 | "**Không được mất tin** lúc deploy / mất mạng" | [Mức QoS](#mức-qos) + `CLEAN_SESSION` trong [Tra cứu](#tra-cứu) |
 | "Gửi rồi **chờ thiết bị trả lời**" | [rpc.md](rpc.md) — `mqtt.send()` + `@mqtt_responder` |
 | "Broker chết thì app có chết theo không" | [Khi broker chưa lên](#khi-broker-chưa-lên) |
+| "Broker **đứt thì cảnh báo**, nối lại thì báo gateway online" | [Biết khi nào mất kết nối](#biết-khi-nào-mất-kết-nối) |
+| "Hỏi **broker có đang nối không** — gọi liên tục cũng nhẹ" | [Hỏi trạng thái lúc này](#hỏi-trạng-thái-lúc-này) |
 | "Bảng biến, số đo" | [Tra cứu](#tra-cứu) |
 
 ## Gửi tin
+
+Tiêm `MqttClient` qua `__init__` như mọi provider, rồi gọi `publish`:
+
+```python
+# src/api/thiet_bi/device_service.py
+from fastapi_modular import injectable
+from fastapi_modular.infrastructure.mqtt import MqttClient
+
+
+@injectable
+class DeviceService:
+    def __init__(self, mqtt: MqttClient) -> None:
+        self._mqtt = mqtt
+
+    async def turn_on_light(self, room: str) -> bool:
+        return await self._mqtt.publish(f"nha/{room}/den", "ON", qos=1, retain=True)
+
+    def is_online(self) -> bool:
+        return self._mqtt.connected       # đọc RAM, gọi liên tục cũng được
+```
+
+**Tiêm, đừng tự dựng.** `MqttClient(settings)` tự tạo là một client chưa bao giờ
+được mở: `connected` luôn `False`, `publish` luôn ném `ServiceUnavailableError`.
+Container đưa đúng bản mà app đã mở lúc khởi động.
 
 ```python
 await mqtt.publish(topic, payload=None, *, qos=1, retain=False, fire_and_forget=False) -> bool
@@ -192,6 +218,126 @@ với phiên persistent.
 
 ---
 
+## Biết khi nào mất kết nối
+
+"Broker đứt thì ghi cảnh báo", "nối lại thì báo cho dashboard là gateway đã
+online" — viết thế này:
+
+```python
+# src/api/thiet_bi/mqtt_status.py
+from fastapi_modular import get_logger, injectable
+from fastapi_modular.infrastructure.mqtt import MqttClient, mqtt_on_connect, mqtt_on_disconnect
+
+log = get_logger(__name__)
+
+
+@injectable
+class MqttStatus:
+    def __init__(self, mqtt: MqttClient) -> None:
+        self.mqtt = mqtt
+
+    @mqtt_on_connect
+    async def online(self, info: dict) -> None:
+        if info["reconnect"]:
+            log.info("mqtt_back", downtime=info["downtime_seconds"])
+        await self.mqtt.publish("gateway/status", "online", retain=True)
+
+    @mqtt_on_disconnect
+    async def offline(self, info: dict) -> None:
+        log.warning("mqtt_down", error=info["error"])
+```
+
+Không cần `info` thì bỏ đi: `async def online(self) -> None:` cũng chạy.
+
+### Khi nào handler được gọi
+
+| Chuyện xảy ra | Handler chạy |
+|---|---|
+| App khởi động, nối được broker | `on_connect`, `info["reconnect"]` là `False` |
+| Đang chạy thì đứt | `on_disconnect` — **một lần**, dù vòng nối lại thử hỏng bao nhiêu lượt |
+| Nối lại được | `on_connect`, `info["reconnect"]` là `True` |
+| Broker chưa lên lúc khởi động | **không gọi gì**; lúc broker lên thì `on_connect` với `reconnect=False` |
+| Tắt app | **không** gọi `on_disconnect` |
+
+### `info` có gì
+
+| Khoá | Có ở | Ý nghĩa |
+|---|---|---|
+| `url` | cả hai | URL broker, đã che mật khẩu |
+| `client_id` | cả hai | danh tính phiên đang dùng |
+| `reconnect` | `on_connect` | `False` ở lần nối đầu, `True` ở mọi lần sau |
+| `downtime_seconds` | `on_connect` | đứt bao nhiêu giây; `None` ở lần nối đầu |
+| `error` | `on_disconnect` | lỗi làm đứt, dạng `"MqttError: ..."`; có thể là `None` |
+
+- **Đừng dùng handler làm chốt trước khi gửi tin.** Handler chạy trong một task
+  riêng, SAU khi trạng thái đã đổi. Cần biết ngay lúc gửi thì đọc
+  `mqtt.connected`, hoặc gửi với `fire_and_forget=True`.
+- **Đặt timeout cho việc chậm trong handler.** Các handler nối/đứt chạy lần
+  lượt: một `on_connect` treo thì `on_disconnect` phía sau phải chờ. Tin MQTT
+  vẫn được đọc bình thường, không bị chặn.
+- **Rút cáp mạng thì báo chậm hơn tắt broker.** Broker tắt đàng hoàng là biết
+  ngay; mất mạng im lặng thì phải chờ nhịp tim `APP_MQTT__KEEPALIVE_SECONDS`.
+
+### Hỏi trạng thái lúc này
+
+Không cần khai handler — hỏi thẳng, ở bất cứ đâu:
+
+```python
+from fastapi_modular import broker_status
+
+status = broker_status("mqtt")
+if not status["connected"]:
+    print("MQTT đang đứt từ", status["since"], "vì", status["last_error"])
+```
+
+**Gọi liên tục cũng được** (mỗi khung hình, mỗi request): hàm chỉ đọc biến trong
+RAM, không gửi gì qua mạng, không cần `await`.
+
+| Khoá | Ý nghĩa |
+|---|---|
+| `enabled` | `False` khi `APP_MQTT__ENABLED=false` — lúc đó các khoá khác là mặc định |
+| `connected` | đang nối hay không |
+| `since` | `datetime` (UTC) của lần đổi trạng thái gần nhất; `None` nếu chưa từng nối |
+| `last_error` | lỗi của lần đứt gần nhất; `None` nếu chưa đứt lần nào |
+| `disconnects` | số lần đứt từ lúc app khởi động |
+| `url`, `client_id` | broker đang nhắm tới; `client_id` có sau lần nối đầu |
+
+Không truyền tên thì trả mọi hạ tầng **đang bật**: `broker_status()` →
+`{"mqtt": {...}, "redis": {...}}`.
+
+Đã tiêm `MqttClient` vào service ([Gửi tin](#gửi-tin)) thì đọc thẳng trên nó —
+cũng chỉ đọc RAM:
+
+| Gọi | Trả về |
+|---|---|
+| `self._mqtt.connected` | `bool` — cùng trạng thái với `broker_status("mqtt")["connected"]` |
+| `self._mqtt.enabled` | `bool` — `APP_MQTT__ENABLED` |
+| `self._mqtt.stats()` | `{"enabled", "connected", "url", "client_id", "topics", "listeners", "disconnects"}` |
+
+`disconnects` trong `stats()` đếm **mọi** lần thử nối hỏng; `broker_status()`
+chỉ đếm lần đang nối mà bị đứt.
+
+- **Vẫn bắt lỗi khi gửi, dù vừa thấy `connected=True`.** Broker có thể đứt đúng
+  giữa hai dòng code. Đọc trạng thái để bỏ qua sớm, còn lời gửi thì vẫn cần
+  `try`/`except ServiceUnavailableError`, hoặc `fire_and_forget=True`.
+- **Gõ đúng tên.** `broker_status("mqqt")` ném `ValueError` kèm danh sách tên
+  hợp lệ: `kafka`, `mqtt`, `rabbitmq`, `redis`.
+
+### Kiểm xem handler nối/đứt đã được nhận chưa
+
+Lúc khởi động phải thấy:
+
+```
+mqtt.connection_hooks_registered  on_connect=['MqttStatus.online'] on_disconnect=['MqttStatus.offline']
+```
+
+Không thấy dòng này nghĩa là class thiếu `@injectable`, hoặc file không nằm dưới
+`src/api/`. Thử đứt thật: `docker stop <container broker>` — sẽ thấy
+`mqtt.connection_lost` rồi `on_disconnect` chạy; `docker start` lại thì thấy
+`mqtt.connected` và `on_connect` với `reconnect=True`.
+
+---
+
 ## Hỏng thì tra ở đây
 
 | Triệu chứng | Nguyên nhân |
@@ -204,6 +350,13 @@ với phiên persistent.
 | log `mqtt.session_not_persistent` lúc boot | `CLEAN_SESSION=false` nhưng `CLIENT_ID` trống — phiên mới mỗi lần khởi động, không giữ được gì |
 | HTTP 400 khi gửi | topic gửi chứa `+`/`#` — ký tự đại diện chỉ dành cho bên NGHE |
 | log `mqtt.starting_degraded` lúc khởi động | broker chưa lên; vòng nối lại chạy ngầm, backoff tới 30s |
+| `on_connect`/`on_disconnect` không bao giờ chạy, không có log `mqtt.connection_hooks_registered` | class thiếu `@injectable`, hoặc file không nằm dưới `src/api/` |
+| `RuntimeError: ... phải là (self) hoặc (self, info)` lúc khởi động | handler nối/đứt nhận hơn một tham số ngoài `self` |
+| log `mqtt.connection_hook_failed` | handler nối/đứt ném lỗi; handler khác và các lần sau vẫn chạy |
+| `broker_status("mqtt")` trả `enabled: False` dù đã bật | gọi trước khi app khởi động xong, hoặc `APP_MQTT__ENABLED` chưa đọc được — soi log `mqtt.disabled` |
+| `ValueError: broker_status: không có hạ tầng ...` | gõ nhầm tên — dùng `kafka`, `mqtt`, `rabbitmq`, `redis` |
+| `self._mqtt.connected` luôn `False`, `publish` ném `ServiceUnavailableError` dù broker sống | tự dựng `MqttClient(settings)` thay vì tiêm qua `__init__` — xem [Gửi tin](#gửi-tin) |
+| Broker chưa lên lúc khởi động mà `on_disconnect` không chạy | đúng thiết kế: chưa từng nối được thì không có "mất kết nối" — xem [Khi nào handler được gọi](#khi-nào-handler-được-gọi) |
 
 ---
 

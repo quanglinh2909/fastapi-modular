@@ -282,6 +282,12 @@ class RedisSettings(BaseModel):
     reconnect_delay_seconds: float = 1.0
     max_reconnect_delay_seconds: float = 30.0
 
+    health_check_seconds: float = 5.0
+    """Nhịp PING để biết Redis đứt — cho `broker_status()` và `@redis_on_disconnect`.
+    Chạy suốt khi Redis bật. Đứt được báo trễ tối đa bằng nhịp này (cộng
+    `command_timeout_seconds` nếu server treo). 0 = tắt vòng PING: chỉ còn biết
+    đứt khi một lệnh hỏng."""
+
 
 class MqttSettings(BaseModel):
     """Cấu hình MQTT. Đặt qua APP_MQTT__*, ví dụ APP_MQTT__ENABLED=true.
@@ -335,6 +341,12 @@ class KafkaSettings(BaseModel):
     connect_timeout_seconds: float = 10.0
     reconnect_delay_seconds: float = 1.0
     max_reconnect_delay_seconds: float = 30.0
+
+    health_check_seconds: float = 5.0
+    """Nhịp hỏi metadata để biết cụm đứt — cho `broker_status()`, `connected` và
+    `@kafka_on_disconnect`. Chạy suốt khi Kafka bật. Đứt được báo trễ tối đa bằng
+    nhịp này (cộng `connect_timeout_seconds` nếu broker treo). 0 = tắt vòng hỏi:
+    khi đó KHÔNG còn cách nào biết cụm đứt."""
 
 
 class SchedulerSettings(BaseModel):

@@ -70,6 +70,12 @@ Handler ở cả bốn đều nhận `(self, payload)` hoặc `(self, payload, m
 validate bằng pydantic nếu `payload` có kiểu là model, và đều chạy trong một
 request scope riêng.
 
+Cả bốn cũng có cặp `@<hạ tầng>_on_connect` / `@<hạ tầng>_on_disconnect`
+(`@mqtt_on_connect`, `@redis_on_disconnect`...) để chạy code của bạn khi mất kết
+nối và khi nối lại, và `broker_status()` trả trạng thái lúc này của cả bốn — đọc
+từ RAM nên gọi liên tục cũng được. Xem mục "Biết khi nào mất kết nối" trong
+trang của từng hạ tầng.
+
 Mỗi lệnh `fam env` ghi biến vào `.env` kèm giải thích, cho biết biến đó
 **tuỳ chọn hay bắt buộc** và **mặc định là gì** nếu xoá dòng đi.
 

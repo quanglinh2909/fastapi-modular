@@ -26,6 +26,7 @@ from typing import Any
 
 from fastapi_modular.core.compat import TimeoutErrors
 from fastapi_modular.core.config import Settings
+from fastapi_modular.core.connection import ConnectionEvents, connection_decorator
 from fastapi_modular.core.container import injectable
 from fastapi_modular.core.exceptions import ComponentNotEnabledError, ServiceUnavailableError
 from fastapi_modular.core.logging import get_logger
@@ -44,6 +45,12 @@ from fastapi_modular.infrastructure.kafka.metrics import kafka_publish_failed, k
 log = get_logger(__name__)
 
 DEFAULT_SERVERS = "localhost:9092"
+
+#: Gọi method mỗi khi nối được cụm / mỗi khi đứt. aiokafka tự tìm lại broker mà
+#: không báo gì, nên khung chạy thêm một vòng hỏi metadata — xem
+#: `KafkaBroker._health_loop`.
+kafka_on_connect = connection_decorator("kafka", "connect")
+kafka_on_disconnect = connection_decorator("kafka", "disconnect")
 
 
 def _require_aiokafka() -> Any:
@@ -71,6 +78,8 @@ class KafkaBroker:
         self._rpc_task: asyncio.Task[None] | None = None
         self._rpc_topics: set[str] = set()
         self._rpc_lock = asyncio.Lock()
+        self._events = ConnectionEvents("kafka")
+        self._health_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------- vòng đời
     @property
@@ -79,7 +88,13 @@ class KafkaBroker:
 
     @property
     def connected(self) -> bool:
-        return self._producer is not None
+        """Đang nói chuyện được với cụm.
+
+        `_producer is not None` KHÔNG đủ: producer của aiokafka sống suốt lúc
+        cụm chết và tự nối lại ngầm. Trạng thái thật do vòng hỏi metadata cập
+        nhật (`_health_loop`), trễ tối đa một nhịp `health_check_seconds`.
+        """
+        return self._producer is not None and self._events.connected
 
     @property
     def servers(self) -> str:
@@ -92,6 +107,7 @@ class KafkaBroker:
 
         _require_aiokafka()
         self._closing = False
+        self._events.start(servers=self.servers)
         if await self._try_connect():
             return
 
@@ -126,7 +142,9 @@ class KafkaBroker:
 
         self._producer = producer
         log.info("kafka.connected", servers=self.servers, client_id=self._config.client_id)
+        self._events.mark_connected(servers=self.servers)
         await self._run_hooks()
+        self._start_health_check()
         return True
 
     async def _reconnect_forever(self) -> None:
@@ -139,6 +157,53 @@ class KafkaBroker:
                 log.info("kafka.recovered", servers=self.servers)
                 return
             delay = min(delay * 2, self._config.max_reconnect_delay_seconds)
+
+    def _start_health_check(self) -> None:
+        """Bật vòng hỏi metadata — chạy suốt khi Kafka bật, `health_check_seconds=0` thì thôi.
+
+        Chạy cả khi không ai khai `@kafka_on_*`: `broker_status()` và `connected`
+        đọc trạng thái từ RAM, và producer của aiokafka không bao giờ tự báo
+        đứt — không có vòng này thì chúng nói "đang nối" mãi.
+        """
+        if self._config.health_check_seconds <= 0:
+            return
+        if self._health_task is None or self._health_task.done():
+            self._health_task = asyncio.create_task(self._health_loop(), name="kafka-health")
+
+    async def _health_loop(self) -> None:
+        """Hỏi metadata cả cụm định kỳ.
+
+        Cần vì producer của aiokafka nối lại ngầm và không báo gì: `_producer`
+        vẫn khác None suốt lúc cụm chết. `fetch_all_metadata` dựng một bản
+        metadata RIÊNG nên không đụng tới bản producer đang dùng, và hỏi lần
+        lượt mọi broker đã biết — một broker chết trong cụm ba con không bị
+        tính là mất kết nối. Bọc `wait_for` vì broker bị treo (không từ chối
+        mà cũng không trả lời) thì lời hỏi đứng đó mãi.
+        """
+        healthy = True
+        while not self._closing:
+            await asyncio.sleep(self._config.health_check_seconds)
+            producer = self._producer
+            if self._closing or producer is None:
+                return
+            try:
+                await asyncio.wait_for(
+                    producer.client.fetch_all_metadata(), self._config.connect_timeout_seconds
+                )
+            except Exception as exc:  # noqa: BLE001 - hỏi không được kiểu gì cũng là đứt
+                if healthy:
+                    log.warning(
+                        "kafka.connection_lost",
+                        servers=self.servers,
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                healthy = False
+                self._events.mark_disconnected(exc, servers=self.servers)
+            else:
+                if not healthy:
+                    log.info("kafka.reconnected", servers=self.servers)
+                healthy = True
+                self._events.mark_connected(servers=self.servers)
 
     def on_ready(self, hook: Callable[[], Awaitable[None]]) -> None:
         """Việc cần làm sau mỗi lần nối được — consumer dùng để bật vòng đọc."""
@@ -158,6 +223,12 @@ class KafkaBroker:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._supervisor
             self._supervisor = None
+        if self._health_task is not None:
+            self._health_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._health_task
+            self._health_task = None
+        await self._events.close()
         await self._close_rpc()
         if self._producer is not None:
             with contextlib.suppress(Exception):

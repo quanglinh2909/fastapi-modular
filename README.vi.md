@@ -390,7 +390,10 @@ nói rõ khi nào KHÔNG nên dùng.
 
 Cùng một khuôn với RabbitMQ: một package riêng dưới `infrastructure/`, một nhóm
 biến `APP_<TÊN>__*`, mặc định **tắt**, thư viện chỉ import khi bật, và luôn tự
-nối lại.
+nối lại. Cả bốn (tính cả RabbitMQ) còn có `@<tên>_on_connect` /
+`@<tên>_on_disconnect` — `@mqtt_on_disconnect`, `@redis_on_connect`... — để chạy
+code của bạn khi mất kết nối hoặc khi nối lại, và `broker_status()` trả trạng thái
+lúc này của cả bốn. Hàm chỉ đọc RAM nên gọi ở mọi request cũng được.
 
 ```bash
 fam install redis    # cache, đếm, pub/sub      -> docs/redis.md
@@ -442,7 +445,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              1163 test chạy không cần hạ tầng, 424 test nữa cần driver/server thật
+tests/              1182 test chạy không cần hạ tầng, 432 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 

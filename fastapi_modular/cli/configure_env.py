@@ -375,6 +375,12 @@ BLOCKS: dict[str, Block] = {
                 "Trần thời gian chờ giữa hai lần thử. Có trần thì server hồi sinh sau "
                 "nhiều giờ vẫn được nối lại trong vòng ngần này giây.",
             ),
+            EnvVar(
+                "APP_REDIS__HEALTH_CHECK_SECONDS",
+                "5",
+                "Nhịp PING để biết Redis đứt, cho broker_status() và @redis_on_disconnect. "
+                "0 = tắt: chỉ còn biết đứt khi một lệnh hỏng.",
+            ),
         ],
     ),
     "mqtt": Block(
@@ -470,6 +476,12 @@ BLOCKS: dict[str, Block] = {
                 "30",
                 "Trần thời gian chờ giữa hai lần thử. Có trần thì server hồi sinh sau "
                 "nhiều giờ vẫn được nối lại trong vòng ngần này giây.",
+            ),
+            EnvVar(
+                "APP_KAFKA__HEALTH_CHECK_SECONDS",
+                "5",
+                "Nhịp hỏi metadata để biết cụm đứt, cho broker_status() và "
+                "@kafka_on_disconnect. 0 = tắt: không còn cách nào biết cụm đứt.",
             ),
         ],
     ),

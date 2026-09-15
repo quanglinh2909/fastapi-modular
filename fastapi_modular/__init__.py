@@ -10,6 +10,7 @@ Những thứ hay dùng nhất được xuất thẳng ở đây; phần còn l�
 from __future__ import annotations
 
 from fastapi_modular.core.config import Settings, get_settings, use_settings
+from fastapi_modular.core.connection import broker_status
 from fastapi_modular.core.container import Lazy, Scope, container, entity, injectable
 from fastapi_modular.core.controller import controller, delete, get, patch, post, put
 from fastapi_modular.core.error_handlers import register_error_handlers
@@ -73,6 +74,7 @@ __all__ = [
     "__version__",
     "add_middleware",
     "bind_settings",
+    "broker_status",
     "column",
     "configure_logging",
     "container",

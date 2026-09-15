@@ -25,6 +25,8 @@ from fastapi_modular.infrastructure.redis import (
     RedisClient,
     RedisResponderRunner,
     RedisRunner,
+    redis_on_connect,
+    redis_on_disconnect,
     redis_responder,
     redis_subscriber,
 )
@@ -62,6 +64,49 @@ async def redis(redis_settings: Settings):
     finally:
         await client.delete_prefix("")       # dọn mọi khoá test:*
         await client.shutdown()
+
+
+# ------------------------------------------------------------ nối / đứt
+CONNECTION_EVENTS: list[tuple[str, dict]] = []
+
+
+@injectable
+class RedisConnectionLog:
+    @redis_on_connect
+    async def online(self, info: dict) -> None:
+        CONNECTION_EVENTS.append(("connect", info))
+
+    @redis_on_disconnect
+    async def offline(self, info: dict) -> None:
+        CONNECTION_EVENTS.append(("disconnect", info))
+
+
+async def test_noi_duoc_thi_bao_on_connect_va_bat_vong_ping(redis_settings: Settings):
+    CONNECTION_EVENTS.clear()
+    client = RedisClient(redis_settings)
+    await client.startup()
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not CONNECTION_EVENTS:
+            await anyio.sleep(0.05)
+        assert CONNECTION_EVENTS[0][0] == "connect"
+        assert CONNECTION_EVENTS[0][1]["reconnect"] is False
+        assert client._health_task is not None, "có người nghe thì phải có vòng PING"
+    finally:
+        await client.shutdown()
+    assert [name for name, _ in CONNECTION_EVENTS] == ["connect"], "tắt app không phải mất kết nối"
+
+
+async def test_redis_chua_len_thi_khong_bao_gi_ca():
+    CONNECTION_EVENTS.clear()
+    client = RedisClient(
+        Settings(APP_REDIS=RedisSettings(enabled=True, url="redis://localhost:1/0",
+                                         connect_timeout_seconds=0.3))
+    )
+    await client.startup()
+    await anyio.sleep(0.5)
+    await client.shutdown()
+    assert CONNECTION_EVENTS == []
 
 
 async def test_ghi_doc_va_han_su_dung(redis: RedisClient):

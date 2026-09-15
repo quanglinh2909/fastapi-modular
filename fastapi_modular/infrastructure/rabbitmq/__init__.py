@@ -13,7 +13,11 @@ một sự kiện từ hàng đợi hiện lên màn hình người dùng thì �
 
 from __future__ import annotations
 
-from fastapi_modular.infrastructure.rabbitmq.broker import RabbitBroker
+from fastapi_modular.infrastructure.rabbitmq.broker import (
+    RabbitBroker,
+    rabbitmq_on_connect,
+    rabbitmq_on_disconnect,
+)
 from fastapi_modular.infrastructure.rabbitmq.consumers import (
     PermanentMessageError,
     RabbitmqRunner,
@@ -34,6 +38,8 @@ __all__ = [
     "RabbitmqRunner",
     "discover_rabbitmq_responders",
     "discover_rabbitmq_subscribers",
+    "rabbitmq_on_connect",
+    "rabbitmq_on_disconnect",
     "rabbitmq_responder",
     "rabbitmq_subscriber",
     "validate_pattern",

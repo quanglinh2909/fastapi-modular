@@ -37,6 +37,8 @@ from fastapi_modular.infrastructure.kafka import (
     KafkaResponderRunner,
     KafkaRunner,
     PermanentMessageError,
+    kafka_on_connect,
+    kafka_on_disconnect,
     kafka_responder,
     kafka_subscriber,
 )
@@ -100,6 +102,50 @@ async def _pending(so_tin: int, seconds: float = 20.0) -> None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline and len(DA_NHAN) < so_tin:
         await anyio.sleep(0.1)
+
+
+# ------------------------------------------------------------ nối / đứt
+CONNECTION_EVENTS: list[tuple[str, dict]] = []
+
+
+@injectable
+class KafkaConnectionLog:
+    @kafka_on_connect
+    async def online(self, info: dict) -> None:
+        CONNECTION_EVENTS.append(("connect", info))
+
+    @kafka_on_disconnect
+    async def offline(self, info: dict) -> None:
+        CONNECTION_EVENTS.append(("disconnect", info))
+
+
+async def test_noi_duoc_thi_bao_on_connect_va_bat_vong_hoi_metadata(kafka_settings: Settings):
+    CONNECTION_EVENTS.clear()
+    broker = KafkaBroker(kafka_settings)
+    await broker.startup()
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not CONNECTION_EVENTS:
+            await anyio.sleep(0.05)
+        assert CONNECTION_EVENTS[0] == (
+            "connect", {"servers": SERVERS, "reconnect": False, "downtime_seconds": None}
+        )
+        assert broker._health_task is not None, "có người nghe thì phải có vòng hỏi metadata"
+    finally:
+        await broker.shutdown()
+    assert [name for name, _ in CONNECTION_EVENTS] == ["connect"], "tắt app không phải mất kết nối"
+
+
+async def test_cum_chua_len_thi_khong_bao_gi_ca():
+    CONNECTION_EVENTS.clear()
+    broker = KafkaBroker(
+        Settings(APP_KAFKA=KafkaSettings(enabled=True, bootstrap_servers="localhost:1",
+                                         connect_timeout_seconds=0.5))
+    )
+    await broker.startup()
+    await anyio.sleep(0.5)
+    await broker.shutdown()
+    assert CONNECTION_EVENTS == []
 
 
 async def test_hai_nhom_deu_nhan_du_moi_tin(kafka: KafkaBroker):

@@ -8,7 +8,11 @@ chờn. Không dùng thì để `APP_MQTT__ENABLED=false` (mặc định).
 
 from __future__ import annotations
 
-from fastapi_modular.infrastructure.mqtt.client import MqttClient
+from fastapi_modular.infrastructure.mqtt.client import (
+    MqttClient,
+    mqtt_on_connect,
+    mqtt_on_disconnect,
+)
 from fastapi_modular.infrastructure.mqtt.consumers import (
     MqttRunner,
     discover_mqtt_subscribers,
@@ -35,6 +39,8 @@ __all__ = [
     "discover_mqtt_responders",
     "discover_mqtt_subscribers",
     "matches",
+    "mqtt_on_connect",
+    "mqtt_on_disconnect",
     "mqtt_responder",
     "mqtt_subscriber",
     "narrow_filters",

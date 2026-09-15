@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 
 from fastapi_modular.core.compat import TimeoutErrors
 from fastapi_modular.core.config import Settings
+from fastapi_modular.core.connection import ConnectionEvents, connection_decorator
 from fastapi_modular.core.container import injectable
 from fastapi_modular.core.exceptions import ComponentNotEnabledError, ServiceUnavailableError
 from fastapi_modular.core.logging import get_logger
@@ -46,6 +47,11 @@ from fastapi_modular.infrastructure.mqtt.patterns import narrow_filters, validat
 log = get_logger(__name__)
 
 DEFAULT_URL = "mqtt://localhost:1883"
+
+#: Gọi method mỗi khi nối được broker (lần đầu và mỗi lần nối lại) / mỗi khi đứt.
+#: Luật lọc trùng nằm ở `core/connection.py`.
+mqtt_on_connect = connection_decorator("mqtt", "connect")
+mqtt_on_disconnect = connection_decorator("mqtt", "disconnect")
 
 
 def _require_aiomqtt() -> Any:
@@ -96,6 +102,7 @@ class MqttClient:
         self._drop_count = 0
         self._pending = PendingReplies("MQTT")
         self._reply_topics: set[str] = set()
+        self._events = ConnectionEvents("mqtt")
 
     # ------------------------------------------------------------- vòng đời
     @property
@@ -179,6 +186,7 @@ class MqttClient:
             )
 
         self._closing = False
+        self._events.start(url=self.url)
         self._task = asyncio.create_task(self._connection_loop(), name="mqtt-connection")
 
         # Chờ một nhịp cho lần nối đầu, để log khởi động nói đúng trạng thái.
@@ -222,6 +230,7 @@ class MqttClient:
                         client_id=identifier,
                         topics=sorted(subscriptions),
                     )
+                    self._events.mark_connected(url=self.url, client_id=identifier)
                     async for message in client.messages:
                         await self._dispatch_to_routers(message)
             except asyncio.CancelledError:
@@ -236,7 +245,12 @@ class MqttClient:
                     error=f"{type(exc).__name__}: {exc}",
                     retry=delay,
                 )
+                self._events.mark_disconnected(exc, url=self.url, client_id=identifier)
             finally:
+                if not self._closing:
+                    # Vòng đọc tự kết thúc mà không ném lỗi vẫn là đứt. Đã báo
+                    # ở nhánh `except` thì lời gọi này không làm gì.
+                    self._events.mark_disconnected(url=self.url, client_id=identifier)
                 self._connected.clear()
                 self._client = None
                 # Câu trả lời đang trên đường chắc chắn không tới nữa: đăng ký
@@ -257,6 +271,7 @@ class MqttClient:
                 await self._task
             self._task = None
         self._connected.clear()
+        await self._events.close()
         log.info("mqtt.disconnected")
 
     # ---------------------------------------------------------------- gửi

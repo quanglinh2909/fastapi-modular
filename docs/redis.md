@@ -33,23 +33,40 @@ mọi worker** (`publish` + `@redis_subscriber`).
 | "Scale WebSocket nhiều worker" | KHÔNG phải trang này — `fam env ws-redis`, xem [websocket.md](websocket.md#8-chạy-nhiều-worker) |
 | "Tin không được phép mất" | KHÔNG dùng Redis pub/sub — [RabbitMQ](rabbitmq.md) |
 | "Redis chết thì app có chết theo không" | [Khi Redis chưa lên](#khi-redis-chưa-lên) |
+| "Redis **đứt thì cảnh báo**, nối lại thì làm nóng cache" | [Biết khi nào mất kết nối](#biết-khi-nào-mất-kết-nối) |
+| "Hỏi **Redis có đang nối không** — gọi liên tục cũng nhẹ" | [Hỏi trạng thái lúc này](#hỏi-trạng-thái-lúc-này) |
 | "Bảng biến, số đo" | [Tra cứu](#tra-cứu) |
 
 ---
 
 ## Cache
 
+Tiêm `RedisClient` qua `__init__` như mọi provider:
+
 ```python
+# src/api/bao_cao/report_service.py
+from fastapi_modular import injectable
+from fastapi_modular.infrastructure.redis import RedisClient
+
+
 @injectable
-class BaoCaoService:
+class ReportService:
     def __init__(self, redis: RedisClient) -> None:
         self._redis = redis
 
-    async def bao_cao(self, ma: str) -> dict:
-        return await self._redis.cached(
-            f"bao-cao:{ma}", lambda: self._tinh_that(ma), ttl=30
-        )
+    async def report(self, code: str) -> dict:
+        return await self._redis.cached(f"bao-cao:{code}", lambda: self._compute(code), ttl=30)
+
+    async def _compute(self, code: str) -> dict:
+        return {"code": code}               # việc chậm thật của bạn ở đây
+
+    def is_online(self) -> bool:
+        return self._redis.connected        # đọc RAM, gọi liên tục cũng được
 ```
+
+**Tiêm, đừng tự dựng.** `RedisClient(settings)` tự tạo là một client chưa bao
+giờ được mở: `connected` luôn `False`, mọi lệnh ném `ServiceUnavailableError`.
+Container đưa đúng bản mà app đã mở lúc khởi động.
 
 ```python
 await redis.cached(key, factory, *, ttl=60.0) -> Any
@@ -200,6 +217,122 @@ Không có lựa chọn nào để tắt hành vi này — một dịch vụ ph�
 
 ---
 
+## Biết khi nào mất kết nối
+
+"Redis đứt thì ghi cảnh báo", "nối lại thì ghi đứt bao lâu" — viết thế này:
+
+```python
+# src/api/bao_cao/redis_status.py
+from fastapi_modular import get_logger, injectable
+from fastapi_modular.infrastructure.redis import redis_on_connect, redis_on_disconnect
+
+log = get_logger(__name__)
+
+
+@injectable
+class RedisStatus:
+    @redis_on_connect
+    async def online(self, info: dict) -> None:
+        if info["reconnect"]:
+            log.info("redis_back", downtime=info["downtime_seconds"])
+
+    @redis_on_disconnect
+    async def offline(self, info: dict) -> None:
+        log.warning("redis_down", error=info["error"])
+```
+
+Không cần `info` thì bỏ đi: `async def online(self) -> None:` cũng chạy.
+
+**Khi Redis bật, khung PING nó 5 giây một lần.** redis-py tự nối lại ở lệnh kế
+tiếp mà không báo gì, nên không PING thì app đang rảnh sẽ không bao giờ biết
+mình đứt. Chỉnh nhịp bằng `APP_REDIS__HEALTH_CHECK_SECONDS` ([Tra cứu](#tra-cứu)).
+
+### Khi nào handler được gọi
+
+| Chuyện xảy ra | Handler chạy |
+|---|---|
+| App khởi động, nối được Redis | `on_connect`, `info["reconnect"]` là `False` |
+| Đang chạy thì đứt | `on_disconnect` — **một lần**; biết qua lần PING kế tiếp, hoặc ngay khi một lệnh hỏng vì mất kết nối |
+| Nối lại được | `on_connect`, `info["reconnect"]` là `True` |
+| Redis chưa lên lúc khởi động | **không gọi gì**; lúc Redis lên thì `on_connect` với `reconnect=False` |
+| Tắt app | **không** gọi `on_disconnect` |
+
+### `info` có gì
+
+| Khoá | Có ở | Ý nghĩa |
+|---|---|---|
+| `url` | cả hai | URL Redis, đã che mật khẩu |
+| `reconnect` | `on_connect` | `False` ở lần nối đầu, `True` ở mọi lần sau |
+| `downtime_seconds` | `on_connect` | đứt bao nhiêu giây; `None` ở lần nối đầu |
+| `error` | `on_disconnect` | lỗi làm đứt, ví dụ `"ConnectionError: Error 111 connecting to ..."`; có thể là `None` |
+
+- **Đừng chờ `on_disconnect` cho lỗi của lệnh.** Sai kiểu khoá (`WRONGTYPE`),
+  sai cú pháp vẫn ném `ServiceUnavailableError`, nhưng đường truyền còn sống nên
+  không phải "mất kết nối".
+- **Đừng dùng handler làm chốt trước khi gọi Redis.** Handler chạy trong một
+  task riêng, SAU khi trạng thái đã đổi — và có thể trễ tới một nhịp PING. Cần
+  "Redis chết thì đi đường vòng" thì dùng `cached()`.
+- **Đặt timeout cho việc chậm trong handler.** Các handler nối/đứt chạy lần
+  lượt: một `on_connect` treo thì `on_disconnect` phía sau phải chờ.
+
+### Hỏi trạng thái lúc này
+
+Không cần khai handler — hỏi thẳng, ở bất cứ đâu:
+
+```python
+from fastapi_modular import broker_status
+
+status = broker_status("redis")
+if not status["connected"]:
+    print("Redis đang đứt từ", status["since"], "vì", status["last_error"])
+```
+
+**Gọi liên tục cũng được** (mỗi request, mỗi vòng lặp): hàm chỉ đọc biến trong
+RAM, không gửi gì qua mạng, không cần `await`. Việc PING chạy ngầm, không nằm
+trong lời gọi này.
+
+| Khoá | Ý nghĩa |
+|---|---|
+| `enabled` | `False` khi `APP_REDIS__ENABLED=false` — lúc đó các khoá khác là mặc định |
+| `connected` | đang nối hay không |
+| `since` | `datetime` (UTC) của lần đổi trạng thái gần nhất; `None` nếu chưa từng nối |
+| `last_error` | lỗi của lần đứt gần nhất; `None` nếu chưa đứt lần nào |
+| `disconnects` | số lần đứt từ lúc app khởi động |
+| `url` | Redis đang nhắm tới, đã che mật khẩu |
+
+Không truyền tên thì trả mọi hạ tầng **đang bật**: `broker_status()` →
+`{"redis": {...}, "mqtt": {...}}`.
+
+Đã tiêm `RedisClient` vào service ([Cache](#cache)) thì đọc thẳng trên nó —
+cũng chỉ đọc RAM:
+
+| Gọi | Trả về |
+|---|---|
+| `self._redis.connected` | `bool` — cùng trạng thái với `broker_status("redis")["connected"]` |
+| `self._redis.enabled` | `bool` — `APP_REDIS__ENABLED` |
+| `self._redis.stats()` | `{"enabled", "connected", "url", "key_prefix"}` |
+
+- **Chấp nhận trễ tối đa một nhịp PING.** Redis vừa chết thì `connected` còn
+  `True` thêm tới `HEALTH_CHECK_SECONDS` giây (trừ khi một lệnh hỏng trước đó).
+  Cần chắc hơn thì hạ nhịp, hoặc bắt lỗi ngay tại lệnh.
+- **Gõ đúng tên.** `broker_status("reddis")` ném `ValueError` kèm danh sách tên
+  hợp lệ: `kafka`, `mqtt`, `rabbitmq`, `redis`.
+
+### Kiểm xem handler nối/đứt đã được nhận chưa
+
+Lúc khởi động phải thấy:
+
+```
+redis.connection_hooks_registered  on_connect=['RedisStatus.online'] on_disconnect=['RedisStatus.offline']
+```
+
+Không thấy dòng này nghĩa là class thiếu `@injectable`, hoặc file không nằm dưới
+`src/api/`. Thử đứt thật: `docker stop <container redis>` — trong vòng một nhịp
+PING sẽ thấy `redis.connection_lost` rồi `on_disconnect` chạy; `docker start`
+lại thì thấy `redis.reconnected` và `on_connect` với `reconnect=True`.
+
+---
+
 ## Hỏng thì tra ở đây
 
 | Triệu chứng | Nguyên nhân |
@@ -213,6 +346,15 @@ Không có lựa chọn nào để tắt hành vi này — một dịch vụ ph�
 | log `redis.cache_bypass` | Redis đang chết, `cached()` gọi thẳng `factory()` — app vẫn chạy, chỉ chậm |
 | log `redis.starting_degraded` lúc khởi động | server chưa lên; vòng nối lại chạy ngầm, backoff tới 30s |
 | Đếm bằng `incr` không bao giờ reset | `ttl=` chỉ đặt ở lần cộng ĐẦU; khoá tạo từ trước khi thêm `ttl` thì không có hạn — xoá khoá đi |
+| `on_connect`/`on_disconnect` không bao giờ chạy, không có log `redis.connection_hooks_registered` | class thiếu `@injectable`, hoặc file không nằm dưới `src/api/` |
+| Redis đã tắt mà vài giây sau `on_disconnect` mới chạy | chờ lần PING kế tiếp — nhịp là `HEALTH_CHECK_SECONDS` (mặc định 5s) |
+| `get`/`set` ném `ServiceUnavailableError` mà `on_disconnect` không chạy | lỗi của lệnh (sai kiểu khoá, sai cú pháp), không phải mất kết nối |
+| `on_disconnect` không bao giờ chạy dù Redis tắt hẳn | `HEALTH_CHECK_SECONDS=0` tắt vòng PING — chỉ còn biết khi một lệnh hỏng |
+| log `redis.connection_hook_failed` | handler nối/đứt ném lỗi; handler khác và các lần sau vẫn chạy |
+| `broker_status("redis")["connected"]` vẫn `True` vài giây sau khi Redis tắt | chờ lần PING kế tiếp — nhịp là `HEALTH_CHECK_SECONDS` |
+| `broker_status("redis")` trả `enabled: False` dù đã bật | gọi trước khi app khởi động xong, hoặc `APP_REDIS__ENABLED` chưa đọc được — soi log `redis.disabled` |
+| `ValueError: broker_status: không có hạ tầng ...` | gõ nhầm tên — dùng `kafka`, `mqtt`, `rabbitmq`, `redis` |
+| `self._redis.connected` luôn `False`, mọi lệnh ném `ServiceUnavailableError` dù Redis sống | tự dựng `RedisClient(settings)` thay vì tiêm qua `__init__` — xem [Cache](#cache) |
 
 ---
 
@@ -229,6 +371,13 @@ Không có lựa chọn nào để tắt hành vi này — một dịch vụ ph�
 | `APP_REDIS__COMMAND_TIMEOUT_SECONDS` | không | `5.0` | trần cho **một** lệnh |
 | `APP_REDIS__RECONNECT_DELAY_SECONDS` | không | `1.0` | chờ trước lần nối lại đầu tiên |
 | `APP_REDIS__MAX_RECONNECT_DELAY_SECONDS` | không | `30.0` | trần thời gian chờ (tăng gấp đôi mỗi lần) |
+| `APP_REDIS__HEALTH_CHECK_SECONDS` | không | `5.0` | nhịp PING để biết [đứt/nối lại](#biết-khi-nào-mất-kết-nối); `0` = tắt (chỉ còn biết đứt khi một lệnh hỏng) |
+
+Chỉ đọc nếu bạn đang cân nhắc chỉnh `HEALTH_CHECK_SECONDS`: đo trên máy dev với
+`HEALTH_CHECK_SECONDS=1`, `docker stop` Redis thì `on_disconnect` chạy sau
+**1,0 giây**, `docker start` lại thì `on_connect` chạy sau **0,5 giây**. Server
+treo (không từ chối mà cũng không trả lời) thì cộng thêm tối đa
+`COMMAND_TIMEOUT_SECONDS`.
 
 `KEY_PREFIX` đáng đặt khi nhiều ứng dụng dùng chung một Redis: đặt `"don-hang:"`
 thì khoá `bao-cao:A` nằm ở `don-hang:bao-cao:A`, không ai ghi đè của ai. Nó ghép

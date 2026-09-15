@@ -397,7 +397,11 @@ says when not to use it.
 
 Same shape as RabbitMQ: one package under `infrastructure/`, one `APP_<NAME>__*`
 variable group, **off** by default, the library is imported only when enabled, and
-all of them reconnect automatically.
+all of them reconnect automatically. All four (RabbitMQ included) also have
+`@<name>_on_connect` / `@<name>_on_disconnect` — `@mqtt_on_disconnect`,
+`@redis_on_connect`... — to run your code when the connection drops or comes back,
+and `broker_status()` returns the current state of all four. It only reads memory,
+so calling it on every request is fine.
 
 ```python
 await redis.cached("report:A", compute, ttl=30)        # miss = compute, hit = skip
@@ -444,7 +448,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              1163 tests that need no infrastructure, 424 more with real drivers/servers
+tests/              1182 tests that need no infrastructure, 432 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 

@@ -32,6 +32,8 @@ chết và hạn dùng đều là thứ **tự bật**, không phải thứ mặ
 | "Gửi rồi **chờ trả lời**" | [rpc.md](rpc.md) — `emit`/`send` + `@rabbitmq_responder` |
 | "Đẩy sự kiện xuống trình duyệt" | [Đẩy xuống WebSocket](#đẩy-sự-kiện-xuống-client-websocket) |
 | "Broker chết thì app có chết theo không" | [Trạng thái và vòng đời](#trạng-thái-và-vòng-đời) |
+| "Broker **đứt thì cảnh báo**, nối lại thì ghi log" | [Biết khi nào mất kết nối](#biết-khi-nào-mất-kết-nối) |
+| "Hỏi **broker có đang nối không** — gọi liên tục cũng nhẹ" | [Hỏi trạng thái lúc này](#hỏi-trạng-thái-lúc-này) |
 | "Chọn kiểu exchange nào" | [Năm kiểu exchange](#năm-kiểu-exchange) |
 | "Hỏng, tra nhanh" | [Hỏng thì tra ở đây](#hỏng-thì-tra-ở-đây) |
 
@@ -51,7 +53,14 @@ class AlertService:
 
     async def canh_bao(self, alert) -> None:
         await self._mq.publish("events", "alert.created.hanoi", {"id": alert.id})
+
+    def is_online(self) -> bool:
+        return self._mq.connected         # đọc RAM, gọi liên tục cũng được
 ```
+
+**Tiêm, đừng tự dựng.** `RabbitBroker(settings)` tự tạo là một broker chưa bao
+giờ được mở: `connected` luôn `False`, `publish` luôn ném
+`ServiceUnavailableError`. Container đưa đúng bản mà app đã mở lúc khởi động.
 
 ### `broker.publish(...)`
 
@@ -797,6 +806,114 @@ Thiếu thư viện `aio-pika` mà `ENABLED=true` thì báo lỗi ngay lúc kh�
 
 ---
 
+## Biết khi nào mất kết nối
+
+"Broker đứt thì ghi cảnh báo", "nối lại thì ghi đứt bao lâu" — viết thế này:
+
+```python
+# src/api/don_hang/rabbitmq_status.py
+from fastapi_modular import get_logger, injectable
+from fastapi_modular.infrastructure.rabbitmq import rabbitmq_on_connect, rabbitmq_on_disconnect
+
+log = get_logger(__name__)
+
+
+@injectable
+class RabbitmqStatus:
+    @rabbitmq_on_connect
+    async def online(self, info: dict) -> None:
+        if info["reconnect"]:
+            log.info("rabbitmq_back", downtime=info["downtime_seconds"])
+
+    @rabbitmq_on_disconnect
+    async def offline(self, info: dict) -> None:
+        log.warning("rabbitmq_down", error=info["error"])
+```
+
+Không cần `info` thì bỏ đi: `async def online(self) -> None:` cũng chạy.
+
+### Khi nào handler được gọi
+
+| Chuyện xảy ra | Handler chạy |
+|---|---|
+| App khởi động, nối được broker | `on_connect`, `info["reconnect"]` là `False` |
+| Đang chạy thì đứt | `on_disconnect` — **một lần**, dù aio-pika thử nối lại hỏng bao nhiêu lượt |
+| Nối lại được | `on_connect`, `info["reconnect"]` là `True` |
+| Broker chưa lên lúc khởi động | **không gọi gì**; lúc broker lên thì `on_connect` với `reconnect=False` |
+| Tắt app | **không** gọi `on_disconnect` |
+
+### `info` có gì
+
+| Khoá | Có ở | Ý nghĩa |
+|---|---|---|
+| `url` | cả hai | URL broker, đã che mật khẩu |
+| `reconnect` | `on_connect` | `False` ở lần nối đầu, `True` ở mọi lần sau |
+| `downtime_seconds` | `on_connect` | đứt bao nhiêu giây; `None` ở lần nối đầu |
+| `error` | `on_disconnect` | lỗi làm đứt, ví dụ `"ConnectionClosed: [Errno 320] CONNECTION_FORCED ..."`; có thể là `None` |
+
+- **Đừng khai lại hàng đợi hay consumer trong `on_connect`.** aio-pika đã tự
+  khôi phục exchange, hàng đợi, binding và consumer khi nối lại; khai thêm lần
+  nữa là thành hai consumer trên một hàng đợi, mỗi tin xử lý hai lần.
+- **Đừng dùng handler làm chốt trước khi đăng tin.** Handler chạy trong một task
+  riêng, SAU khi trạng thái đã đổi. Cần biết ngay lúc gửi thì đọc
+  `broker.connected`, hoặc gửi với `fire_and_forget=True`.
+- **Đặt timeout cho việc chậm trong handler.** Các handler nối/đứt chạy lần
+  lượt: một `on_connect` treo thì `on_disconnect` phía sau phải chờ.
+- **Rút cáp mạng thì báo chậm hơn tắt broker.** Broker tắt đàng hoàng là biết
+  ngay; mất mạng im lặng thì phải chờ nhịp tim `APP_RABBITMQ__HEARTBEAT_SECONDS`.
+
+### Hỏi trạng thái lúc này
+
+Không cần khai handler — hỏi thẳng, ở bất cứ đâu:
+
+```python
+from fastapi_modular import broker_status
+
+status = broker_status("rabbitmq")
+if not status["connected"]:
+    print("RabbitMQ đang đứt từ", status["since"], "vì", status["last_error"])
+```
+
+**Gọi liên tục cũng được** (mỗi request, mỗi vòng lặp): hàm chỉ đọc biến trong
+RAM, không gửi gì qua mạng, không cần `await`.
+
+| Khoá | Ý nghĩa |
+|---|---|
+| `enabled` | `False` khi `APP_RABBITMQ__ENABLED=false` — lúc đó các khoá khác là mặc định |
+| `connected` | đang nối hay không |
+| `since` | `datetime` (UTC) của lần đổi trạng thái gần nhất; `None` nếu chưa từng nối |
+| `last_error` | lỗi của lần đứt gần nhất; `None` nếu chưa đứt lần nào |
+| `disconnects` | số lần đứt từ lúc app khởi động |
+| `url` | broker đang nhắm tới, đã che mật khẩu |
+
+Không truyền tên thì trả mọi hạ tầng **đang bật**: `broker_status()` →
+`{"rabbitmq": {...}, "redis": {...}}`.
+
+Đã tiêm `RabbitBroker` vào service ([Đăng tin](#đăng-tin)) thì đọc thẳng
+`self._mq.connected` — cũng chỉ đọc RAM, không gửi gì qua mạng. Bảng đầy đủ ở
+[Trạng thái và vòng đời](#trạng-thái-và-vòng-đời).
+
+- **Vẫn bắt lỗi khi đăng tin, dù vừa thấy `connected=True`.** Broker có thể đứt
+  đúng giữa hai dòng code. Đọc trạng thái để bỏ qua sớm, còn lời gửi thì vẫn cần
+  `try`/`except ServiceUnavailableError`, hoặc `fire_and_forget=True`.
+- **Gõ đúng tên.** `broker_status("rabbit")` ném `ValueError` kèm danh sách tên
+  hợp lệ: `kafka`, `mqtt`, `rabbitmq`, `redis`.
+
+### Kiểm xem handler nối/đứt đã được nhận chưa
+
+Lúc khởi động phải thấy:
+
+```
+rabbitmq.connection_hooks_registered  on_connect=['RabbitmqStatus.online'] on_disconnect=['RabbitmqStatus.offline']
+```
+
+Không thấy dòng này nghĩa là class thiếu `@injectable`, hoặc file không nằm dưới
+`src/api/`. Thử đứt thật: `docker stop <container broker>` — sẽ thấy
+`mq.connection_lost` rồi `on_disconnect` chạy; `docker start` lại thì thấy
+`mq.reconnected` và `on_connect` với `reconnect=True`.
+
+---
+
 ## Hỏng thì tra ở đây
 
 | Triệu chứng | Nguyên nhân |
@@ -808,6 +925,14 @@ Thiếu thư viện `aio-pika` mà `ENABLED=true` thì báo lỗi ngay lúc kh�
 | Payload sai khuôn model | vào thẳng `.dlq` (nếu bật) — thử lại cũng vô ích nên không thử |
 | log `mq.starting_degraded` lúc khởi động | broker chưa lên; vòng nối lại chạy ngầm, consumer bật lại khi nối được |
 | Muốn mọi worker cùng nhận mà chỉ MỘT worker nhận | các worker đang chung hàng đợi — dùng [fanout + hàng đợi riêng từng worker](#khi-cần-mọi-worker-cùng-nhận-một-bản-sao) |
+| `on_connect`/`on_disconnect` không bao giờ chạy, không có log `rabbitmq.connection_hooks_registered` | class thiếu `@injectable`, hoặc file không nằm dưới `src/api/` |
+| `RuntimeError: ... phải là (self) hoặc (self, info)` lúc khởi động | handler nối/đứt nhận hơn một tham số ngoài `self` |
+| log `rabbitmq.connection_hook_failed` | handler nối/đứt ném lỗi; handler khác và các lần sau vẫn chạy |
+| `broker_status("rabbitmq")` trả `enabled: False` dù đã bật | gọi trước khi app khởi động xong, hoặc `APP_RABBITMQ__ENABLED` chưa đọc được — soi log `mq.disabled` |
+| `ValueError: broker_status: không có hạ tầng ...` | gõ nhầm tên — dùng `kafka`, `mqtt`, `rabbitmq`, `redis` |
+| `self._mq.connected` luôn `False`, `publish` ném `ServiceUnavailableError` dù broker sống | tự dựng `RabbitBroker(settings)` thay vì tiêm qua `__init__` — xem [Đăng tin](#đăng-tin) |
+| Sau khi broker nối lại, mỗi tin bị xử lý HAI lần | `on_connect` đang khai lại hàng đợi/consumer — bỏ đi, aio-pika đã tự khôi phục |
+| Broker chưa lên lúc khởi động mà `on_disconnect` không chạy | đúng thiết kế: chưa từng nối được thì không có "mất kết nối" — xem [Khi nào handler được gọi](#khi-nào-handler-được-gọi) |
 
 ---
 

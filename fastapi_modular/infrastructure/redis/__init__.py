@@ -16,7 +16,11 @@ có cấu hình riêng, và không cần lớp này bật lên mới chạy đư
 
 from __future__ import annotations
 
-from fastapi_modular.infrastructure.redis.client import RedisClient
+from fastapi_modular.infrastructure.redis.client import (
+    RedisClient,
+    redis_on_connect,
+    redis_on_disconnect,
+)
 from fastapi_modular.infrastructure.redis.pubsub import (
     RedisRunner,
     discover_redis_subscribers,
@@ -34,6 +38,8 @@ __all__ = [
     "RedisRunner",
     "discover_redis_responders",
     "discover_redis_subscribers",
+    "redis_on_connect",
+    "redis_on_disconnect",
     "redis_responder",
     "redis_subscriber",
 ]

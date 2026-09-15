@@ -10,9 +10,11 @@ Mặc định bỏ qua. Chạy đầy đủ:
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import os
 import time
+import uuid
 
 import anyio
 import pytest
@@ -25,9 +27,12 @@ from fastapi_modular.infrastructure.mqtt import (
     MqttClient,
     MqttResponderRunner,
     MqttRunner,
+    mqtt_on_connect,
+    mqtt_on_disconnect,
     mqtt_responder,
     mqtt_subscriber,
 )
+from fastapi_modular.infrastructure.mqtt.client import parse_url
 
 CO_AIOMQTT = importlib.util.find_spec("aiomqtt") is not None
 MQTT_URL = os.getenv("TEST_MQTT_URL")
@@ -79,6 +84,74 @@ async def _pending(so_tin: int, seconds: float = 5.0) -> None:
     while time.monotonic() < deadline and len(DA_NHAN) < so_tin:
         await anyio.sleep(0.05)
     await anyio.sleep(0.3)                    # để tin thừa (nếu có) kịp tới
+
+
+# ------------------------------------------------------------ nối / đứt
+CONNECTION_EVENTS: list[tuple[str, dict]] = []
+
+
+@injectable
+class MqttConnectionLog:
+    @mqtt_on_connect
+    async def online(self, info: dict) -> None:
+        CONNECTION_EVENTS.append(("connect", info))
+
+    @mqtt_on_disconnect
+    async def offline(self, info: dict) -> None:
+        CONNECTION_EVENTS.append(("disconnect", info))
+
+
+def _events_of(client_id: str) -> list[tuple[str, dict]]:
+    return [(name, info) for name, info in CONNECTION_EVENTS if info.get("client_id") == client_id]
+
+
+async def _wait_until(check, seconds: float = 10.0) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline and not check():
+        await anyio.sleep(0.05)
+
+
+async def test_bi_da_khoi_broker_thi_bao_dut_roi_bao_noi_lai():
+    """MQTT chỉ cho MỘT phiên mỗi client_id: nối thêm một client cùng id là
+    broker đá phiên cũ ra — cách làm đứt thật mà không phải tắt broker."""
+    import aiomqtt
+
+    client_id = f"test-conn-{uuid.uuid4().hex[:6]}"
+    client = MqttClient(
+        Settings(APP_MQTT=MqttSettings(enabled=True, url=MQTT_URL or "", client_id=client_id,
+                                       reconnect_delay_seconds=0.5))
+    )
+    await client.startup()
+    try:
+        await _wait_until(lambda: len(_events_of(client_id)) >= 1)
+        params = parse_url(MQTT_URL or "")
+        params.pop("tls")
+        with contextlib.suppress(aiomqtt.MqttError):   # phiên cũ nối lại thì kẻ chen bị đá theo
+            async with aiomqtt.Client(**params, identifier=client_id):
+                await _wait_until(lambda: len(_events_of(client_id)) >= 2)
+        await _wait_until(lambda: len(_events_of(client_id)) >= 3)
+    finally:
+        await client.shutdown()
+
+    events = _events_of(client_id)
+    assert [name for name, _ in events][:3] == ["connect", "disconnect", "connect"]
+    assert events[0][1]["reconnect"] is False
+    assert events[1][1]["error"]
+    assert events[2][1]["reconnect"] is True
+    assert events[2][1]["downtime_seconds"] > 0
+    assert events[-1][0] == "connect", "tắt app không phải mất kết nối"
+
+
+async def test_broker_chua_len_thi_khong_bao_gi_ca():
+    client_id = f"test-down-{uuid.uuid4().hex[:6]}"
+    client = MqttClient(
+        Settings(APP_MQTT=MqttSettings(enabled=True, url="mqtt://localhost:1", client_id=client_id,
+                                       connect_timeout_seconds=0.5))
+    )
+    await client.startup()
+    await anyio.sleep(0.5)
+    await client.shutdown()
+    assert _events_of(client_id) == [], "chưa từng nối được thì không có 'mất kết nối'"
 
 
 async def test_noi_duoc_va_dang_ky_dung_topic(mqtt: MqttClient):
