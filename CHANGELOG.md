@@ -3,6 +3,37 @@
 Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 [SemVer](https://semver.org/lang/vi/).
 
+## [Chưa phát hành]
+
+### Thêm
+
+- **`@<hạ tầng>_on_connect` / `@<hạ tầng>_on_disconnect`** cho MQTT, RabbitMQ,
+  Redis, Kafka — chạy code khi mất kết nối và khi nối lại. Chỉ báo khi trạng
+  thái đổi; tắt app hay broker chưa từng lên thì không gọi `on_disconnect`.
+- **`broker_status()`** — trạng thái kết nối lúc này của cả bốn, đọc từ RAM
+  (~260 ns một lần gọi), gọi liên tục cũng được.
+- **Biến `APP_REDIS__HEALTH_CHECK_SECONDS` / `APP_KAFKA__HEALTH_CHECK_SECONDS`**
+  (mặc định 5) — nhịp kiểm tra để biết Redis/Kafka đứt, vì cả hai thư viện tự
+  nối lại mà không báo gì.
+- **`fam module <tên> --rabbitmq | --redis | --mqtt | --kafka`** — sinh MỘT file
+  service cho hạ tầng đó (tiêm client, hàm gửi, hàm nghe, `is_online()`,
+  `on_connect`/`on_disconnect`), không kèm CRUD. Ghép nhiều cờ được.
+
+### Đổi
+
+- **`fam module <tên> --gateway` không còn sinh kèm CRUD.** Tên chưa có thì tạo
+  module chỉ có gateway; muốn cả hai thì chạy `fam module <tên>` trước.
+- `KafkaBroker.connected` báo đúng khi cụm chết — trước đây nó `True` suốt vì chỉ
+  kiểm producer còn tồn tại.
+- `RedisClient.connected` không còn thành `False` vì một lệnh sai (`WRONGTYPE`);
+  chỉ lỗi kết nối mới tính.
+
+### Bỏ
+
+- **`fam module --gateway-only`, `--consumer`, `--consumer-only`.** Dùng
+  `--gateway` và `--rabbitmq`: chúng tự tạo module nếu chưa có, thêm vào nếu đã
+  có. Gõ cờ cũ sẽ báo lỗi kèm cờ thay thế.
+
 ## [0.4.0] — 2026-08-28
 
 ### Thêm

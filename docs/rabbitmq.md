@@ -330,8 +330,8 @@ class AlertConsumer:
 ```
 
 Không cần decorator ở cấp class — bất kỳ class `@injectable` nào cũng chứa
-consumer được. `fam module alerts --consumer` hoặc `fam module alerts` --consumer-only
-sinh sẵn khung này.
+consumer được. `fam module alerts --rabbitmq` sinh sẵn khung này — module chưa có
+thì tạo, có rồi thì thêm file `alert_rabbitmq.py` vào.
 
 ### `@rabbitmq_subscriber(...)`
 
@@ -984,8 +984,7 @@ curl -s localhost:8000/api/metrics | grep rabbitmq_
 ```bash
 fam install rabbitmq
 fam info                        # cấu hình đang dùng
-fam module alerts --consumer              # module mới kèm consumer
-fam module alerts --consumer-only                 # thêm consumer vào module có sẵn
+fam module alerts --rabbitmq    # sinh file RabbitMQ (tạo module nếu chưa có)
 
 docker exec rabbit rabbitmqctl list_queues name messages consumers durable arguments
 docker exec rabbit rabbitmqctl list_exchanges name type durable      # soi KIỂU exchange

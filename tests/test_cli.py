@@ -140,8 +140,11 @@ def _ten_trong_code(root: Path) -> set[str]:
 
 def test_code_sinh_ra_khong_co_dinh_danh_tieng_viet(tmp_path: Path):
     assert main(["init", "--root", str(tmp_path)]) == 0
-    assert main(["module", "alerts", "--gateway", "--consumer",
-                 "--root", str(tmp_path / "src" / "api")]) == 0
+    root = str(tmp_path / "src" / "api")
+    assert main(["module", "alerts", "--root", root]) == 0
+    # Thêm đủ năm cờ hạ tầng: mẫu của chúng cũng là code người dùng nhận về.
+    assert main(["module", "alerts", "--gateway", "--rabbitmq", "--redis", "--mqtt", "--kafka",
+                 "--root", root]) == 0
 
     pham: list[str] = []
     for label in _ten_trong_code(tmp_path):
@@ -256,9 +259,7 @@ _MAKE_SANG_FAM = {
     "help": "--help",
     "dev": "dev",
     "run": "run",
-    "module": "module",
-    "gateway": "module",              # --gateway-only
-    "consumer": "module",             # --consumer-only
+    "module": "module",               # gateway=1 rabbitmq=1 redis=1 mqtt=1 kafka=1
     "migrate": "migrate",
     "migrate-create": "migrate",
     "migrate-down": "migrate",

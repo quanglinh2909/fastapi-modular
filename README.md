@@ -131,8 +131,7 @@ fam: lệnh 'm' chưa rõ — khớp với migrate, module. Gõ thêm vài chữ
 | `fam dev` | `fam d` | run with autoreload |
 | `fam run` | `fam r` | run in production mode (1 process; `--workers 4` for more) |
 | `fam module <name>` | `fam mo` | generate a module: controller + service + dto + entity |
-| `fam module <name> --gateway` | | plus a WebSocket gateway (`--consumer` for RabbitMQ) |
-| `fam module <name> --gateway-only` | | add a gateway to an **existing** module (`--consumer-only` for RabbitMQ) |
+| `fam module <name> --mqtt` | | **only** the MQTT file, no CRUD — creates the module if missing, adds to it otherwise. Same for `--gateway` (WebSocket) · `--rabbitmq` · `--redis` · `--kafka`; flags combine |
 | `fam module <name> --entity <N>` | | set the entity class name; guessed from the module name otherwise |
 | `fam provider <family> <name>` | `fam pr` | generate a pluggable provider: capability interfaces + implementation stub |
 | `fam env <component>` | `fam e` | only write config variables into `.env` (installs nothing) |
@@ -160,10 +159,15 @@ arguments. `fam --help` lists everything.
 ## Adding a module
 
 ```bash
-fam module alerts              # controller + service + dto + entities
-fam module alerts --gateway    # plus a WebSocket gateway
-fam module alerts --consumer   # plus a RabbitMQ consumer
+fam module alerts                    # controller + service + dto + entities
+fam module alerts --gateway          # add a WebSocket gateway to it
+fam module devices --mqtt --redis    # a module with only MQTT + Redis files, no CRUD
 ```
+
+Infrastructure flags (`--gateway`, `--rabbitmq`, `--redis`, `--mqtt`, `--kafka`)
+generate only their own file: a service with the client injected, a send method,
+a listener, `is_online()` and `on_connect`/`on_disconnect`. On a new name they
+create the module; on an existing one they add to it and never overwrite.
 
 Routes appear immediately, the table is created, validation runs — only the
 method bodies are missing (calling them returns 501 with the function name). Your
@@ -250,7 +254,7 @@ class AlertGateway:
 fam dev
 # ws://localhost:8000/ws/chat?client_id=an
 
-fam module alerts --gateway-only   # add a gateway to an existing module
+fam module alerts --gateway        # add a gateway (creates the module if missing)
 fam install ws-redis               # required when running multiple workers
 ```
 
@@ -448,7 +452,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              1182 tests that need no infrastructure, 432 more with real drivers/servers
+tests/              1198 tests that need no infrastructure, 432 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 

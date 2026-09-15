@@ -122,8 +122,7 @@ fam: lệnh 'm' chưa rõ — khớp với migrate, module. Gõ thêm vài chữ
 | `fam dev` | `fam d` | chạy kèm autoreload |
 | `fam run` | `fam r` | chạy chế độ production (1 tiến trình; `--workers 4` để nhiều hơn) |
 | `fam module <tên>` | `fam mo` | sinh module: controller + service + dto + entity |
-| `fam module <tên> --gateway` | | kèm gateway WebSocket (`--consumer` cho RabbitMQ) |
-| `fam module <tên> --gateway-only` | | chỉ thêm gateway vào module **đã có** (`--consumer-only` cho RabbitMQ) |
+| `fam module <tên> --mqtt` | | **chỉ** file MQTT, không kèm CRUD — module chưa có thì tạo, có rồi thì thêm vào. Tương tự `--gateway` (WebSocket) · `--rabbitmq` · `--redis` · `--kafka`; ghép cờ được |
 | `fam module <tên> --entity <Tên>` | | đặt tên lớp entity; mặc định đoán từ tên module |
 | `fam provider <họ> <tên>` | `fam pr` | sinh provider cắm được: interface năng lực + khung hiện thực |
 | `fam env <thành-phần>` | `fam e` | chỉ ghi biến cấu hình vào `.env` (không cài gì) |
@@ -155,10 +154,15 @@ tham số. `fam --help` cho danh sách đầy đủ.
 ## Thêm module
 
 ```bash
-fam module alerts              # controller + service + dto + entities
-fam module alerts --gateway    # kèm gateway WebSocket
-fam module alerts --consumer   # kèm consumer RabbitMQ
+fam module alerts                    # controller + service + dto + entities
+fam module alerts --gateway          # thêm gateway WebSocket vào module đó
+fam module devices --mqtt --redis    # module chỉ có file MQTT + Redis, không CRUD
 ```
+
+Cờ hạ tầng (`--gateway`, `--rabbitmq`, `--redis`, `--mqtt`, `--kafka`) chỉ sinh
+file của chính nó: một service đã tiêm client, hàm gửi, hàm nghe, `is_online()`
+và `on_connect`/`on_disconnect`. Tên chưa có thì tạo module mới; module đã có thì
+thêm vào và không bao giờ ghi đè.
 
 Route xuất hiện ngay, bảng được tạo ngay, validate chạy ngay — chỉ thân hàm là
 chưa viết (gọi vào trả 501 kèm tên hàm). Việc của bạn: thêm trường vào entity và
@@ -243,7 +247,7 @@ class AlertGateway:
 fam dev
 # ws://localhost:8000/ws/chat?client_id=an
 
-fam module alerts --gateway-only   # thêm gateway vào module đã có
+fam module alerts --gateway        # thêm gateway (chưa có module thì tạo)
 fam install ws-redis               # bắt buộc khi chạy nhiều worker
 ```
 
@@ -278,7 +282,7 @@ await self._mq.publish("events", "xe.viTri", {"lat": 21.0}, ttl=5)
 
 ```bash
 fam install rabbitmq            # cài aio-pika + ghi APP_RABBITMQ__* vào .env
-fam module alerts --consumer    # module mới kèm consumer
+fam module alerts --rabbitmq    # sinh file RabbitMQ (chưa có module thì tạo)
 ```
 
 Không cài, không bật thì mọi thứ chạy y như chưa từng có nó. Broker rớt thì app
@@ -445,7 +449,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              1182 test chạy không cần hạ tầng, 432 test nữa cần driver/server thật
+tests/              1198 test chạy không cần hạ tầng, 432 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 

@@ -27,17 +27,9 @@ dev: ## Chạy API kèm autoreload
 run: ## Chạy API chế độ production (nhiều worker — cần driver DB thật)
 	$(FAM) run --workers $(or $(WORKERS),4)
 
-module: ## Sinh khung module mới — dùng: make module name=alerts [entity=alert] [ws=1] [mq=1]
+module: ## Sinh module — dùng: make module name=alerts [entity=alert] [gateway=1] [rabbitmq=1] [redis=1] [mqtt=1] [kafka=1]
 	@test -n "$(name)" || { echo 'Thiếu tên. Dùng: make module name=alerts'; exit 1; }
-	$(FAM) module $(name) $(if $(entity),--entity $(entity),) $(if $(ws),--gateway,) $(if $(mq),--consumer,)
-
-gateway: ## Thêm gateway WebSocket vào module đã có — dùng: make gateway name=alerts
-	@test -n "$(name)" || { echo 'Thiếu tên. Dùng: make gateway name=alerts'; exit 1; }
-	$(FAM) module $(name) --gateway-only $(if $(entity),--entity $(entity),)
-
-consumer: ## Thêm consumer RabbitMQ vào module đã có — dùng: make consumer name=alerts
-	@test -n "$(name)" || { echo 'Thiếu tên. Dùng: make consumer name=alerts'; exit 1; }
-	$(FAM) module $(name) --consumer-only $(if $(entity),--entity $(entity),)
+	$(FAM) module $(name) $(if $(entity),--entity $(entity),) $(if $(gateway),--gateway,) $(if $(rabbitmq),--rabbitmq,) $(if $(redis),--redis,) $(if $(mqtt),--mqtt,) $(if $(kafka),--kafka,)
 
 migrate: ## Chạy migration lên bản mới nhất
 	$(FAM) migrate up

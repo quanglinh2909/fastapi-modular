@@ -84,6 +84,16 @@ def _iter_packages(package: str) -> list[str]:
     return names
 
 
+def _has_providers(module_package: str) -> bool:
+    """Module có class `@injectable` nào không — consumer, listener MQTT, service nền."""
+    from fastapi_modular.core.container import _REGISTRY
+
+    return any(
+        cls.__module__ == module_package or cls.__module__.startswith(f"{module_package}.")
+        for cls in _REGISTRY.values()
+    )
+
+
 def discover_routers(package: str = DEFAULT_PACKAGE) -> list[tuple[str, APIRouter]]:
     """Quét package ứng dụng, trả về [(tên module, router HTTP)] theo alphabet."""
     found: list[tuple[str, APIRouter]] = []
@@ -99,8 +109,9 @@ def discover_routers(package: str = DEFAULT_PACKAGE) -> list[tuple[str, APIRoute
 
         controllers = controllers_in(module_package)
         if not controllers:
-            if gateways_in(module_package):
-                # Module chỉ có gateway WebSocket là hợp lệ, không phải thiếu sót.
+            if gateways_in(module_package) or _has_providers(module_package):
+                # Module chỉ có gateway WebSocket, hoặc chỉ có service hạ tầng
+                # (`fam module x --mqtt`), là hợp lệ, không phải thiếu sót.
                 continue
             # Im lặng ở đây là nguyên nhân số một của "sao route của tôi 404?".
             log.warning("api.module_without_controller", module=name)

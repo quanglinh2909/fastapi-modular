@@ -122,10 +122,12 @@ def _main(argv: list[str] | None = None) -> int:
     p_mod.add_argument(
         "--root", type=Path, default=Path("src/api"), help="thư mục chứa các module"
     )
-    p_mod.add_argument("--gateway", action="store_true", help="tạo kèm gateway WebSocket")
-    p_mod.add_argument("--gateway-only", action="store_true")
-    p_mod.add_argument("--consumer", action="store_true", help="tạo kèm consumer RabbitMQ")
-    p_mod.add_argument("--consumer-only", action="store_true")
+    # Import ở đây nghĩa là mọi lệnh `fam` đều nạp bộ sinh module. Chấp nhận
+    # được: file đó chỉ dùng thư viện chuẩn. Đổi lại cờ chỉ khai ở MỘT chỗ cho
+    # cả `fam module` lẫn `python -m fastapi_modular.cli.new_module`.
+    from fastapi_modular.cli.new_module import INFRA, REMOVED_FLAGS, add_infra_arguments
+
+    add_infra_arguments(p_mod)
 
     p_prov = command.add_parser("provider", help="sinh provider cắm được (họ + năng lực)")
     p_prov.add_argument("family", help="tên họ: payment, sms, device")
@@ -210,14 +212,8 @@ def _main(argv: list[str] | None = None) -> int:
         argv2 = [args.name, "--root", str(args.root)]
         if args.entity:
             argv2 += ["--entity", args.entity]
-        for has, existing_names in (
-            (args.gateway, "--gateway"),
-            (args.gateway_only, "--gateway-only"),
-            (args.consumer, "--consumer"),
-            (args.consumer_only, "--consumer-only"),
-        ):
-            if has:
-                argv2.append(existing_names)
+        argv2 += [f"--{flag}" for flag in INFRA if getattr(args, flag)]
+        argv2 += [old for dest, (old, _new) in REMOVED_FLAGS.items() if getattr(args, dest)]
         return sinh_module(argv2)
 
     if args.command == "provider":

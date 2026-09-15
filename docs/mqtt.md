@@ -33,7 +33,9 @@ Hai việc làm được: **gửi tin** (`MqttClient.publish`) và **nghe topic*
 
 ## Gửi tin
 
-Tiêm `MqttClient` qua `__init__` như mọi provider, rồi gọi `publish`:
+Tiêm `MqttClient` qua `__init__` như mọi provider, rồi gọi `publish`.
+`fam module devices --mqtt` sinh sẵn khung này, kèm handler nghe topic và
+`on_connect`/`on_disconnect` — module chưa có thì tạo, có rồi thì thêm vào.
 
 ```python
 # src/api/thiet_bi/device_service.py

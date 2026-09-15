@@ -482,7 +482,7 @@ class _Connection:
         except AppError as exc:
             self.socket.send(error_frame(exc, ack=frame.id, debug=self.debug))
         except NotImplementedError as exc:
-            # Khung do `make gateway` sinh ra raise NotImplementedError. Trả mã
+            # Khung do `fam module x --gateway` sinh ra raise NotImplementedError. Trả mã
             # riêng "chưa viết" thay vì internal_error, giống 501 bên HTTP.
             self.socket.send(
                 error_frame(

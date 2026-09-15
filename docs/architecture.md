@@ -164,12 +164,10 @@ thể thêm trường nội bộ (mật khẩu băm, cờ hệ thống) mà khô
 ## Thêm module mới
 
 ```bash
-fam module alerts            # entity đoán là Alert
+fam module alerts                   # CRUD, entity đoán là Alert
 fam module people --entity person   # đè khi đoán sai
-fam module alerts --gateway       # kèm gateway WebSocket
-fam module alerts --consumer       # kèm consumer RabbitMQ
-fam module alerts --gateway-only           # thêm gateway vào module đã có
-fam module alerts --consumer-only          # thêm consumer vào module đã có
+fam module alerts --gateway         # thêm gateway WebSocket vào module đã có
+fam module devices --mqtt --redis   # module mới CHỈ có file MQTT + Redis, không CRUD
 ```
 
 Sinh ra đúng cấu trúc của các module có sẵn:
@@ -207,10 +205,28 @@ Ba việc còn lại của bạn:
 
 Không phải đăng ký ở đâu cả: không sửa `main.py`, không sửa `api/app.py`.
 
-Thêm `--gateway` thì có thêm `<tên>_gateway.py` và `dto/<tên>_ws_dto.py`: gateway
-WebSocket đã nối DI, có hook vòng đời và hai handler mẫu — cũng để trống thân,
-gọi vào trả khung `error` mang code `not_implemented`. Xem
-[websocket.md](websocket.md).
+### Cờ hạ tầng
+
+Mỗi cờ sinh **đúng phần của nó**, không kèm CRUD. Tên chưa có thì tạo module mới
+(chỉ thêm `__init__.py`); module đã có thì thêm vào. File nào đã tồn tại thì
+dừng hẳn, không ghi file nào — kể cả những file không trùng. Ghép nhiều cờ
+trong một lệnh được.
+
+| Cờ | Sinh ra | Trong đó |
+|---|---|---|
+| `--gateway` | `<tên>_gateway.py`, `dto/<tên>_ws_dto.py` | gateway WebSocket, hook vòng đời, hai handler mẫu — xem [websocket.md](websocket.md) |
+| `--rabbitmq` | `<tên>_rabbitmq.py` | lớp `<Tên>Rabbitmq`: `publish`, `@rabbitmq_subscriber` hàng đợi `<module>-worker` — xem [rabbitmq.md](rabbitmq.md) |
+| `--redis` | `<tên>_redis.py` | lớp `<Tên>Redis`: `cached`, `broadcast`, `@redis_subscriber("<module>.*")` — xem [redis.md](redis.md) |
+| `--mqtt` | `<tên>_mqtt.py` | lớp `<Tên>Mqtt`: `send`, `@mqtt_subscriber("<module>/+/status")` — xem [mqtt.md](mqtt.md) |
+| `--kafka` | `<tên>_kafka.py` | lớp `<Tên>Kafka`: `publish` có `key`, `@kafka_subscriber` nhóm `<module>-worker` — xem [kafka.md](kafka.md) |
+
+Bốn file hàng đợi còn có chung `is_online()` và cặp `@<hạ tầng>_on_connect` /
+`@<hạ tầng>_on_disconnect`. Chúng không import gì của phần CRUD, nên chạy được
+trong module không có controller. Thân handler để trống, ném
+`NotImplementedError`; hạ tầng tắt (mặc định) thì file nằm im.
+
+`--gateway-only`, `--consumer` và `--consumer-only` đã bỏ — gõ vào sẽ báo lỗi kèm
+cờ thay thế, không sinh gì.
 
 ### Viết tay thay vì dùng lệnh
 
@@ -232,7 +248,7 @@ Không phải sửa `main.py`, không phải sửa `api/app.py`, không phải e
 
 Hai lỗi hay gặp, cả hai đều được log cảnh báo lúc boot:
 
-- `api.module_without_controller` — thư mục không có `@controller` nào.
+- `api.module_without_controller` — thư mục không có `@controller`, gateway hay class `@injectable` nào.
 - `controller.no_routes` — có controller nhưng chưa method nào mang `@get`/`@post`.
 
 ### Tham số của `@controller`
@@ -335,7 +351,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 1182 test trên backend memory (432 test nữa cần hạ tầng hoặc driver thật)
+fam test       # 1198 test trên backend memory (432 test nữa cần hạ tầng hoặc driver thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

@@ -236,8 +236,7 @@ mà server đang dùng, không phải đoán.
 ## 4. Viết một gateway
 
 ```bash
-fam module alerts --gateway        # module mới, có sẵn gateway
-fam module alerts --gateway-only   # thêm gateway vào module đã có
+fam module alerts --gateway        # chưa có module thì tạo, có rồi thì thêm gateway vào
 ```
 
 Không phải đăng ký ở đâu cả — `register_routes` trong `src/main.py` tự quét và gắn.
@@ -909,8 +908,7 @@ Riêng lỗi vượt tần suất **không ghi log** — nó chỉ gửi khung `
 ## 14. Bảng lệnh
 
 ```bash
-fam module alerts --gateway        # module mới kèm gateway
-fam module alerts --gateway-only   # thêm gateway vào module có sẵn
+fam module alerts --gateway        # sinh gateway (tạo module nếu chưa có)
 fam install ws-redis               # adapter cho nhiều worker
 fam info                           # đang chạy với cấu hình gì
 fam dev

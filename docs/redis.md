@@ -41,7 +41,9 @@ mọi worker** (`publish` + `@redis_subscriber`).
 
 ## Cache
 
-Tiêm `RedisClient` qua `__init__` như mọi provider:
+Tiêm `RedisClient` qua `__init__` như mọi provider. `fam module reports --redis`
+sinh sẵn khung này, kèm `broadcast`, handler nghe kênh và
+`on_connect`/`on_disconnect` — module chưa có thì tạo, có rồi thì thêm vào.
 
 ```python
 # src/api/bao_cao/report_service.py

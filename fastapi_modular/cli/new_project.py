@@ -339,7 +339,7 @@ hệt `fam module alerts`. Nhập nhằng thì `fam` hỏi lại chứ không đ
 | `fam dev` | `fam d` | chạy kèm autoreload |
 | `fam run --workers 4` | `fam r` | chạy chế độ production |
 | `fam module <tên>` | `fam mo` | sinh module: controller + service + dto + entity |
-| `fam module <tên> --gateway` | | kèm gateway WebSocket (`--consumer` cho RabbitMQ) |
+| `fam module <tên> --mqtt` | | chỉ file MQTT, không CRUD — chưa có module thì tạo, có rồi thì thêm. Tương tự `--gateway` · `--rabbitmq` · `--redis` · `--kafka` |
 | `fam env <thành-phần>` | `fam e` | chỉ ghi biến vào `.env`, không cài gì |
 | `fam info` | `fam inf` | đang nối vào đâu, thư viện nào đã cài |
 | `fam migrate` | `fam mi` | chạy migration (Alembic) |
@@ -368,12 +368,13 @@ nằm im — không import thư viện, không mở kết nối, không đổi h
 
 ```bash
 fam module {vi_du}                 # controller + service + dto + entity
-fam module {vi_du} --gateway       # kèm gateway WebSocket
-fam module {vi_du} --consumer      # kèm consumer RabbitMQ
+fam module {vi_du} --gateway       # thêm gateway WebSocket vào module đó
+fam module devices --mqtt --redis  # module chỉ có file MQTT + Redis, không CRUD
 ```
 
 Route xuất hiện ngay; chỉ thân hàm trong service là chưa viết (gọi vào trả 501
-kèm tên hàm).
+kèm tên hàm). Cờ hạ tầng (`--gateway` `--rabbitmq` `--redis` `--mqtt` `--kafka`)
+chỉ sinh file của chính nó, và không bao giờ ghi đè file đã có.
 
 ## Thêm biến cấu hình của riêng bạn
 

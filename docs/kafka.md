@@ -53,7 +53,9 @@ cần chia việc và xử lý đúng một lần.
 
 ## Gửi tin
 
-Tiêm `KafkaBroker` qua `__init__` như mọi provider, rồi gọi `publish`:
+Tiêm `KafkaBroker` qua `__init__` như mọi provider, rồi gọi `publish`.
+`fam module orders --kafka` sinh sẵn khung này, kèm handler đọc topic và
+`on_connect`/`on_disconnect` — module chưa có thì tạo, có rồi thì thêm vào.
 
 ```python
 # src/api/don_hang/order_events.py
