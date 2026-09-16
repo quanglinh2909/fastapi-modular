@@ -26,6 +26,7 @@ NestJS. Ai quen `@EventSubscriber()` + `listenTo()` thì đọc thẳng
 | "Xoá bản ghi thì dọn file đính kèm" | [Khi nào handler chạy](#khi-nào-handler-chạy) |
 | "**Xoá camera kéo theo log của nó** — biết dòng nào bị kéo theo" | [Xoá cha kéo theo con](#xoá-cha-kéo-theo-con) |
 | "Nhóm các sự kiện của **cùng một lệnh xoá**" | [Xoá cha kéo theo con](#xoá-cha-kéo-theo-con) — `operation_id` |
+| "Ghi nhật ký **ai vừa sửa bản ghi này**, quyền gì" | [Biết ai vừa sửa](#biết-ai-vừa-sửa) |
 | "Handler hỏng thì lời ghi có bị huỷ không" | [Lưu ý](#lưu-ý) |
 | "Tôi quen TypeORM, cái gì giống cái gì khác" | [Đối chiếu với TypeORM](#đối-chiếu-với-typeorm) |
 | "Viết rồi mà không thấy chạy" | [Hỏng thì tra ở đây](#hỏng-thì-tra-ở-đây) |
@@ -178,6 +179,72 @@ database làm cascade, còn `memory` và Mongo thì khung làm.
 
 ---
 
+## Biết ai vừa sửa
+
+Handler chạy **bên trong** chính request đã gây ra lời ghi, nên đọc được người
+gọi bằng `current_principal()` — y như trong service:
+
+```python
+# src/api/cameras/camera_audit.py
+from fastapi_modular import get_logger, injectable
+from fastapi_modular.core.guards import current_principal
+from fastapi_modular.infrastructure.database import EntityEvent, entity_subscriber
+from src.api.cameras.entities.camera_model import Camera
+
+log = get_logger(__name__)
+
+
+def who() -> tuple[str | None, list[str]]:
+    """Ai đang gọi. Trả (None, []) khi lời ghi không đến từ một request."""
+    try:
+        principal = current_principal()
+    except RuntimeError:
+        return None, []
+    return principal.id, sorted(principal.roles)
+
+
+@injectable
+@entity_subscriber(Camera)
+class CameraAudit:
+    async def after_update(self, event: EntityEvent) -> None:
+        user_id, roles = who()
+        log.info(
+            "camera.audit",
+            camera_id=event.id,
+            cot=sorted(event.updated_columns),
+            boi=user_id,
+            quyen=roles,
+            request_id=event.request_id,
+        )
+```
+
+Ba điều phải biết trước khi dựa vào nó:
+
+- **Khung KHÔNG có sẵn xác thực JWT hay Keycloak.** `principal.id` chỉ có giá
+  trị nếu route đó gắn một guard **bạn tự viết**, guard đó kiểm token rồi gọi
+  `principal.assume(id=claims["sub"], roles=...)` — xem
+  [operations.md](operations.md#principal) và ví dụ JWT ở
+  [websocket.md](websocket.md#6-xác-thực). Route không có guard thì handler thấy
+  `(None, [])`, kể cả khi client có gửi token.
+- **`Principal` chỉ mang `id` và `roles`.** Không có claim JWT, không có token
+  gốc, không có email hay tenant. Cần claim khác thì guard cất chúng vào một
+  provider `Scope.REQUEST` của riêng bạn, rồi handler đọc provider đó.
+- **Ghi dữ liệu từ worker, cron hay script thì không có request nào cả**, và
+  `current_principal()` ném `RuntimeError`. Lỗi trong handler làm rollback cả
+  lời ghi, nên một handler gọi thẳng `current_principal()` sẽ **làm chết mọi
+  lệnh ghi ngoài HTTP**. Luôn bọc `try/except` như `who()` ở trên.
+
+Riêng `event.request_id` thì luôn có trong request HTTP kể cả khi chưa xác thực,
+và **trùng đúng header `x-request-id`** của response — đủ để nối dòng audit với
+log của request:
+
+```
+x-request-id: 9dc2cf3755624b5881467e88ba0ec4d7
+camera.audit  request_id=9dc2cf3755624b5881467e88ba0ec4d7  boi=user-42  quyen=['admin']
+```
+
+---
+
 ## Lưu ý
 
 - **Handler ném lỗi thì lời ghi hỏng theo.** Nó chạy trong cùng transaction, nên
@@ -195,7 +262,9 @@ database làm cascade, còn `memory` và Mongo thì khung làm.
   `save`/`update`/`delete` chạy y như trước. Có người nghe `*_update`/`*_remove`
   thì khung đọc thêm **một** lượt để lấy `database_entity`.
 - **Subscriber là singleton.** Không dùng được `Scope.REQUEST` — docs NestJS
-  cũng nói đúng câu đó. Cần dữ liệu của request thì lấy từ `event`.
+  cũng nói đúng câu đó. Cần dữ liệu của request thì lấy từ `event`, còn danh
+  tính người gọi thì đọc trong thân method bằng `current_principal()` — xem
+  [Biết ai vừa sửa](#biết-ai-vừa-sửa).
 
 ---
 
@@ -225,6 +294,8 @@ Không thấy dòng này nghĩa là class thiếu `@injectable`, hoặc file kh�
 | Xoá cha mà không thấy sự kiện của con | entity con chưa có subscriber nào nghe `after_remove`/`after_update`, hoặc khoá ngoại khai `RESTRICT` |
 | Không có `before_remove` cho dòng con bị cascade | đúng thiết kế — xem [Xoá cha kéo theo con](#xoá-cha-kéo-theo-con) |
 | `updated_columns` rỗng sau `save()` trên backend `memory` | `memory` giữ chính object của bạn, nên "bản cũ" đã bị sửa theo — xem [Tra cứu](#tra-cứu) |
+| `RuntimeError: 'Principal' là provider request-scoped nhưng không có request scope nào đang mở` | handler gọi `current_principal()` nhưng lời ghi đến từ worker/cron/script — bọc `try/except` như ở [Biết ai vừa sửa](#biết-ai-vừa-sửa) |
+| `principal.id` là `None` dù người dùng đã đăng nhập | route đó chưa gắn guard xác thực, hoặc guard chưa gọi `principal.assume(...)` |
 | Vòng lặp vô tận, app treo lúc ghi | handler gọi lại `save()` cho chính entity đó |
 | Handler ghi database xong mà dữ liệu không thấy đâu | lời ghi chính sau đó ném lỗi và rollback cả hai — đúng thiết kế |
 

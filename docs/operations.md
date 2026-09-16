@@ -60,6 +60,10 @@ principal.require_role("admin")          # ném ForbiddenError nếu thiếu vai
 
 Guard xác thực điền vào bằng `principal.assume(id=..., roles={...})`.
 
+`Principal` chỉ mang **`id` và `roles`** — không giữ claim JWT, không giữ token
+gốc. Cần thêm trường (email, tenant, `preferred_username`) thì guard tự lưu vào
+một provider `Scope.REQUEST` của riêng bạn.
+
 Đọc bằng `current_principal()` **trong thân method**, không nhận qua `__init__`:
 service là singleton còn Principal theo request, và container sẽ chặn nếu bạn
 cố inject thẳng — chính là để không rò dữ liệu người này sang người khác.
