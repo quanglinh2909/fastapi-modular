@@ -154,6 +154,23 @@ def references_of(entity: type) -> dict[str, Reference]:
     return found
 
 
+def children_of(parent: type) -> list[tuple[type, str, Reference]]:
+    """[(entity con, tên cột, khoá ngoại)] — mọi entity đang trỏ tới `parent`.
+
+    Tra NGƯỢC so với `references_of`, và phải quét sổ entity vì khoá ngoại chỉ
+    được khai ở phía con. Ba chỗ cần đúng danh sách này: cascade của `memory`,
+    cascade của Mongo, và chỗ báo sự kiện cho bản ghi con khi xoá cha.
+    """
+    from fastapi_modular.core.container import _ENTITIES
+
+    return [
+        (child, column, ref)
+        for child in list(_ENTITIES.values())
+        for column, ref in mapping_for(child).references
+        if ref.target is parent
+    ]
+
+
 _COLUMN_KEY = "fastapi_modular.column"
 
 

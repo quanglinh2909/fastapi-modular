@@ -22,7 +22,12 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
   `event.updated_columns`. Không truyền entity thì nghe tất cả (như bỏ
   `listenTo()`). Handler chạy trong cùng transaction với lời ghi. Khai method mà
   khung chưa có (`before_soft_remove`, `*_transaction_*`, `*_query`) thì app báo
-  lỗi ngay lúc khởi động thay vì im lặng không bao giờ chạy. Xem
+  lỗi ngay lúc khởi động thay vì im lặng không bao giờ chạy.
+
+  Thêm hai thứ TypeORM không có: **`event.operation_id`** (mọi sự kiện của cùng
+  một lời gọi ghi mang chung một mã) và **sự kiện cho bản ghi con bị `on_delete`
+  đụng tới** — xoá camera thì log bị CASCADE có `after_remove`, ghi chú bị
+  SET NULL có `after_update`, đều kèm `event.cascaded_from="Camera"`. Xem
   [docs/subscribers.md](docs/subscribers.md).
 - **`fam module <tên> --rabbitmq | --redis | --mqtt | --kafka`** — sinh MỘT file
   service cho hạ tầng đó (tiêm client, hàm gửi, hàm nghe, `is_online()`,

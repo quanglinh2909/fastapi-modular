@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from fastapi_modular.core.clock import utcnow
 from fastapi_modular.core.config import Settings
 from fastapi_modular.core.container import injectable
+from fastapi_modular.core.context import get_request_id
 from fastapi_modular.core.exceptions import BadRequestError
 from fastapi_modular.core.logging import get_logger
 from fastapi_modular.core.providers import CapabilityNotSupportedError
@@ -32,6 +33,8 @@ from fastapi_modular.infrastructure.database.base import (
     Transaction,
     check_changes,
     check_lengths,
+    children_of,
+    default_of,
     is_transient_error,
     mapping_for,
 )
@@ -40,6 +43,7 @@ from fastapi_modular.infrastructure.database.query import Query
 from fastapi_modular.infrastructure.database.subscribers import (
     EntityEvent,
     changed_columns,
+    new_operation_id,
     snapshot,
     subscribers,
 )
@@ -296,7 +300,8 @@ class Repository(Generic[E]):
 
     # ------------------------------------------------- subscriber theo entity
     def _event(self, **fields: Any) -> EntityEvent:
-        return EntityEvent(entity_name=self._entity.__name__, database=self._db, **fields)
+        fields.setdefault("entity_name", self._entity.__name__)
+        return EntityEvent(database=self._db, request_id=get_request_id(), **fields)
 
     async def _before_image(self, id_: EntityId) -> Any:
         """Bản ghi hiện nằm dưới database, làm `event.database_entity`.
@@ -309,13 +314,18 @@ class Repository(Generic[E]):
     async def _save_watched(self, obj: E) -> E:
         """`save()` khi entity này có subscriber. Tách riêng để đường thường không đổi."""
         entity_id = getattr(obj, "id", None)
+        operation = new_operation_id()
         if not entity_id:
-            await subscribers.run("before_insert", self._entity, self._event(entity=obj))
+            await subscribers.run(
+                "before_insert", self._entity, self._event(entity=obj, operation_id=operation)
+            )
             saved = await self._backend.save(self._entity, obj)
             await subscribers.run(
                 "after_insert",
                 self._entity,
-                self._event(entity=saved, id=getattr(saved, "id", None)),
+                self._event(
+                    entity=saved, id=getattr(saved, "id", None), operation_id=operation
+                ),
             )
             return saved
 
@@ -325,14 +335,18 @@ class Repository(Generic[E]):
         await subscribers.run(
             "before_update",
             self._entity,
-            self._event(entity=obj, database_entity=before, updated_columns=columns, id=entity_id),
+            self._event(
+                entity=obj, database_entity=before, updated_columns=columns, id=entity_id,
+                operation_id=operation,
+            ),
         )
         saved = await self._backend.save(self._entity, obj)
         await subscribers.run(
             "after_update",
             self._entity,
             self._event(
-                entity=saved, database_entity=before, updated_columns=columns, id=entity_id
+                entity=saved, database_entity=before, updated_columns=columns, id=entity_id,
+                operation_id=operation,
             ),
         )
         return saved
@@ -398,12 +412,13 @@ class Repository(Generic[E]):
         before = await self._before_image(id_)
         if before is None:
             return None            # không có bản ghi nào -> không có sự kiện nào
+        operation = new_operation_id()
         await subscribers.run(
             "before_update",
             self._entity,
             self._event(
                 entity=before, database_entity=before, changes=values,
-                updated_columns=frozenset(values), id=id_,
+                updated_columns=frozenset(values), id=id_, operation_id=operation,
             ),
         )
         updated = await self._backend.update_one(self._entity, id_=id_, changes=values)
@@ -416,7 +431,7 @@ class Repository(Generic[E]):
                     updated_columns=changed_columns(
                         before, updated, tuple(mapping_for(self._entity).fields)
                     ),
-                    id=id_,
+                    id=id_, operation_id=operation,
                 ),
             )
         return updated
@@ -493,18 +508,79 @@ class Repository(Generic[E]):
         return check_changes(self._entity, values)
 
     async def delete(self, id_: EntityId) -> bool:
-        if not subscribers.wants_any(("before_remove", "after_remove"), self._entity):
+        watched = subscribers.wants_any(("before_remove", "after_remove"), self._entity)
+        affected = await self._children_to_report(id_)
+        if not watched and not affected:
             return await self._backend.delete(self._entity, id_)
 
         before = await self._before_image(id_)
         if before is None:
             return False           # không có bản ghi nào -> không có sự kiện nào
-        event = self._event(entity=before, database_entity=before, id=id_)
+        operation = new_operation_id()
+        event = self._event(
+            entity=before, database_entity=before, id=id_, operation_id=operation
+        )
         await subscribers.run("before_remove", self._entity, event)
         removed = await self._backend.delete(self._entity, id_)
         if removed:
             await subscribers.run("after_remove", self._entity, event)
+            await self._report_cascade(affected, operation)
         return removed
+
+    async def _children_to_report(
+        self, id_: EntityId
+    ) -> list[tuple[type, str, Any, list[Any]]]:
+        """Dòng con sắp bị `on_delete` đụng tới, đọc TRƯỚC khi xoá cha.
+
+        Phải đọc trước vì với SQL thì chính database làm cascade: xoá xong là
+        không còn gì để đọc, và khung sẽ không bao giờ biết những dòng nào vừa
+        biến mất. Chỉ đọc khi entity con thật sự có người nghe.
+        """
+        found: list[tuple[type, str, Any, list[Any]]] = []
+        for child, column, ref in children_of(self._entity):
+            hook = "after_remove" if ref.on_delete == "CASCADE" else "after_update"
+            if ref.on_delete not in ("CASCADE", "SET NULL", "SET DEFAULT"):
+                continue           # RESTRICT / NO ACTION: xoá sẽ bị chặn, không có gì để báo
+            if not subscribers.wants(hook, child):
+                continue
+            # SAO LẠI ngay: backend `memory` trả về chính object đang nằm trong
+            # bảng, và `_cascade` của nó sửa thẳng tại chỗ — giữ tham chiếu thì
+            # tới lúc dựng sự kiện, "bản cũ" đã mang giá trị mới.
+            rows = [snapshot(row) for row in await self._backend.find(
+                child, filters={column: id_}, match=None
+            )]
+            if rows:
+                found.append((child, column, ref, rows))
+        return found
+
+    async def _report_cascade(
+        self, affected: list[tuple[type, str, Any, list[Any]]], operation: str
+    ) -> None:
+        """Báo cho bản ghi con những gì `on_delete` vừa làm với chúng.
+
+        Chỉ có `after_*`: lúc biết chắc chuyện đã xảy ra thì cha đã xoá xong.
+        `cascaded_from` cho handler biết dòng này bị kéo theo, không phải bị ai
+        đó xoá thẳng.
+        """
+        parent = self._entity.__name__
+        for child, column, ref, rows in affected:
+            for row in rows:
+                event = self._event(
+                    entity_name=child.__name__, id=getattr(row, "id", None),
+                    operation_id=operation, cascaded_from=parent,
+                )
+                if ref.on_delete == "CASCADE":
+                    event.entity = row
+                    event.database_entity = row
+                    await subscribers.run("after_remove", child, event)
+                    continue
+                value = None if ref.on_delete == "SET NULL" else default_of(child, column)
+                after = snapshot(row)
+                setattr(after, column, value)
+                event.entity = after
+                event.database_entity = row
+                event.updated_columns = frozenset({column})
+                await subscribers.run("after_update", child, event)
 
     async def delete_where(
         self, *, match: Callable[[E], bool] | None = None, **equals: Any

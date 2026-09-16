@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import copy
 import inspect
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -98,6 +99,13 @@ class EntityEvent:
         database          để handler tự mở `Repository(X, event.database)` —
                           tương đương `event.manager` của TypeORM, và nó đi chung
                           transaction với lời ghi đang chạy.
+        operation_id      MỘT lời gọi `save`/`update`/`delete` = một mã. Xoá cha
+                          kéo theo con thì mọi sự kiện sinh ra mang cùng mã này,
+                          nên gom chúng lại được.
+        cascaded_from     tên entity CHA đã kéo theo bản ghi này. `None` nghĩa
+                          là ai đó tác động thẳng vào nó.
+        request_id        request HTTP đang chạy (nếu có). Gom theo request —
+                          rộng hơn `operation_id` một bậc.
     """
 
     entity_name: str
@@ -107,6 +115,9 @@ class EntityEvent:
     changes: dict[str, Any] | None = None
     id: Any = None
     database: Any = None
+    operation_id: str = ""
+    cascaded_from: str | None = None
+    request_id: str | None = None
 
 
 def entity_subscriber(*entities: type) -> Callable[[type], type]:
@@ -273,6 +284,11 @@ def changed_columns(before: Any, after: Any, fields: Sequence[str]) -> frozenset
     return frozenset(
         name for name in fields if getattr(before, name, None) != getattr(after, name, None)
     )
+
+
+def new_operation_id() -> str:
+    """Mã cho MỘT lời gọi ghi. Mọi sự kiện nó sinh ra dùng chung mã này."""
+    return uuid.uuid4().hex
 
 
 def snapshot(obj: Any) -> Any:

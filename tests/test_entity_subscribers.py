@@ -24,6 +24,7 @@ from fastapi_modular.infrastructure.database import (
     EntityEvent,
     Repository,
     entity_subscriber,
+    reference,
 )
 from fastapi_modular.infrastructure.database.repository import Database
 from fastapi_modular.infrastructure.database.subscribers import subscribers
@@ -46,6 +47,22 @@ class SubCamera(Entity):
 class SubZone(Entity):
     id: str
     name: str = ""
+
+
+@entity()
+@dataclass(slots=True)
+class SubCameraLog(Entity):
+    id: str
+    camera_id: str = field(default="", metadata=reference(SubCamera, on_delete="CASCADE"))
+
+
+@entity()
+@dataclass(slots=True)
+class SubCameraNote(Entity):
+    id: str
+    camera_id: str | None = field(
+        default=None, metadata=reference(SubCamera, on_delete="SET NULL")
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -92,6 +109,15 @@ def declare_subscribers() -> None:
         async def after_insert(self, event: EntityEvent) -> None:
             SEEN.append(("all:after_insert", event))
 
+    @injectable
+    @entity_subscriber(SubCameraLog, SubCameraNote)
+    class SubChildSubscriber:
+        async def after_remove(self, event: EntityEvent) -> None:
+            SEEN.append(("child:after_remove", event))
+
+        async def after_update(self, event: EntityEvent) -> None:
+            SEEN.append(("child:after_update", event))
+
 
 async def new_database(*entities: type) -> Database:
     database = Database(Settings(APP_DB=DatabaseSettings(driver="memory")))
@@ -110,7 +136,7 @@ def event_of(name: str) -> EntityEvent:
 @pytest.fixture
 async def db():
     declare_subscribers()
-    database = await new_database(SubCamera, SubZone)
+    database = await new_database(SubCamera, SubZone, SubCameraLog, SubCameraNote)
     SEEN.clear()
     yield database
 
@@ -211,6 +237,67 @@ async def test_bulk_khong_phat_su_kien(cameras: Repository[SubCamera]):
     await cameras.update_where({"name": "Cổng"}, status="offline")
     await cameras.delete_where(name="Cổng")
     assert names() == []
+
+
+async def test_moi_su_kien_cua_mot_lenh_mang_cung_operation_id(cameras: Repository[SubCamera]):
+    cam = await cameras.save(SubCamera(id="", name="Cổng"))
+    first = {event.operation_id for _, event in SEEN}
+    assert len(first) == 1 and first != {""}, "một lời gọi = một mã"
+
+    SEEN.clear()
+    await cameras.update(cam.id, status="offline")
+    second = {event.operation_id for _, event in SEEN}
+    assert len(second) == 1
+    assert second != first, "lời gọi khác phải mang mã khác"
+
+
+async def test_xoa_cha_thi_con_bi_cascade_cung_co_su_kien(db: Database):
+    cameras = Repository(SubCamera, db)
+    logs = Repository(SubCameraLog, db)
+    notes = Repository(SubCameraNote, db)
+
+    cam = await cameras.save(SubCamera(id="", name="Cổng"))
+    await logs.save(SubCameraLog(id="", camera_id=cam.id))
+    await logs.save(SubCameraLog(id="", camera_id=cam.id))
+    await notes.save(SubCameraNote(id="", camera_id=cam.id))
+    SEEN.clear()
+
+    await cameras.delete(cam.id)
+
+    assert names() == [
+        "before_remove", "after_remove",          # chính camera
+        "child:after_remove", "child:after_remove",   # 2 log bị CASCADE
+        "child:after_update",                     # note bị SET NULL
+    ]
+
+    # Tất cả cùng MỘT lệnh xoá -> cùng một operation_id.
+    assert len({event.operation_id for _, event in SEEN}) == 1
+
+    removed_children = [e for hook, e in SEEN if hook == "child:after_remove"]
+    assert {e.entity_name for e in removed_children} == {"SubCameraLog"}
+    assert all(e.cascaded_from == "SubCamera" for e in removed_children)
+
+    note_event = next(e for hook, e in SEEN if hook == "child:after_update")
+    assert note_event.cascaded_from == "SubCamera"
+    assert note_event.updated_columns == {"camera_id"}
+    assert note_event.database_entity.camera_id == cam.id
+    assert note_event.entity.camera_id is None, "SET NULL -> bản mới mang None"
+
+    # Và dữ liệu thật đúng như sự kiện vừa báo.
+    assert await logs.find() == []
+    assert [n.camera_id for n in await notes.find()] == [None]
+
+
+async def test_xoa_thang_ban_ghi_con_thi_khong_co_cascaded_from(db: Database):
+    cam = await Repository(SubCamera, db).save(SubCamera(id="", name="Cổng"))
+    logs = Repository(SubCameraLog, db)
+    log = await logs.save(SubCameraLog(id="", camera_id=cam.id))
+    SEEN.clear()
+
+    await logs.delete(log.id)
+
+    event = next(e for hook, e in SEEN if hook == "child:after_remove")
+    assert event.cascaded_from is None, "bị xoá thẳng, không phải bị kéo theo"
 
 
 async def test_handler_hong_thi_loi_noi_len_va_lam_hong_loi_ghi():

@@ -24,6 +24,8 @@ NestJS. Ai quen `@EventSubscriber()` + `listenTo()` thì đọc thẳng
 | "Sửa bản ghi thì **so xem đổi những trường nào**" | [`event` có gì](#event-có-gì) |
 | "Nghe **mọi entity**, không riêng một bảng" | [Nghe một entity hay tất cả](#nghe-một-entity-hay-tất-cả) |
 | "Xoá bản ghi thì dọn file đính kèm" | [Khi nào handler chạy](#khi-nào-handler-chạy) |
+| "**Xoá camera kéo theo log của nó** — biết dòng nào bị kéo theo" | [Xoá cha kéo theo con](#xoá-cha-kéo-theo-con) |
+| "Nhóm các sự kiện của **cùng một lệnh xoá**" | [Xoá cha kéo theo con](#xoá-cha-kéo-theo-con) — `operation_id` |
 | "Handler hỏng thì lời ghi có bị huỷ không" | [Lưu ý](#lưu-ý) |
 | "Tôi quen TypeORM, cái gì giống cái gì khác" | [Đối chiếu với TypeORM](#đối-chiếu-với-typeorm) |
 | "Viết rồi mà không thấy chạy" | [Hỏng thì tra ở đây](#hỏng-thì-tra-ở-đây) |
@@ -110,6 +112,9 @@ chạy mà vẫn im lặng là thứ mất cả buổi để phát hiện.
 | `changes` | bộ giá trị truyền cho `update(id, ...)`; `None` với `save()` |
 | `id` | khoá chính |
 | `database` | để mở `Repository(X, event.database)` — cùng transaction |
+| `operation_id` | **một lời gọi `save`/`update`/`delete` = một mã**; xoá cha kéo theo con thì mọi sự kiện mang cùng mã này |
+| `cascaded_from` | tên entity **cha** đã kéo theo bản ghi này; `None` = bị tác động thẳng |
+| `request_id` | request HTTP đang chạy, nếu có — gom rộng hơn `operation_id` một bậc |
 
 ---
 
@@ -123,6 +128,53 @@ chạy mà vẫn im lặng là thứ mất cả buổi để phát hiện.
 | `repo.delete(id)` | `before_remove` → xoá → `after_remove`; id không tồn tại thì **không chạy gì** |
 | `repo.get/find/find_one`, `query().all()` | `after_load` cho **từng** bản ghi |
 | `repo.update_where(...)`, `repo.delete_where(...)` | **không chạy gì** — xem [Lưu ý](#lưu-ý) |
+| xoá cha, con bị `on_delete` đụng tới | `after_remove` (CASCADE) hoặc `after_update` (SET NULL / SET DEFAULT) cho **từng dòng con** |
+
+---
+
+## Xoá cha kéo theo con
+
+Xoá một camera, `on_delete` của khoá ngoại xoá luôn log và gỡ `camera_id` của
+ghi chú về `NULL` — cả ba việc đó đều có sự kiện, và **mang cùng một
+`operation_id`**:
+
+```python
+@injectable
+@entity_subscriber(Camera, CameraLog, CameraNote)
+class AuditSubscriber:
+    async def after_remove(self, event: EntityEvent) -> None:
+        log.info("da_xoa", bang=event.entity_name, id=event.id,
+                 keo_theo_tu=event.cascaded_from, lenh=event.operation_id)
+
+    async def after_update(self, event: EntityEvent) -> None:
+        if event.cascaded_from:                 # camera_id vừa bị gỡ về NULL
+            log.info("da_go_lien_ket", bang=event.entity_name, id=event.id,
+                     cot=sorted(event.updated_columns), lenh=event.operation_id)
+```
+
+Một lần `await cameras.delete(cam_id)` cho ra:
+
+```
+after_remove  Camera      id=cam1   cascaded_from=None      operation_id=9f2c…
+after_remove  CameraLog   id=log7   cascaded_from="Camera"  operation_id=9f2c…
+after_remove  CameraLog   id=log8   cascaded_from="Camera"  operation_id=9f2c…
+after_update  CameraNote  id=note3  cascaded_from="Camera"  operation_id=9f2c…
+              updated_columns={"camera_id"}   database_entity.camera_id="cam1"
+                                              entity.camera_id=None
+```
+
+Giống nhau trên `memory`, SQLite, PostgreSQL và MongoDB — dù với SQL thì chính
+database làm cascade, còn `memory` và Mongo thì khung làm.
+
+- **Dòng con chỉ có `after_*`, không có `before_*`.** Khung đọc chúng lên trước
+  khi xoá cha (SQL không trả lại thứ nó vừa xoá), nhưng chỉ báo khi chắc chắn
+  việc đã xảy ra.
+- **Chỉ đọc thêm khi có người nghe.** Không có subscriber cho `CameraLog` thì
+  xoá camera không sinh thêm câu lệnh nào.
+- **`RESTRICT` không có sự kiện** — lúc đó lệnh xoá bị chặn bằng lỗi 409, không
+  có gì xảy ra để mà báo.
+- **`operation_id` gom một lệnh, `request_id` gom cả request.** Một request xoá
+  ba camera cho ba `operation_id` khác nhau nhưng cùng một `request_id`.
 
 ---
 
@@ -170,6 +222,8 @@ Không thấy dòng này nghĩa là class thiếu `@injectable`, hoặc file kh�
 | `RuntimeError: ... chữ ký phải là (self, event: EntityEvent)` | thiếu hoặc thừa tham số |
 | `RuntimeError: ... không có method nào trong` | class mang `@entity_subscriber` mà không khai method nào đúng tên |
 | Sửa hàng loạt mà handler im | `update_where`/`delete_where` không phát sự kiện — đúng thiết kế |
+| Xoá cha mà không thấy sự kiện của con | entity con chưa có subscriber nào nghe `after_remove`/`after_update`, hoặc khoá ngoại khai `RESTRICT` |
+| Không có `before_remove` cho dòng con bị cascade | đúng thiết kế — xem [Xoá cha kéo theo con](#xoá-cha-kéo-theo-con) |
 | `updated_columns` rỗng sau `save()` trên backend `memory` | `memory` giữ chính object của bạn, nên "bản cũ" đã bị sửa theo — xem [Tra cứu](#tra-cứu) |
 | Vòng lặp vô tận, app treo lúc ghi | handler gọi lại `save()` cho chính entity đó |
 | Handler ghi database xong mà dữ liệu không thấy đâu | lời ghi chính sau đó ném lỗi và rollback cả hai — đúng thiết kế |
@@ -192,6 +246,8 @@ Không thấy dòng này nghĩa là class thiếu `@injectable`, hoặc file kh�
 | `event.updatedColumns` | `event.updated_columns` (tên trường, dạng `set`) |
 | `event.manager` / `event.queryRunner` | `event.database` — `Repository(X, event.database)` |
 | "Event subscribers can not be request-scoped" | y hệt: subscriber là singleton |
+| *(TypeORM không có)* | `event.operation_id` — gom mọi sự kiện của cùng một lệnh ghi |
+| *(TypeORM không có)* | `event.cascaded_from` + sự kiện cho dòng con bị `on_delete` đụng tới |
 
 ### Những chỗ KHÔNG giống, và vì sao
 
