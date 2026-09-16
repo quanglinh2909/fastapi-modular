@@ -6,6 +6,7 @@
 | [entity.md](entity.md) | Khai bảng dữ liệu: `@entity`, khoá ngoại + `on_delete`, unique/index, độ dài cột chữ, dấu thời gian |
 | [repository.md](repository.md) | Đọc/ghi trong service: `find`, `save`, `update`/`update_where`, `delete` |
 | [query.md](query.md) | Truy vấn phức tạp: JOIN, lớn/bé, NULL, gộp nhóm, dữ liệu lồng nhau, injection |
+| [subscribers.md](subscribers.md) | Nghe thay đổi của entity: `@entity_subscriber`, bản của EntitySubscriber (TypeORM) |
 | [transaction.md](transaction.md) | Ghi nhiều bảng: cùng thành công hoặc cùng không, SAVEPOINT |
 | [mongodb.md](mongodb.md) | MongoDB: truy vấn, dữ liệu lồng nhau, và những thứ bên đó không có |
 | [config.md](config.md) | Settings: thứ tự ưu tiên, **thêm biến của riêng bạn**, .env |

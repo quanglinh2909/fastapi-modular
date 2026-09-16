@@ -1352,7 +1352,15 @@ class Query(Generic[E]):
                 # tiếp — giờ mới chắc chắn là lỗi.
                 raise BadRequestError(inc.defer_error)
         if not includes and not levels:
-            return await self._backend().run_query(self._spec)
+            rows = await self._backend().run_query(self._spec)
+            # `after_load` chỉ có nghĩa khi dòng trả về LÀ entity. Có `.select()`
+            # hay dữ liệu lồng nhau thì mỗi dòng là một dict ghép từ nhiều bảng,
+            # không phải bản ghi của entity nào — bỏ qua.
+            if rows and isinstance(rows[0], self._spec.entity):
+                from fastapi_modular.infrastructure.database.subscribers import subscribers
+
+                await subscribers.run_load(self._spec.entity, rows, self._db)
+            return rows
 
         # `order_by_*(Cam.name)` khi Cam là MỘT LỚP của chuỗi lồng nhau: cột đó
         # không nằm trong câu lệnh của bảng gốc (trừ khi đã `join`), nên phải

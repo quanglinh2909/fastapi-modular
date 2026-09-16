@@ -15,6 +15,15 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
 - **Biến `APP_REDIS__HEALTH_CHECK_SECONDS` / `APP_KAFKA__HEALTH_CHECK_SECONDS`**
   (mặc định 5) — nhịp kiểm tra để biết Redis/Kafka đứt, vì cả hai thư viện tự
   nối lại mà không báo gì.
+- **`@entity_subscriber` — nghe thay đổi của entity**, bản của
+  `EntitySubscriberInterface` (TypeORM) khai như provider kiểu NestJS:
+  `after_load`, `before_insert`/`after_insert`, `before_update`/`after_update`,
+  `before_remove`/`after_remove`, với `event.database_entity` và
+  `event.updated_columns`. Không truyền entity thì nghe tất cả (như bỏ
+  `listenTo()`). Handler chạy trong cùng transaction với lời ghi. Khai method mà
+  khung chưa có (`before_soft_remove`, `*_transaction_*`, `*_query`) thì app báo
+  lỗi ngay lúc khởi động thay vì im lặng không bao giờ chạy. Xem
+  [docs/subscribers.md](docs/subscribers.md).
 - **`fam module <tên> --rabbitmq | --redis | --mqtt | --kafka`** — sinh MỘT file
   service cho hạ tầng đó (tiêm client, hàm gửi, hàm nghe, `is_online()`,
   `on_connect`/`on_disconnect`), không kèm CRUD. Ghép nhiều cờ được.

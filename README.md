@@ -49,6 +49,7 @@ public API, and this README, are in English. Start with
 | `@ManyToOne(…, {onDelete: 'CASCADE'})` (TypeORM) | `field(metadata=reference(Camera, on_delete="CASCADE"))` — a real FK in the database |
 | `@PrimaryGeneratedColumn()` / `@PrimaryGeneratedColumn('uuid')` (TypeORM) | `id: int = 0` (database assigns 1, 2, 3…) / `id: str` (the framework generates a UUID) |
 | `@Column({length: 50})` / `@Column({type: 'text'})` (TypeORM) | `field(metadata=column(length=50))` / `column(text=True)` — checked before the write on every backend |
+| `@EventSubscriber()` + `listenTo()` (TypeORM) | `@entity_subscriber(Camera)` — `after_insert` / `after_update` / `after_remove` / `after_load`, with `event.database_entity` and `event.updated_columns` |
 | `@UseGuards()` | `guards=[...]` on the controller or a single route |
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
 | `@SubscribeMessage('x')` | `@subscribe("x")` |
@@ -452,7 +453,7 @@ src/                SAMPLE APPLICATION — not shipped in the package; delete fr
   core/config.py    AppSettings: subclass Settings to add your own .env variables
   core/lifespan.py  application-specific startup / shutdown work
   api/              business modules; every subdirectory is one module
-tests/              1198 tests that need no infrastructure, 432 more with real drivers/servers
+tests/              1213 tests that need no infrastructure, 432 more with real drivers/servers
 docs/               reference documentation (Vietnamese)
 ```
 

@@ -37,6 +37,12 @@ from fastapi_modular.infrastructure.database.base import (
 )
 from fastapi_modular.infrastructure.database.factory import create_backend
 from fastapi_modular.infrastructure.database.query import Query
+from fastapi_modular.infrastructure.database.subscribers import (
+    EntityEvent,
+    changed_columns,
+    snapshot,
+    subscribers,
+)
 
 log = get_logger(__name__)
 
@@ -66,6 +72,11 @@ class Database:
         create_schema = getattr(self._backend, "create_schema", None)
         if create_schema is not None and entities:
             await create_schema(*entities)
+
+        # Quét subscriber ở ĐÂY: tới lúc này mọi module ứng dụng đã nạp xong,
+        # nên sổ provider đã đủ. Quét sớm hơn thì subscriber viết trong module
+        # nạp muộn sẽ không bao giờ được gọi.
+        subscribers.discover()
 
     async def _wait_until_reachable(self) -> None:
         """Thử ping vài lần trước khi bỏ cuộc.
@@ -203,8 +214,16 @@ class Repository(Generic[E]):
         return self._db.backend
 
     # ------------------------------------------------------------------ đọc
+    async def _loaded(self, found: Any) -> Any:
+        """Chạy `after_load` cho thứ vừa đọc lên. Không ai nghe thì trả về ngay."""
+        if found is None or not subscribers.wants("after_load", self._entity):
+            return found
+        items = found if isinstance(found, list) else [found]
+        await subscribers.run_load(self._entity, items, self._db)
+        return found
+
     async def get(self, id_: EntityId) -> E | None:
-        return await self._backend.get(self._entity, id_)
+        return await self._loaded(await self._backend.get(self._entity, id_))
 
     async def find(
         self,
@@ -215,19 +234,23 @@ class Repository(Generic[E]):
         offset: int = 0,
         **equals: Any,
     ) -> list[E]:
-        return await self._backend.find(
-            self._entity,
-            filters=equals,
-            match=match,
-            order_by=order_by,
-            limit=limit,
-            offset=offset,
+        return await self._loaded(
+            await self._backend.find(
+                self._entity,
+                filters=equals,
+                match=match,
+                order_by=order_by,
+                limit=limit,
+                offset=offset,
+            )
         )
 
     async def find_one(
         self, *, match: Callable[[E], bool] | None = None, **equals: Any
     ) -> E | None:
-        return await self._backend.find_one(self._entity, filters=equals, match=match)
+        return await self._loaded(
+            await self._backend.find_one(self._entity, filters=equals, match=match)
+        )
 
     async def count(
         self, *, match: Callable[[E], bool] | None = None, **equals: Any
@@ -267,7 +290,52 @@ class Repository(Generic[E]):
             created = getattr(obj, "created_at", None)
             obj.updated_at = created if (is_new and created is not None) else utcnow()  # type: ignore[attr-defined]
         check_lengths(self._entity, obj)
-        return await self._backend.save(self._entity, obj)
+        if not subscribers.active(self._entity):
+            return await self._backend.save(self._entity, obj)
+        return await self._save_watched(obj)
+
+    # ------------------------------------------------- subscriber theo entity
+    def _event(self, **fields: Any) -> EntityEvent:
+        return EntityEvent(entity_name=self._entity.__name__, database=self._db, **fields)
+
+    async def _before_image(self, id_: EntityId) -> Any:
+        """Bản ghi hiện nằm dưới database, làm `event.database_entity`.
+
+        Chỉ đọc khi thật sự có người nghe: đây là lượt đi database PHỤ, và
+        không ai nghe thì không lý gì bắt mọi dự án trả giá đó.
+        """
+        return snapshot(await self._backend.get(self._entity, id_))
+
+    async def _save_watched(self, obj: E) -> E:
+        """`save()` khi entity này có subscriber. Tách riêng để đường thường không đổi."""
+        entity_id = getattr(obj, "id", None)
+        if not entity_id:
+            await subscribers.run("before_insert", self._entity, self._event(entity=obj))
+            saved = await self._backend.save(self._entity, obj)
+            await subscribers.run(
+                "after_insert",
+                self._entity,
+                self._event(entity=saved, id=getattr(saved, "id", None)),
+            )
+            return saved
+
+        watched = subscribers.wants_any(("before_update", "after_update"), self._entity)
+        before = await self._before_image(entity_id) if watched else None
+        columns = changed_columns(before, obj, tuple(mapping_for(self._entity).fields))
+        await subscribers.run(
+            "before_update",
+            self._entity,
+            self._event(entity=obj, database_entity=before, updated_columns=columns, id=entity_id),
+        )
+        saved = await self._backend.save(self._entity, obj)
+        await subscribers.run(
+            "after_update",
+            self._entity,
+            self._event(
+                entity=saved, database_entity=before, updated_columns=columns, id=entity_id
+            ),
+        )
+        return saved
 
     async def update(
         self,
@@ -323,9 +391,35 @@ class Repository(Generic[E]):
                 f"hoặc số (đang là {type(id_).__name__}). Sửa nhiều dòng theo "
                 f"điều kiện thì dùng `update_where(...)`."
             )
-        return await self._backend.update_one(
-            self._entity, id_=id_, changes=self._changes(changes, set_fields)
+        values = self._changes(changes, set_fields)
+        if not subscribers.wants_any(("before_update", "after_update"), self._entity):
+            return await self._backend.update_one(self._entity, id_=id_, changes=values)
+
+        before = await self._before_image(id_)
+        if before is None:
+            return None            # không có bản ghi nào -> không có sự kiện nào
+        await subscribers.run(
+            "before_update",
+            self._entity,
+            self._event(
+                entity=before, database_entity=before, changes=values,
+                updated_columns=frozenset(values), id=id_,
+            ),
         )
+        updated = await self._backend.update_one(self._entity, id_=id_, changes=values)
+        if updated is not None:
+            await subscribers.run(
+                "after_update",
+                self._entity,
+                self._event(
+                    entity=updated, database_entity=before, changes=values,
+                    updated_columns=changed_columns(
+                        before, updated, tuple(mapping_for(self._entity).fields)
+                    ),
+                    id=id_,
+                ),
+            )
+        return updated
 
     async def update_where(
         self,
@@ -399,7 +493,18 @@ class Repository(Generic[E]):
         return check_changes(self._entity, values)
 
     async def delete(self, id_: EntityId) -> bool:
-        return await self._backend.delete(self._entity, id_)
+        if not subscribers.wants_any(("before_remove", "after_remove"), self._entity):
+            return await self._backend.delete(self._entity, id_)
+
+        before = await self._before_image(id_)
+        if before is None:
+            return False           # không có bản ghi nào -> không có sự kiện nào
+        event = self._event(entity=before, database_entity=before, id=id_)
+        await subscribers.run("before_remove", self._entity, event)
+        removed = await self._backend.delete(self._entity, id_)
+        if removed:
+            await subscribers.run("after_remove", self._entity, event)
+        return removed
 
     async def delete_where(
         self, *, match: Callable[[E], bool] | None = None, **equals: Any

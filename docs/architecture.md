@@ -29,7 +29,7 @@ fastapi_modular/                     THƯ VIỆN — thứ được đóng gói,
 │   ├── locks.py               khoá "chỉ một tiến trình chạy" (flock hoặc Redis)
 │   └── websocket/             @gateway / @subscribe, phòng, adapter nhiều worker
 ├── infrastructure/            mỗi hạ tầng MỘT package, không biết nhau
-│   ├── database/              base · memory · sql · mongo · factory · repository · query (builder)
+│   ├── database/              base · memory · sql · mongo · factory · repository · query (builder) · subscribers
 │   ├── rabbitmq/              (tuỳ chọn) broker · consumers · responders · patterns
 │   ├── redis/                 (tuỳ chọn) client (cache, đếm) · pubsub
 │   ├── mqtt/                  (tuỳ chọn) client · consumers · patterns (+ và #)
@@ -351,7 +351,7 @@ truy vấn database thật (1–10 ms) thì dưới 2%.
 fam lint                      # ruff trên `src` (mặc định): F, E, W, I, B, UP, SIM, RUF, BLE
 fam lint fastapi_modular src tests  # soi cả thư viện và test — dùng cái này khi phát triển repo
 fam lint --fix                # tự sửa phần sửa được
-fam test       # 1198 test trên backend memory (432 test nữa cần hạ tầng hoặc driver thật)
+fam test       # 1213 test trên backend memory (432 test nữa cần hạ tầng hoặc driver thật)
 ```
 
 Cấu hình ở [`ruff.toml`](../ruff.toml). Rule `BLE` được bật có chủ ý: mỗi

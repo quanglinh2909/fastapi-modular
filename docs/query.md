@@ -3,12 +3,13 @@
 `repo.query()` sinh **SQL thật** — JOIN, so sánh lớn/bé, lọc NULL, gộp nhóm,
 dữ liệu lồng nhau. Xem câu lệnh sinh ra bằng `.sql()` bất cứ lúc nào.
 
-> **Database chia làm năm trang.** Bạn đang ở **query.md**.
+> **Database chia làm sáu trang.** Bạn đang ở **query.md**.
 >
 > [database.md](database.md) chọn driver và kết nối ·
 > [entity.md](entity.md) khai bảng, khoá ngoại, index ·
 > [repository.md](repository.md) CRUD ·
 > [query.md](query.md) truy vấn phức tạp ·
+> [subscribers.md](subscribers.md) nghe thay đổi của entity ·
 > [transaction.md](transaction.md) ghi nhiều bảng ·
 > [mongodb.md](mongodb.md) riêng cho MongoDB
 

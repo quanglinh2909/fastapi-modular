@@ -3,12 +3,13 @@
 `Repository[X]` là bộ CRUD sẵn có cho một entity, giống nhau ở mọi backend —
 service của bạn không cần biết bên dưới là SQLite, PostgreSQL hay MongoDB.
 
-> **Database chia làm năm trang.** Bạn đang ở **repository.md**.
+> **Database chia làm sáu trang.** Bạn đang ở **repository.md**.
 >
 > [database.md](database.md) chọn driver và kết nối ·
 > [entity.md](entity.md) khai bảng, khoá ngoại, index ·
 > [repository.md](repository.md) CRUD ·
 > [query.md](query.md) truy vấn phức tạp ·
+> [subscribers.md](subscribers.md) nghe thay đổi của entity ·
 > [transaction.md](transaction.md) ghi nhiều bảng ·
 > [mongodb.md](mongodb.md) riêng cho MongoDB
 
@@ -23,6 +24,7 @@ service của bạn không cần biết bên dưới là SQLite, PostgreSQL hay 
 | "**Truyền thẳng DTO của PATCH vào để sửa**" | [`update`](#sửa-dữ-liệu-không-cần-đọc-về-trước) |
 | "Lọc lớn hơn, nhỏ hơn, NULL, nối bảng" | [query.md](query.md) |
 | "Ghi 2 bảng, hỏng thì huỷ cả hai" | [transaction.md](transaction.md) |
+| "**Ghi/sửa/xoá xong thì tự chạy một việc**" | [subscribers.md](subscribers.md) — `@entity_subscriber` |
 
 ---
 

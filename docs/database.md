@@ -5,12 +5,13 @@ cần server). **Dùng MongoDB thì đọc [mongodb.md](mongodb.md)** — bên �
 nhiều để trộn chung một trang là hại người đọc: không có query builder, không
 có transaction, không có migration.
 
-> **Database chia làm năm trang.** Bạn đang ở **database.md**.
+> **Database chia làm sáu trang.** Bạn đang ở **database.md**.
 >
 > [database.md](database.md) chọn driver và kết nối ·
 > [entity.md](entity.md) khai bảng, khoá ngoại, index ·
 > [repository.md](repository.md) CRUD ·
 > [query.md](query.md) truy vấn phức tạp ·
+> [subscribers.md](subscribers.md) nghe thay đổi của entity ·
 > [transaction.md](transaction.md) ghi nhiều bảng ·
 > [mongodb.md](mongodb.md) riêng cho MongoDB
 

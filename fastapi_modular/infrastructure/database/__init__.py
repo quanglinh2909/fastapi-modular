@@ -31,12 +31,17 @@ from fastapi_modular.infrastructure.database.query import (
     sum_,
 )
 from fastapi_modular.infrastructure.database.repository import Database, Repository
+from fastapi_modular.infrastructure.database.subscribers import (
+    EntityEvent,
+    entity_subscriber,
+)
 
 __all__ = [
     "Aggregate",
     "ColumnSpec",
     "Database",
     "Entity",
+    "EntityEvent",
     "F",
     "Query",
     "Reference",
@@ -46,6 +51,7 @@ __all__ = [
     "between",
     "column",
     "count",
+    "entity_subscriber",
     "ilike",
     "in_",
     "is_not_null",

@@ -44,6 +44,7 @@ fam init && fam dev
 | `@ManyToOne(…, {onDelete: 'CASCADE'})` (TypeORM) | `field(metadata=reference(Camera, on_delete="CASCADE"))` — khoá ngoại THẬT dưới database |
 | `@PrimaryGeneratedColumn()` / `@PrimaryGeneratedColumn('uuid')` (TypeORM) | `id: int = 0` (database phát số 1, 2, 3…) / `id: str` (khung sinh UUID) |
 | `@Column({length: 50})` / `@Column({type: 'text'})` (TypeORM) | `field(metadata=column(length=50))` / `column(text=True)` — chặn ngay lúc ghi, trên mọi backend |
+| `@EventSubscriber()` + `listenTo()` (TypeORM) | `@entity_subscriber(Camera)` — `after_insert` / `after_update` / `after_remove` / `after_load`, có `event.database_entity` và `event.updated_columns` |
 | `@UseGuards()` | `guards=[...]` ở controller hoặc từng route |
 | `@WebSocketGateway()` | `@gateway(path="/ws/…")` |
 | `@SubscribeMessage('x')` | `@subscribe("x")` |
@@ -449,7 +450,7 @@ src/                ỨNG DỤNG MẪU — không nằm trong gói cài; xoá th
   core/config.py    AppSettings: kế thừa Settings để thêm biến .env của bạn
   core/lifespan.py  việc lúc khởi động / lúc tắt của riêng ứng dụng
   api/              các module nghiệp vụ; mỗi thư mục con là một module
-tests/              1198 test chạy không cần hạ tầng, 432 test nữa cần driver/server thật
+tests/              1213 test chạy không cần hạ tầng, 432 test nữa cần driver/server thật
 docs/               tài liệu tra cứu
 ```
 
