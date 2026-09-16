@@ -7,6 +7,7 @@ một bản riêng nên KHÔNG được chạy nhiều worker với backend này
 from __future__ import annotations
 
 import asyncio
+import copy
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -32,6 +33,28 @@ from fastapi_modular.infrastructure.database.base import (
 from fastapi_modular.infrastructure.database.query import BUCKET_KEY as _BUCKET
 
 E = TypeVar("E")
+
+
+def _detach(obj: Any) -> Any:
+    """Bản sao NÔNG, để người gọi không cầm chính bản ghi đang nằm trong bảng.
+
+    Database thật dựng object MỚI từ mỗi dòng đọc lên, nên sửa nó không đụng
+    tới thứ dưới đĩa cho tới khi `save()`. Backend memory mà trả thẳng object
+    trong bảng thì nói dối đúng theo hướng tệ nhất — đoạn quen thuộc nhất
+    trong service:
+
+        doc = await repo.get(id)
+        doc.status = "offline"
+        await repo.save(doc)
+
+    `doc` CHÍNH LÀ bản ghi trong bảng, nên dòng giữa đã sửa luôn "bản cũ".
+    Subscriber nhận `database_entity` mang sẵn giá trị mới và
+    `updated_columns` rỗng. Đo được trước khi sửa: memory cho
+    `database_entity.status='offline'`, sqlite cho `'online'`.
+
+    Nông là đủ: trường của entity đều là scalar, datetime hoặc Enum.
+    """
+    return copy.copy(obj) if obj is not None else None
 
 
 @injectable(scope=Scope.REQUEST)
@@ -88,8 +111,6 @@ class MemoryBackend(DatabaseBackend):
     def _copy_tables(self) -> dict[str, dict[EntityId, Any]]:
         """Bản sao NÔNG của từng bản ghi là đủ: trường entity đều là scalar,
         datetime hoặc Enum — không sửa tại chỗ được."""
-        import copy
-
         return {
             storage_name: {record_id: copy.copy(obj) for record_id, obj in records.items()}
             for storage_name, records in self._tables.items()
@@ -157,7 +178,7 @@ class MemoryBackend(DatabaseBackend):
         return [obj for obj in self._table(entity).values() if matches(obj, active, match)]
 
     async def get(self, entity: type[E], id_: EntityId) -> E | None:
-        return self._table(entity).get(id_)
+        return _detach(self._table(entity).get(id_))
 
     async def find(
         self,
@@ -173,12 +194,13 @@ class MemoryBackend(DatabaseBackend):
         if order_by:
             rows.sort(key=lambda obj: getattr(obj, order_by, 0))
         rows = rows[offset:]
-        return rows[:limit] if limit is not None else rows
+        rows = rows[:limit] if limit is not None else rows
+        return [_detach(obj) for obj in rows]
 
     async def find_one(
         self, entity: type[E], *, filters: Filters, match: Match = None
     ) -> E | None:
-        return next(iter(self._select(entity, filters, match)), None)
+        return _detach(next(iter(self._select(entity, filters, match)), None))
 
     async def count(
         self, entity: type[E], *, filters: Filters, match: Match = None
@@ -273,7 +295,7 @@ class MemoryBackend(DatabaseBackend):
                 {name: _read(row, column) for name, column in spec.selects.items()}
                 for row in rows
             ]
-        return [row[root_alias] for row in rows]
+        return [_detach(row[root_alias]) for row in rows]
 
     async def count_query(self, spec: Any) -> int:
         # Có `group_by` thì đếm SỐ NHÓM, giống `SELECT count(*) FROM (...)`.
@@ -285,7 +307,9 @@ class MemoryBackend(DatabaseBackend):
         self._check_references(entity, obj)
         if not getattr(obj, "id", None):
             obj.id = self._next_id(entity)  # type: ignore[attr-defined]
-        self._table(entity)[obj.id] = obj  # type: ignore[attr-defined]
+        # Cất BẢN SAO, không cất chính object của người gọi: họ còn giữ tham
+        # chiếu và sửa tiếp, mà database thật thì không đổi theo như vậy.
+        self._table(entity)[obj.id] = _detach(obj)  # type: ignore[attr-defined]
         return obj
 
     def _next_id(self, entity: type) -> str | int:
@@ -415,7 +439,7 @@ class MemoryBackend(DatabaseBackend):
         if obj is None:
             return None
         self._apply(entity, obj, changes)
-        return obj
+        return _detach(obj)
 
     async def update_where(
         self, entity: type[E], *, filters: Filters, changes: Filters, match: Match = None

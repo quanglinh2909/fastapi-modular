@@ -116,6 +116,7 @@ chạy mà vẫn im lặng là thứ mất cả buổi để phát hiện.
 | `operation_id` | **một lời gọi `save`/`update`/`delete` = một mã**; xoá cha kéo theo con thì mọi sự kiện mang cùng mã này |
 | `cascaded_from` | tên entity **cha** đã kéo theo bản ghi này; `None` = bị tác động thẳng |
 | `request_id` | request HTTP đang chạy, nếu có — gom rộng hơn `operation_id` một bậc |
+| `request` | **chính request đang chạy** — đọc header, query, cookie từ đây; `None` khi ghi ngoài request |
 
 ---
 
@@ -181,67 +182,88 @@ database làm cascade, còn `memory` và Mongo thì khung làm.
 
 ## Biết ai vừa sửa
 
-Handler chạy **bên trong** chính request đã gây ra lời ghi, nên đọc được người
-gọi bằng `current_principal()` — y như trong service:
+`event.request` là **chính request đang gây ra lời ghi** — `Request` của
+Starlette khi đến từ HTTP, `WebSocket` khi đến từ một tin nhắn WS. Header,
+query, cookie đọc thẳng từ đó, kể cả token Keycloak/JWT:
 
 ```python
 # src/api/cameras/camera_audit.py
 from fastapi_modular import get_logger, injectable
-from fastapi_modular.core.guards import current_principal
 from fastapi_modular.infrastructure.database import EntityEvent, entity_subscriber
 from src.api.cameras.entities.camera_model import Camera
 
 log = get_logger(__name__)
 
 
-def who() -> tuple[str | None, list[str]]:
-    """Ai đang gọi. Trả (None, []) khi lời ghi không đến từ một request."""
-    try:
-        principal = current_principal()
-    except RuntimeError:
-        return None, []
-    return principal.id, sorted(principal.roles)
-
-
 @injectable
 @entity_subscriber(Camera)
 class CameraAudit:
     async def after_update(self, event: EntityEvent) -> None:
-        user_id, roles = who()
+        request = event.request
+        if request is None:                    # ghi từ worker, cron hay script
+            return
         log.info(
             "camera.audit",
             camera_id=event.id,
             cot=sorted(event.updated_columns),
-            boi=user_id,
-            quyen=roles,
+            token=request.headers.get("authorization"),
+            duong_dan=request.url.path,
+            ip=request.client.host if request.client else None,
             request_id=event.request_id,
         )
 ```
 
-Ba điều phải biết trước khi dựa vào nó:
+Một lần `POST /api/cameras/cam1` với header `Authorization: Bearer …` cho ra
+đúng thế này, và `request_id` **trùng header `x-request-id`** của response — đủ
+để nối dòng audit với access log:
 
-- **Khung KHÔNG có sẵn xác thực JWT hay Keycloak.** `principal.id` chỉ có giá
-  trị nếu route đó gắn một guard **bạn tự viết**, guard đó kiểm token rồi gọi
+```
+x-request-id: b334939405944b88bdc19514436a12f8          ← client nhận được
+camera.audit  token='Bearer jwt-cua-keycloak'  duong_dan='/api/cameras/cam1'
+              request_id=b334939405944b88bdc19514436a12f8
+```
+
+### Lấy quyền của người dùng
+
+Hai đường, chọn một:
+
+- **Đã có guard xác thực** thì đọc `current_principal()` ngay trong handler —
+  guard đã giải mã token và điền sẵn:
+
+  ```python
+  from fastapi_modular.core.guards import current_principal
+
+  principal = current_principal()             # .id và .roles
+  ```
+
+- **Chưa có guard**, hoặc cần claim mà `Principal` không giữ (email, tenant,
+  `preferred_username`): tự giải mã từ `event.request.headers["authorization"]`
+  bằng thư viện JWT của bạn.
+
+Hai điều phải biết:
+
+- **Khung KHÔNG có sẵn xác thực JWT hay Keycloak.** `Principal` chỉ được điền
+  nếu route đó gắn một guard **bạn tự viết**, guard đó kiểm token rồi gọi
   `principal.assume(id=claims["sub"], roles=...)` — xem
   [operations.md](operations.md#principal) và ví dụ JWT ở
-  [websocket.md](websocket.md#6-xác-thực). Route không có guard thì handler thấy
-  `(None, [])`, kể cả khi client có gửi token.
-- **`Principal` chỉ mang `id` và `roles`.** Không có claim JWT, không có token
-  gốc, không có email hay tenant. Cần claim khác thì guard cất chúng vào một
-  provider `Scope.REQUEST` của riêng bạn, rồi handler đọc provider đó.
-- **Ghi dữ liệu từ worker, cron hay script thì không có request nào cả**, và
-  `current_principal()` ném `RuntimeError`. Lỗi trong handler làm rollback cả
-  lời ghi, nên một handler gọi thẳng `current_principal()` sẽ **làm chết mọi
-  lệnh ghi ngoài HTTP**. Luôn bọc `try/except` như `who()` ở trên.
+  [websocket.md](websocket.md#6-xác-thực).
+- **`Principal` chỉ mang `id` và `roles`** — không giữ claim JWT, không giữ
+  token gốc. Cần thứ khác thì lấy từ `event.request` như trên.
 
-Riêng `event.request_id` thì luôn có trong request HTTP kể cả khi chưa xác thực,
-và **trùng đúng header `x-request-id`** của response — đủ để nối dòng audit với
-log của request:
+---
 
-```
-x-request-id: 9dc2cf3755624b5881467e88ba0ec4d7
-camera.audit  request_id=9dc2cf3755624b5881467e88ba0ec4d7  boi=user-42  quyen=['admin']
-```
+## Lưu ý khi dùng `event.request`
+
+- **Luôn kiểm `None` trước khi đọc.** Ghi dữ liệu từ worker, cron, job hay
+  script thì không có request nào cả. Handler ném lỗi là lời ghi rollback theo,
+  nên một handler quên kiểm `None` sẽ **làm chết mọi lệnh ghi ngoài HTTP**.
+- **Đừng đọc body trong handler** (`await request.json()`): body đã bị endpoint
+  đọc hết trước đó, và handler sẽ **treo** cho tới khi hết hạn thời gian. Cần
+  giá trị nào trong body thì để endpoint lấy ra rồi truyền xuống service, hoặc
+  đọc từ chính `event.entity`.
+- **`request.url.path` là đường dẫn thật**, không phải khuôn route: hai lần gọi
+  `/api/cameras/cam1` và `/api/cameras/cam2` cho hai giá trị khác nhau. Dùng nó
+  làm nhãn số đo là làm nổ bộ nhớ Prometheus.
 
 ---
 
@@ -293,8 +315,11 @@ Không thấy dòng này nghĩa là class thiếu `@injectable`, hoặc file kh�
 | Sửa hàng loạt mà handler im | `update_where`/`delete_where` không phát sự kiện — đúng thiết kế |
 | Xoá cha mà không thấy sự kiện của con | entity con chưa có subscriber nào nghe `after_remove`/`after_update`, hoặc khoá ngoại khai `RESTRICT` |
 | Không có `before_remove` cho dòng con bị cascade | đúng thiết kế — xem [Xoá cha kéo theo con](#xoá-cha-kéo-theo-con) |
-| `updated_columns` rỗng sau `save()` trên backend `memory` | `memory` giữ chính object của bạn, nên "bản cũ" đã bị sửa theo — xem [Tra cứu](#tra-cứu) |
-| `RuntimeError: 'Principal' là provider request-scoped nhưng không có request scope nào đang mở` | handler gọi `current_principal()` nhưng lời ghi đến từ worker/cron/script — bọc `try/except` như ở [Biết ai vừa sửa](#biết-ai-vừa-sửa) |
+| `updated_columns` rỗng ở `*_update` | không trường nào khác bản đang nằm dưới database — `save()` lại đúng giá trị cũ cũng rơi vào đây |
+| Sửa object đọc lên mà bảng không đổi theo | đúng thiết kế: phải gọi `save()`, ở `memory` cũng vậy — xem [Tra cứu](#database_entity-trên-backend-memory) |
+| `AttributeError: 'NoneType' object has no attribute 'headers'` trong handler | `event.request` là `None` vì lời ghi đến từ worker/cron/script — kiểm `None` trước khi đọc |
+| Handler treo, request không bao giờ trả lời | handler gọi `await event.request.json()` — body đã bị endpoint đọc hết, xem [Lưu ý khi dùng `event.request`](#lưu-ý-khi-dùng-eventrequest) |
+| `RuntimeError: 'Principal' là provider request-scoped nhưng không có request scope nào đang mở` | handler gọi `current_principal()` nhưng lời ghi đến từ worker/cron/script |
 | `principal.id` là `None` dù người dùng đã đăng nhập | route đó chưa gắn guard xác thực, hoặc guard chưa gọi `principal.assume(...)` |
 | Vòng lặp vô tận, app treo lúc ghi | handler gọi lại `save()` cho chính entity đó |
 | Handler ghi database xong mà dữ liệu không thấy đâu | lời ghi chính sau đó ném lỗi và rollback cả hai — đúng thiết kế |
@@ -333,7 +358,9 @@ Không thấy dòng này nghĩa là class thiếu `@injectable`, hoặc file kh�
 
 ### `database_entity` trên backend `memory`
 
-`memory` trả về chính object đang nằm trong bảng, nên đoạn quen thuộc
+`memory` trả **bản sao** ở mọi lượt đọc (`get`, `find`, `find_one`,
+`query().all()`) và cất bản sao khi `save()` — đúng như database thật dựng
+object mới từ mỗi dòng đọc lên. Nên đoạn quen thuộc nhất
 
 ```python
 cam = await repo.get(camera_id)
@@ -341,11 +368,10 @@ cam.status = "offline"
 await repo.save(cam)
 ```
 
-đã sửa luôn bản trong bảng trước khi `save()` chạy. Vì vậy ở `memory`,
-`database_entity` bằng đúng `entity` và `updated_columns` rỗng. Trên SQLite,
-PostgreSQL và MongoDB thì đúng như mong đợi — đo bằng SQLite:
+cho **cùng một kết quả** ở `memory` và ở SQL. Đo trên cả hai:
 `database_entity.status = "online"`, `entity.status = "offline"`,
 `updated_columns = {"status", "updated_at"}`.
 
-Cần `updated_columns` chính xác cả khi chạy test trên `memory` thì dùng
-`repo.update(id, ...)`: ở đó giá trị mới đi riêng nên không đụng vào bản cũ.
+Kéo theo một điều nên biết: sửa object đọc lên mà **không** gọi `save()` thì
+bảng không đổi theo. Trước đây ở `memory` nó đổi — và đó là chỗ `fam test` nói
+dối, vì SQL không bao giờ làm vậy.

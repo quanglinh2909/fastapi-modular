@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from fastapi_modular.core.clock import utcnow
 from fastapi_modular.core.config import Settings
 from fastapi_modular.core.container import injectable
-from fastapi_modular.core.context import get_request_id
+from fastapi_modular.core.context import get_request, get_request_id
 from fastapi_modular.core.exceptions import BadRequestError
 from fastapi_modular.core.logging import get_logger
 from fastapi_modular.core.providers import CapabilityNotSupportedError
@@ -301,7 +301,12 @@ class Repository(Generic[E]):
     # ------------------------------------------------- subscriber theo entity
     def _event(self, **fields: Any) -> EntityEvent:
         fields.setdefault("entity_name", self._entity.__name__)
-        return EntityEvent(database=self._db, request_id=get_request_id(), **fields)
+        return EntityEvent(
+            database=self._db,
+            request_id=get_request_id(),
+            request=get_request(),
+            **fields,
+        )
 
     async def _before_image(self, id_: EntityId) -> Any:
         """Bản ghi hiện nằm dưới database, làm `event.database_entity`.

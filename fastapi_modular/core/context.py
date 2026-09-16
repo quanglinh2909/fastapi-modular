@@ -8,10 +8,15 @@ from __future__ import annotations
 
 import uuid
 from contextvars import ContextVar, Token
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from starlette.requests import HTTPConnection
 
 _request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 _user_id: ContextVar[str | None] = ContextVar("user_id", default=None)
 _trace_id: ContextVar[str | None] = ContextVar("trace_id", default=None)
+_request: ContextVar[HTTPConnection | None] = ContextVar("request", default=None)
 
 
 def new_request_id() -> str:
@@ -76,3 +81,27 @@ def set_user_id(value: str | None) -> Token[str | None]:
 
 def reset_user_id(token: Token[str | None]) -> None:
     _user_id.reset(token)
+
+
+# ------------------------------------------------------------------- request
+#
+# Giữ chính object connection của request đang chạy, để code ở tầng sâu (entity
+# subscriber chẳng hạn) đọc được header/query/cookie mà không phải truyền tham
+# số xuyên suốt. Kiểu là `HTTPConnection` — lớp cha chung của `Request` (HTTP)
+# và `WebSocket` — nên một đường dùng được cho cả hai.
+#
+# Trả None thay vì ném lỗi khi ở ngoài request: lời ghi database đến từ worker,
+# cron hay script là chuyện bình thường, không phải lỗi.
+
+
+def get_request() -> HTTPConnection | None:
+    """Request đang chạy, hoặc None khi chạy ngoài request (worker, cron, script)."""
+    return _request.get()
+
+
+def set_request(value: HTTPConnection | None) -> Token[HTTPConnection | None]:
+    return _request.set(value)
+
+
+def reset_request(token: Token[HTTPConnection | None]) -> None:
+    _request.reset(token)

@@ -376,3 +376,83 @@ def test_subscriber_rong_bi_tu_choi():
 
     with pytest.raises(RuntimeError, match="không có method nào"):
         subscribers.discover()
+
+
+# ------------------------------------------- request của người gọi trong event
+async def test_ngoai_request_thi_event_request_la_none(cameras: Repository[SubCamera]):
+    """Ghi từ worker, cron hay script: không có request, và đó KHÔNG phải lỗi.
+
+    Chốt hẳn thành test vì `event.request` mà ném lỗi ở đây thì handler ném theo,
+    và lời ghi rollback — tức một subscriber làm chết mọi lệnh ghi ngoài HTTP.
+    """
+    await cameras.save(SubCamera(id="", name="Cổng"))
+
+    assert event_of("after_insert").request is None
+    assert event_of("after_insert").request_id is None
+
+
+def test_trong_request_http_thi_doc_duoc_header(settings):
+    """Ca thật: handler đọc header Authorization của CHÍNH request đang ghi.
+
+    Đi qua `create_app` + TestClient chứ không giả lập contextvar, vì thứ cần
+    chốt là cả chuỗi: middleware giữ request -> repository gắn vào event.
+    """
+    from fastapi.testclient import TestClient
+
+    from fastapi_modular.factory import create_app
+    from src.api.users.entities.user_model import User
+
+    seen: list[dict] = []
+
+    @injectable
+    @entity_subscriber(User)
+    class SubHttpSubscriber:
+        async def after_insert(self, event: EntityEvent) -> None:
+            request = event.request
+            seen.append(
+                {
+                    "authorization": request.headers.get("authorization"),
+                    "path": request.url.path,
+                    "method": request.method,
+                    "request_id": event.request_id,
+                }
+            )
+
+    with TestClient(create_app(settings)) as client:
+        response = client.post(
+            "/api/users",
+            json={"email": "an@example.com", "full_name": "Nguyễn Văn An"},
+            headers={"authorization": "Bearer jwt-cua-keycloak"},
+        )
+
+    assert response.status_code == 201, response.text
+    assert len(seen) == 1
+    assert seen[0]["authorization"] == "Bearer jwt-cua-keycloak"
+    assert seen[0]["path"] == "/api/users"
+    assert seen[0]["method"] == "POST"
+    assert seen[0]["request_id"] == response.headers["x-request-id"], (
+        "phải nối được dòng audit với access log của cùng request đó"
+    )
+
+
+# ------------------------------------------------------- bản cũ phải còn nguyên
+async def test_doc_len_sua_tai_cho_roi_save_thi_van_con_ban_cu(db: Database):
+    """Ca hay viết nhất trong service — và từng là chỗ `memory` nói dối.
+
+    Backend `memory` trước đây trả thẳng object đang nằm trong bảng, nên dòng
+    `doc.status = ...` sửa luôn "bản cũ": `database_entity` mang sẵn giá trị
+    mới và `updated_columns` rỗng, trong khi sqlite cho đủ hai cột. Chốt hẳn
+    thành test vì lệch kiểu này im lặng — `fam test` xanh, production sai.
+    """
+    repo = Repository(SubCamera, db)
+    cam = await repo.save(SubCamera(id="", name="Cổng", status="online"))
+    SEEN.clear()
+
+    doc = await repo.get(cam.id)
+    doc.status = "offline"
+    await repo.save(doc)
+
+    updated = event_of("after_update")
+    assert updated.database_entity.status == "online", "bản cũ đã bị sửa theo"
+    assert updated.entity.status == "offline"
+    assert "status" in updated.updated_columns

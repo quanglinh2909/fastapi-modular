@@ -106,6 +106,13 @@ class EntityEvent:
                           là ai đó tác động thẳng vào nó.
         request_id        request HTTP đang chạy (nếu có). Gom theo request —
                           rộng hơn `operation_id` một bậc.
+        request           CHÍNH request đang chạy: `Request` khi đến từ HTTP,
+                          `WebSocket` khi đến từ một tin nhắn WS, `None` khi lời
+                          ghi đến từ worker/cron/script. Handler tự đọc header,
+                          query, cookie từ đây — token Keycloak/JWT chẳng hạn.
+                          Cố ý để None thay vì ném lỗi: ghi dữ liệu ngoài request
+                          là chuyện bình thường, và handler ném lỗi thì lời ghi
+                          rollback theo.
     """
 
     entity_name: str
@@ -118,6 +125,7 @@ class EntityEvent:
     operation_id: str = ""
     cascaded_from: str | None = None
     request_id: str | None = None
+    request: Any = None
 
 
 def entity_subscriber(*entities: type) -> Callable[[type], type]:

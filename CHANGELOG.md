@@ -29,12 +29,24 @@ Theo [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/); phiên bản theo
   đụng tới** — xoá camera thì log bị CASCADE có `after_remove`, ghi chú bị
   SET NULL có `after_update`, đều kèm `event.cascaded_from="Camera"`. Xem
   [docs/subscribers.md](docs/subscribers.md).
+- **`event.request` — chính request đang gây ra lời ghi**, để handler đọc
+  header/query/cookie (token Keycloak hay JWT chẳng hạn) mà không phải truyền
+  tham số xuyên suốt. Là `Request` với HTTP, `WebSocket` với tin nhắn WS, và
+  `None` khi lời ghi đến từ worker/cron/script. Đọc ở nơi khác bằng
+  `fastapi_modular.core.context.get_request()`.
 - **`fam module <tên> --rabbitmq | --redis | --mqtt | --kafka`** — sinh MỘT file
   service cho hạ tầng đó (tiêm client, hàm gửi, hàm nghe, `is_online()`,
   `on_connect`/`on_disconnect`), không kèm CRUD. Ghép nhiều cờ được.
 
 ### Đổi
 
+- **Backend `memory` trả bản sao ở mọi lượt đọc** (`get`, `find`, `find_one`,
+  `query().all()`) và cất bản sao khi `save()`, thay vì đưa thẳng object đang
+  nằm trong bảng. Nhờ vậy `event.database_entity` và `event.updated_columns`
+  đúng cả trên `memory`: trước đây đọc lên rồi sửa tại chỗ là đã sửa luôn "bản
+  cũ", nên `updated_columns` rỗng trong khi SQL cho đủ hai cột. **Kéo theo:**
+  sửa object đọc lên mà không gọi `save()` thì bảng không đổi theo nữa — SQL
+  vốn đã vậy, giờ `memory` thôi nói dối.
 - **`fam module <tên> --gateway` không còn sinh kèm CRUD.** Tên chưa có thì tạo
   module chỉ có gateway; muốn cả hai thì chạy `fam module <tên>` trước.
 - `KafkaBroker.connected` báo đúng khi cụm chết — trước đây nó `True` suốt vì chỉ

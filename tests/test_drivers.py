@@ -146,6 +146,28 @@ async def test_crud_giong_nhau_tren_moi_driver(repo):
 
 
 @pytest.mark.asyncio
+async def test_doc_len_tra_ban_sao_chu_khong_phai_ban_ghi_trong_kho(repo):
+    """Sửa thứ vừa đọc lên mà chưa `save()` thì dưới database không đổi theo.
+
+    Backend `memory` từng trả thẳng object đang nằm trong bảng, nên dòng
+    `doc.full_name = ...` đã ghi luôn — `fam test` xanh trong khi SQL không hề
+    làm vậy. Tệ hơn: nó làm mất luôn "bản cũ" mà `@entity_subscriber` cần, vì
+    lúc khung đọc bản cũ lên thì bản trong bảng đã bị sửa rồi.
+
+    Chạy trên MỌI driver, vì đây đúng kiểu lệch chỉ lộ ra ở production.
+    """
+    saved = await repo.save(User(id="", email="c@x.co", full_name="C"))
+
+    doc = await repo.get(saved.id)
+    doc.full_name = "ĐÃ SỬA"                 # cố ý KHÔNG gọi save()
+    assert (await repo.get(saved.id)).full_name == "C", "get() trả bản ghi trong kho"
+
+    rows = await repo.find(email="c@x.co")
+    rows[0].full_name = "ĐÃ SỬA LẦN HAI"
+    assert (await repo.get(saved.id)).full_name == "C", "find() trả bản ghi trong kho"
+
+
+@pytest.mark.asyncio
 async def test_enum_va_datetime_giu_nguyen_kieu(repo):
     from datetime import datetime
 

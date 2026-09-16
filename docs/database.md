@@ -111,6 +111,11 @@ fam dev
 - Mỗi worker giữ một bản riêng, nên `--workers 2` trở lên sẽ trả kết quả
   **khác nhau tuỳ request rơi vào worker nào**. Với backend này chỉ chạy 1 worker.
 
+Ngoài hai giới hạn đó, `memory` cố bám sát database thật để `fam test` không nói
+dối: nó áp ràng buộc duy nhất và khoá ngoại, trả lại dữ liệu khi request hỏng,
+và **đọc lên trả bản sao** — sửa thứ vừa đọc mà không gọi `save()` thì kho không
+đổi theo, đúng như SQL.
+
 ---
 
 ## 2. SQLite

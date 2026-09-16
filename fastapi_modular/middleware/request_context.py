@@ -17,14 +17,17 @@ from __future__ import annotations
 import time
 
 from starlette.datastructures import Headers, MutableHeaders
+from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from fastapi_modular.core.context import (
     new_request_id,
     new_trace_id,
     parse_traceparent,
+    reset_request,
     reset_request_id,
     reset_trace_id,
+    set_request,
     set_request_id,
     set_trace_id,
 )
@@ -59,6 +62,10 @@ class RequestContextMiddleware:
 
         request_token = set_request_id(request_id)
         trace_token = set_trace_id(trace_id)
+        # Giữ luôn chính request, để tầng sâu (entity subscriber) đọc được
+        # header/query mà không phải truyền tham số xuyên suốt. `Request` chỉ
+        # là lớp bọc quanh `scope`, dựng nó không tốn gì.
+        connection_token = set_request(Request(scope, receive))
         state = scope.setdefault("state", {})
         state["request_id"] = request_id
         state["trace_id"] = trace_id
@@ -73,6 +80,7 @@ class RequestContextMiddleware:
         try:
             await self.app(scope, receive, send_with_ids)
         finally:
+            reset_request(connection_token)
             reset_trace_id(trace_token)
             reset_request_id(request_token)
 

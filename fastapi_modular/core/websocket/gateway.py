@@ -39,8 +39,10 @@ from fastapi_modular.core.config import Settings, WebSocketSettings, get_setting
 from fastapi_modular.core.container import container, injectable, request_scope
 from fastapi_modular.core.context import (
     new_request_id,
+    reset_request,
     reset_request_id,
     reset_user_id,
+    set_request,
     set_request_id,
     set_user_id,
 )
@@ -512,11 +514,16 @@ class _Connection:
         """
         socket = self.socket
         assert socket is not None
+        # Chính kết nối WebSocket, để tầng sâu đọc được header/query lúc bắt
+        # tay — nơi token đi qua với WebSocket (trình duyệt không đặt được
+        # header, xem docs/websocket.md).
+        connection = self.ws
 
         class _Scope:
             async def __aenter__(_self) -> None:
                 _self._request_token = set_request_id(new_request_id())
                 _self._user_token = set_user_id(socket.user_id)
+                _self._connection_token = set_request(connection)
                 _self._scope = request_scope()
                 await _self._scope.__aenter__()
                 if socket.user_id:
@@ -526,6 +533,7 @@ class _Connection:
                 try:
                     return await _self._scope.__aexit__(*exc)
                 finally:
+                    reset_request(_self._connection_token)
                     reset_user_id(_self._user_token)
                     reset_request_id(_self._request_token)
 
